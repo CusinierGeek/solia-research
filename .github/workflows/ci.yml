@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python lint & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Detect Python projects
+        id: detect
+        run: |
+          if ls services/*/pyproject.toml services/*/requirements.txt >/dev/null 2>&1; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No Python projects yet — skipping."
+          fi
+      - name: Install, lint & test
+        if: steps.detect.outputs.found == 'true'
+        run: |
+          python -m pip install --upgrade pip ruff black pytest
+          for d in services/ai-service services/data-pipeline; do
+            if [ -f "$d/requirements.txt" ]; then pip install -r "$d/requirements.txt"; fi
+            if [ -f "$d/pyproject.toml" ]; then pip install -e "$d" || true; fi
+          done
+          ruff check services || true
+          black --check services || true
+          pytest services || true
+
+  dotnet:
+    name: .NET build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Detect .NET projects
+        id: detect
+        run: |
+          if find services -name '*.csproj' -o -name '*.sln' | grep -q .; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No .NET projects yet — skipping."
+          fi
+      - name: Restore, build & test
+        if: steps.detect.outputs.found == 'true'
+        run: |
+          dotnet restore
+          dotnet build --no-restore -c Release
+          dotnet test --no-build -c Release

@@ -1,0 +1,87 @@
+# Solia — Docker Compose (SKELETON).
+# Only `postgres` is runnable today. The app services are placeholders filled
+# in during Sprint 6 (see docs/sprints/SPRINT-06-docker.md) and are gated behind
+# the `app` profile so `docker compose up` works before they exist:
+#
+#   docker compose up -d postgres          # today
+#   docker compose --profile app up -d     # once Sprint 6 Dockerfiles are done
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-solia}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-solia}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-solia}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [solia]
+
+  data-pipeline:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: infra/docker/data-pipeline.Dockerfile
+    env_file: [.env]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [solia]
+
+  ai-service:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: infra/docker/ai-service.Dockerfile
+    env_file: [.env]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - models:/app/models
+    networks: [solia]
+
+  backend:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: infra/docker/backend.Dockerfile
+    env_file: [.env]
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ai-service:
+        condition: service_started
+    volumes:
+      - ./secrets:/app/secrets:ro
+    networks: [solia]
+
+  dashboard:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: infra/docker/dashboard.Dockerfile
+    env_file: [.env]
+    ports:
+      - "8081:8081"
+    depends_on:
+      backend:
+        condition: service_started
+    networks: [solia]
+
+networks:
+  solia:
+    driver: bridge
+
+volumes:
+  pgdata:
+  models:

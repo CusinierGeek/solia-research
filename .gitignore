@@ -1,0 +1,49 @@
+# ---- Secrets & env ----
+.env
+*.env.local
+secrets/*.enc
+secrets/*.key
+*.pem
+
+# ---- .NET ----
+bin/
+obj/
+*.user
+*.suo
+.vs/
+artifacts/
+[Dd]ebug/
+[Rr]elease/
+TestResults/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.ipynb_checkpoints/
+
+# ---- ML artifacts ----
+models/*.pt
+models/*.ckpt
+checkpoints/
+*.onnx
+data/raw/
+data/processed/
+mlruns/
+wandb/
+
+# ---- Docker / DB ----
+pgdata/
+*.log
+
+# ---- IDE / OS ----
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
