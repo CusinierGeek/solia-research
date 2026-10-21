@@ -81,14 +81,47 @@
 6. After N new closed trades, `ai-service` retrain orchestrator trains a candidate model, evaluates, and promotes/rolls back; result logged in `training_events` and `models`.
 7. `dashboard` reflects everything live.
 
-## 5. Communication
+> The above is the *logical* flow. The **latency-critical live prediction path is wired differently** (no DB, no HTTP on the critical path) — see §5.
+
+## 5. Inference paths & latency
+
+Live "is this coin about to pump?" prediction is latency-sensitive (seconds matter), so it runs on a **different path** from training. **PostgreSQL is deliberately off the hot path.**
+
+### Fast path — live prediction (hot)
+
+```
+event (pumpapi) ─► pipeline updates in-memory features ─► model inference ─► bot decision
+                                  └─► async batched write to Postgres (history/training only)
+```
+
+- Features come from the pipeline's **in-memory rolling state**, never re-read from Postgres.
+- Inference is **co-located in the pipeline** via an **ONNX** export of the trained model (ONNX Runtime for .NET) — **no HTTP, no DB** on the critical path. Our compute is ~single-digit to ~20 ms; end-to-end latency is dominated by the data source's own delivery lag, not by us.
+- Postgres writes (`features`, `predictions`, `trades`) happen **asynchronously** — for history/dashboard/training, never to make the decision.
+- A cheap **pre-filter** limits which tokens are scored each tick (e.g. young, accelerating volume) so throughput holds.
+
+### Slow path — training / retraining (cold)
+
+```
+Postgres (accumulated features + trades) ─► ai-service reads in bulk ─► train ─► new champion (ONNX artifact)
+```
+
+- The Python **ai-service** owns training: it reads Postgres directly (large batch reads) and writes `models` / `training_events`.
+- It produces the **ONNX artifact** that the fast path loads. No real-time constraint.
+
+### REST `ai-service /predict` (moderate cadence)
+
+The HTTP `/predict` endpoint (features in the request → prediction) stays for non-urgent, moderate-cadence scoring and tooling. It is **not** the per-event sniping path — that is the ONNX fast path. Both coexist.
+
+> Decision date: the model format (ONNX) and the inference wiring are finalized in **Sprint 2**; perf tuning in **Sprint 8**.
+
+## 6. Communication
 
 - **backend ↔ ai-service**: HTTP/JSON (REST). Contracts in `API-CONTRACTS.md`.
 - **backend ↔ dashboard**: in-process + SignalR (Blazor Server) and REST.
 - **services ↔ db**: direct SQL — EF Core on the .NET side (backend + data-pipeline); SQLAlchemy/asyncpg on the Python side (ai-service).
 - **internal network**: a dedicated Docker bridge network; only the dashboard (and optionally backend) are published to the host.
 
-## 6. Deployment topology (Docker Compose)
+## 7. Deployment topology (Docker Compose)
 
 | Container      | Published | Depends on            | Volume            |
 |----------------|-----------|-----------------------|-------------------|
@@ -100,14 +133,14 @@
 
 See [`../infra/`](../infra/) and [`../docker-compose.yml`](../docker-compose.yml).
 
-## 7. Cross-cutting concerns
+## 8. Cross-cutting concerns
 
 - **Config**: 12-factor via env vars (`.env`), plus AES secrets file for sensitive values.
 - **Logging**: structured JSON logs; a subset persisted to the `logs` table for the dashboard.
 - **Observability**: health endpoints per service; metrics hooks reserved for Sprint 8.
 - **Testing**: unit tests per service + integration tests against an ephemeral Postgres (see each sprint's DoD).
 
-## 8. Explicit non-goals (v1)
+## 9. Explicit non-goals (v1)
 
 - No real-money execution, wallet signing, or private-key custody.
 - No multi-exchange support (Pump.fun only).
