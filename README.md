@@ -25,7 +25,7 @@ Prediction horizons: **30s, 1m, 5m, 15m, 1h**.
 ## Architecture at a glance
 
 ```
-PumpPortal WS ──▶ data-pipeline (Py) ──▶ PostgreSQL ──▶ ai-service (FastAPI + PyTorch)
+pumpapi.io WS ──▶ data-pipeline (.NET) ─▶ PostgreSQL ──▶ ai-service (FastAPI + PyTorch)
                                              │                    ▲   │
                                              │                    │   └─▶ predictions
                                              ▼                    │
@@ -42,7 +42,7 @@ Full detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 | Path                     | Stack                         | Role |
 |--------------------------|-------------------------------|------|
-| `services/data-pipeline` | Python 3.11                   | PumpPortal WebSocket ingestion, feature engineering, DB writes |
+| `services/data-pipeline` | .NET 10 worker                | pumpapi.io WS + historical replay ingestion, feature engineering, DB writes |
 | `services/ai-service`    | Python 3.11 + PyTorch + FastAPI | Transformer model, training, inference API, retrain orchestrator |
 | `services/backend`       | ASP.NET Core (.NET 10)        | REST API, orchestration, encrypted secrets, paper-trading bot host |
 | `services/dashboard`     | Blazor Server (.NET 10)       | Live UI: predictions, trades, win-rate, P&L, logs |
@@ -51,8 +51,8 @@ Full detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Tech choices
 
-- **.NET 10**, **Python 3.11**, **PostgreSQL 16**, **PyTorch**, **FastAPI**, **Blazor Server**
-- Data source: **PumpPortal public WebSocket** (behind a swappable `DataSource` abstraction)
+- **.NET 10** (backend, dashboard, data-pipeline), **Python 3.11** (ai-service only), **PostgreSQL 16**, **PyTorch**, **FastAPI**, **Blazor Server**
+- Data source: **pumpapi.io** free WebSocket + free historical replay, behind a swappable `DataSource` abstraction (fallbacks: PumpPortal, Solana RPC+IDL). See [`docs/DATA-SOURCES.md`](docs/DATA-SOURCES.md)
 - Secrets: **AES-encrypted file** (see [`docs/SECRETS.md`](docs/SECRETS.md))
 
 ---
@@ -63,6 +63,7 @@ Full detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 |-----|----------|
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Components, data flow, deployment topology |
 | [`docs/DATA-MODEL.md`](docs/DATA-MODEL.md)     | PostgreSQL tables & relationships |
+| [`docs/DATA-SOURCES.md`](docs/DATA-SOURCES.md) | Providers compared, cost strategy, pumpapi decision |
 | [`docs/DATA-PIPELINE.md`](docs/DATA-PIPELINE.md) | Ingestion, feature engineering |
 | [`docs/ML-MODEL.md`](docs/ML-MODEL.md)         | Transformer spec, losses, outputs, training loop |
 | [`docs/API-CONTRACTS.md`](docs/API-CONTRACTS.md) | REST contracts between services |

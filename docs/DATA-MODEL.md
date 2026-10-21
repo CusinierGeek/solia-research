@@ -38,6 +38,8 @@ Currently tracked (hot) tokens. Small, frequently updated.
 | last_liquidity | NUMERIC | |
 | holders | INT | latest holder count |
 | trending_score | DOUBLE PRECISION | |
+| venue | TEXT | current venue (`pumpfun` / `pumpswap` / `raydium` / ...) |
+| is_migrated | BOOLEAN | graduated off the bonding curve |
 | is_active | BOOLEAN | still being tracked |
 | updated_at | TIMESTAMPTZ | |
 
@@ -63,6 +65,9 @@ Time-series feature snapshots per token. The model's input unit.
 | id | BIGSERIAL PK | |
 | mint | TEXT | FK → tokens_history |
 | ts | TIMESTAMPTZ | snapshot time |
+| venue | TEXT | `pumpfun` / `pumpswap` / `raydium` / `meteora` / ... |
+| is_migrated | BOOLEAN | token has graduated off the bonding curve |
+| pool_address | TEXT | nullable; AMM pool once migrated |
 | price | NUMERIC | |
 | volume | NUMERIC | |
 | market_cap | NUMERIC | |

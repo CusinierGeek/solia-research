@@ -1,11 +1,12 @@
 # SKELETON — implemented in Sprint 6 (docs/sprints/SPRINT-06-docker.md).
-# Target: slim, non-root Python 3.11 image for services/data-pipeline.
+# Target: multi-stage .NET 10 build for the services/data-pipeline worker.
 #
-# FROM python:3.11-slim
-# WORKDIR /app
-# COPY services/data-pipeline/requirements.txt .
-# RUN pip install --no-cache-dir -r requirements.txt
+# FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+# WORKDIR /src
 # COPY services/data-pipeline/ .
-# RUN useradd -m solia && chown -R solia /app
-# USER solia
-# CMD ["python", "-m", "solia_pipeline"]
+# RUN dotnet publish Solia.DataPipeline -c Release -o /app
+#
+# FROM mcr.microsoft.com/dotnet/runtime:10.0
+# WORKDIR /app
+# COPY --from=build /app .
+# ENTRYPOINT ["dotnet", "Solia.DataPipeline.dll"]

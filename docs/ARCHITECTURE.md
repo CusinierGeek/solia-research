@@ -3,7 +3,8 @@
 ## 1. Goals & constraints
 
 - **Modular**: each concern is an independent, containerized service with a clear contract.
-- **Swappable data source**: the ingestion layer hides PumpPortal behind a `DataSource` interface so we can add Solana RPC or scraping later without touching downstream code.
+- **Swappable data source**: the ingestion layer hides the provider behind a `DataSource` interface (primary: **pumpapi.io**; fallbacks: PumpPortal, Solana RPC+IDL) so the provider can change without touching downstream code. See [`DATA-SOURCES.md`](DATA-SOURCES.md).
+- **Full token lifecycle**: data covers pre- **and** post-bonding (after graduation to PumpSwap/Raydium), required for correct pump/rug labels.
 - **Paper-trading only**: no key ever signs a real transaction. The "bot" simulates fills against observed market prices.
 - **Continuous learning**: new paper trades are labeled outcomes that feed periodic re-training.
 - **Secure by default**: secrets live in an AES-encrypted file decrypted only at runtime (see [`SECRETS.md`](SECRETS.md)).
@@ -20,8 +21,8 @@
                          └───────▲───────────────▲──────────────▲─────┘
                                  │ write          │ read/write   │ read
          ┌───────────────────────┴──┐   ┌─────────┴─────────┐   │
-         │     data-pipeline (Py)    │   │  ai-service (Py)  │   │
-         │  • PumpPortal WS client   │   │  • FastAPI        │   │
+         │  data-pipeline (.NET)     │   │  ai-service (Py)  │   │
+         │  • pumpapi WS + replay    │   │  • FastAPI        │   │
          │  • normalization          │   │  • Transformer    │   │
          │  • feature engineering     │   │  • train/infer    │   │
          └───────────────────────────┘   │  • retrain loop   │   │
@@ -43,12 +44,13 @@
 
 ## 3. Responsibilities per service
 
-### data-pipeline (Python)
-- Connects to the PumpPortal WebSocket; subscribes to new-token and trade streams.
-- Normalizes raw events into a canonical schema.
+### data-pipeline (.NET worker)
+- Connects to the **pumpapi.io** WebSocket (primary); can replay historical archives through the same path for training backfill.
+- Normalizes raw events (live + replay) into a canonical schema; tracks tokens across graduation (pre/post-bonding).
 - Maintains rolling windows per token and computes features (see [`DATA-PIPELINE.md`](DATA-PIPELINE.md)).
 - Persists `tokens_live`, `tokens_history`, and `features`.
 - Exposes a thin health endpoint; no business API.
+- Reuses the SolGemFinder Pump.fun IDL decoder only for the autonomous `SolanaRpcSource` fallback.
 
 ### ai-service (Python, PyTorch + FastAPI)
 - Owns the model: architecture, training, inference, versioning.
@@ -83,7 +85,7 @@
 
 - **backend ↔ ai-service**: HTTP/JSON (REST). Contracts in `API-CONTRACTS.md`.
 - **backend ↔ dashboard**: in-process + SignalR (Blazor Server) and REST.
-- **services ↔ db**: direct SQL (EF Core on .NET side; SQLAlchemy/asyncpg on Python side).
+- **services ↔ db**: direct SQL — EF Core on the .NET side (backend + data-pipeline); SQLAlchemy/asyncpg on the Python side (ai-service).
 - **internal network**: a dedicated Docker bridge network; only the dashboard (and optionally backend) are published to the host.
 
 ## 6. Deployment topology (Docker Compose)

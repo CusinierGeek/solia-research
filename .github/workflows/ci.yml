@@ -31,7 +31,8 @@ jobs:
         if: steps.detect.outputs.found == 'true'
         run: |
           python -m pip install --upgrade pip ruff black pytest
-          for d in services/ai-service services/data-pipeline; do
+          # ai-service is the only Python project (data-pipeline is a .NET worker).
+          for d in services/ai-service; do
             if [ -f "$d/requirements.txt" ]; then pip install -r "$d/requirements.txt"; fi
             if [ -f "$d/pyproject.toml" ]; then pip install -e "$d" || true; fi
           done
