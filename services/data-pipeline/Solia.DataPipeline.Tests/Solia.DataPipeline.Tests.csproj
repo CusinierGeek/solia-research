@@ -23,4 +23,8 @@
     <ProjectReference Include="..\Solia.DataPipeline\Solia.DataPipeline.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

@@ -364,6 +364,71 @@ public class PumpApiEventParserTests
     }
 
     [Fact]
+    public void Real_schema_txType_and_sol_fields_are_read()
+    {
+        const string json = """
+        {"txType":"sell","mint":"MINT1","pool":"pump","tokenAmount":1354150.784229,"solAmount":0.224586568,
+         "tokensInPool":161334602.262203,"solInPool":42.954387564,"vTokensInBondingCurve":441234602.262203,
+         "vSolInBondingCurve":72.954387564,"marketCapSol":165.34149223556807,"timestamp":1776686399967}
+        """;
+
+        RawEvent? evt = PumpApiEventParser.Parse(json);
+
+        Assert.NotNull(evt);
+        Assert.Equal(EventKind.Sell, evt!.Kind);
+        Assert.Equal("So11111111111111111111111111111111111111112", evt.QuoteMint);
+        Assert.Equal(0.224586568m, evt.QuoteAmount);
+        Assert.Equal(42.954387564m, evt.QuoteInPool);
+        Assert.Equal(72.954387564m, evt.VirtualQuoteReserves);
+        Assert.Equal(165.34149223556807m, evt.MarketCap);
+        Assert.Equal(72.954387564m / 441234602.262203m, evt.Price); // derived from the virtual SOL reserves
+    }
+
+    [Fact]
+    public void Non_sol_quoted_pool_keeps_its_quote_mint_and_quote_fields()
+    {
+        const string json = """
+        {"txType":"buy","mint":"MINT1","pool":"meteora-launchpad","quoteMint":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+         "quoteAmount":1.614924,"quoteInPool":21401.387071,"marketCapQuote":138278.885,"price":0.000138,"timestamp":1776686400811}
+        """;
+
+        RawEvent? evt = PumpApiEventParser.Parse(json);
+
+        Assert.NotNull(evt);
+        Assert.Equal("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", evt!.QuoteMint);
+        Assert.Equal(1.614924m, evt.QuoteAmount);
+        Assert.Equal(21401.387071m, evt.QuoteInPool);
+        Assert.Equal(138278.885m, evt.MarketCap);
+    }
+
+    [Fact]
+    public void TxType_wins_over_action_when_both_are_present()
+    {
+        const string json = """{"txType":"sell","action":"buy","mint":"MINT1","timestamp":1776686400000}""";
+
+        Assert.Equal(EventKind.Sell, PumpApiEventParser.Parse(json)!.Kind);
+    }
+
+    [Fact]
+    public void Transfer_of_native_sol_only_is_unattributable()
+    {
+        const string json = """
+        {"txType":"transfer","timestamp":1776686399967,
+         "transfers":[{"amount":0.0001,"isSolana":true,"mint":"So11111111111111111111111111111111111111111"}]}
+        """;
+
+        Assert.Null(PumpApiEventParser.Parse(json));
+    }
+
+    [Fact]
+    public void Event_without_any_price_fields_has_no_quote_mint()
+    {
+        const string json = """{"txType":"buy","mint":"MINT1","pool":"pump","timestamp":1776686400000}""";
+
+        Assert.Null(PumpApiEventParser.Parse(json)!.QuoteMint);
+    }
+
+    [Fact]
     public void Null_input_returns_null()
     {
         Assert.Null(PumpApiEventParser.Parse(null));

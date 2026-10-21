@@ -39,7 +39,14 @@ public sealed record RawEvent
         _ => null,
     };
 
-    /// <summary>Price in quote currency per token.</summary>
+    /// <summary>
+    /// Mint of the quote currency that <see cref="Price"/>, <see cref="MarketCap"/>,
+    /// <see cref="QuoteAmount"/> and the quote reserves are expressed in. The wSOL mint for
+    /// SOL-quoted pools; another token (e.g. USDC) otherwise. Null when the event has no prices.
+    /// </summary>
+    public string? QuoteMint { get; init; }
+
+    /// <summary>Price in quote currency (<see cref="QuoteMint"/>) per token.</summary>
     public decimal? Price { get; init; }
 
     /// <summary>Market cap in quote currency (pumpapi <c>marketCapQuote</c>).</summary>

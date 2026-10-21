@@ -12,7 +12,13 @@ namespace Solia.DataPipeline.Ingestion.PumpApi;
 /// </summary>
 public static class PumpApiEventParser
 {
-    private const string WrappedSolMint = "So11111111111111111111111111111111111111112";
+    internal const string WrappedSolMint = "So11111111111111111111111111111111111111112";
+
+    // pumpapi's native-SOL marker in transfers[] (not a real mint, flagged isSolana).
+    private const string NativeSolMint = "So11111111111111111111111111111111111111111";
+
+    private static readonly string[] SolQuotedFields =
+        ["solAmount", "solInPool", "vSolInBondingCurve", "marketCapSol"];
 
     // Accepted event-time window. Anything outside it is a unit/format error, not a real event.
     private static readonly DateTimeOffset MinTimestamp = new(2020, 1, 1, 0, 0, 0, TimeSpan.Zero);
@@ -87,7 +93,8 @@ public static class PumpApiEventParser
             return null;
         }
 
-        string? action = GetString(root, "action");
+        // Real stream/archive frames carry the type in "txType"; "action" is accepted as a fallback.
+        string? action = GetString(root, "txType") ?? GetString(root, "action");
         if (action is null)
         {
             return null;
@@ -114,10 +121,17 @@ public static class PumpApiEventParser
         EventKind kind = Kinds.GetValueOrDefault(action, EventKind.Other);
         string? pool = GetString(root, "pool");
 
+        // SOL-quoted pools (the vast majority) report sol* fields; pools quoted in another token
+        // (USDC, ...) report quote* fields plus quoteMint. Either way the values are in QuoteMint.
         decimal? tokensInPool = GetDecimal(root, "tokensInPool");
-        decimal? quoteInPool = GetDecimal(root, "quoteInPool");
+        decimal? quoteInPool = GetDecimal(root, "quoteInPool") ?? GetDecimal(root, "solInPool");
         decimal? virtualTokens = GetDecimal(root, "vTokensInBondingCurve");
-        decimal? virtualQuote = GetDecimal(root, "vQuoteInBondingCurve");
+        decimal? virtualQuote = GetDecimal(root, "vQuoteInBondingCurve") ?? GetDecimal(root, "vSolInBondingCurve");
+        string? quoteMint = GetString(root, "quoteMint");
+        if (quoteMint is null && kind != EventKind.Transfer && HasAny(root, SolQuotedFields))
+        {
+            quoteMint = WrappedSolMint;
+        }
 
         return new RawEvent
         {
@@ -130,9 +144,10 @@ public static class PumpApiEventParser
             Signature = GetString(root, "signature"),
             Trader = GetString(root, "txSigner"),
             Price = GetDecimal(root, "price") ?? DerivePrice(quoteInPool, tokensInPool, virtualQuote, virtualTokens),
-            MarketCap = GetDecimal(root, "marketCapQuote"),
+            QuoteMint = quoteMint,
+            MarketCap = GetDecimal(root, "marketCapQuote") ?? GetDecimal(root, "marketCapSol"),
             TokenAmount = GetDecimal(root, "tokenAmount"),
-            QuoteAmount = GetDecimal(root, "quoteAmount"),
+            QuoteAmount = GetDecimal(root, "quoteAmount") ?? GetDecimal(root, "solAmount"),
             TokensInPool = tokensInPool,
             QuoteInPool = quoteInPool,
             VirtualTokenReserves = virtualTokens,
@@ -166,7 +181,7 @@ public static class PumpApiEventParser
             }
 
             string? mint = GetString(transfer, "mint");
-            if (!string.IsNullOrWhiteSpace(mint) && mint != WrappedSolMint)
+            if (!string.IsNullOrWhiteSpace(mint) && mint != WrappedSolMint && mint != NativeSolMint)
             {
                 return mint;
             }
@@ -229,6 +244,19 @@ public static class PumpApiEventParser
 
         DateTimeOffset ts = DateTimeOffset.FromUnixTimeMilliseconds(ms);
         return ts >= MinTimestamp && ts < MaxTimestamp ? ts : null;
+    }
+
+    private static bool HasAny(JsonElement root, string[] names)
+    {
+        foreach (string name in names)
+        {
+            if (root.TryGetProperty(name, out JsonElement el) && el.ValueKind == JsonValueKind.Number)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static string? GetString(JsonElement root, string name) =>

@@ -39,6 +39,37 @@ network and watch it back off and resume). This probe does **not** persist anyth
 ingestion into the DB is wired in T7. When enabled, the `/health` `stream` check reflects the
 connection (`Degraded` while reconnecting).
 
+### Replay historical data
+
+pumpapi archives its stream as hourly `.jsonl.zst` files (since 2026-04-18). Replay feeds those
+through the **same parser** as live, so historical and live events are identical downstream.
+
+- `PumpApiReplaySource` streams a `ReplayWindow` via an archive opener
+  (`HttpReplayArchiveOpener` = `{ReplayBaseUrl}/yyyy/MM/dd/HH.jsonl.zst`). Events are trimmed to
+  the window's exact bounds; the window must start on/after 2026-04-18 and before its end, or the
+  source throws. Missing hours (404) are skipped (`MissingHours`). Other failures (HTTP errors,
+  dropped downloads, corrupt/truncated archives) are retried 3 times with backoff, resuming after
+  the last line read so nothing is emitted twice; an hour that still fails is skipped and listed in
+  `FailedHours`. An event stamped just before an hour boundary can sit in the next hour's archive,
+  so a window ending exactly on the hour may miss a few such boundary events.
+- `FileReplaySource` replays a local `.jsonl` / `.jsonl.zst` file (tests, or a mirrored archive).
+- Cancelling either source throws `OperationCanceledException` (never a silent partial end).
+- `Fixtures/sample.jsonl` is 20 real lines captured from `2026/04/20/12.jsonl.zst`. Note the real
+  schema: the event type is `txType`, and SOL-quoted pools report `sol*` fields (`solAmount`,
+  `solInPool`, `vSolInBondingCurve`, `marketCapSol`) while other pools report `quote*` + `quoteMint`.
+  `RawEvent.QuoteMint` records which currency prices are in.
+
+**Mirror a window locally** (full archive is ~1.7 TB — always pick a window), then replay the files:
+
+```bash
+# PowerShell — mirror 2026-04-18 hours 00..03
+0..3 | ForEach-Object { $h = '{0:D2}' -f $_
+  Invoke-WebRequest "https://replay.pumpapi.io/2026/04/18/$h.jsonl.zst" -OutFile "data/2026-04-18-$h.jsonl.zst" }
+```
+
+Choosing the actual training window and wiring replay into ingestion are Sprint 2 / T7. See
+[DATA-SOURCES.md](../../docs/DATA-SOURCES.md).
+
 ## Configuration
 
 Bound from `appsettings.json` (or any configuration source, e.g. `Pipeline__WindowSeconds`), with the
