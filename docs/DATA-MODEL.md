@@ -9,6 +9,7 @@
 - A token is identified by its **mint address** (`mint TEXT`).
 - Monetary/price values use `NUMERIC` to avoid float drift; feature vectors may use `DOUBLE PRECISION`.
 - Soft relationships via `mint`; hard FKs where lifecycle is coupled.
+- Enumerated `TEXT` columns (status, strategy, horizon, level, …) and probability/confidence ranges are enforced with `CHECK` constraints; the values listed below are the only accepted ones.
 
 ## Entity relationships
 
@@ -90,7 +91,7 @@ Time-series feature snapshots per token. The model's input unit.
 | behavioral_signals | JSONB | pump/rug pattern flags |
 | raw | JSONB | nullable debug payload |
 
-Indexes: `(mint, ts)`, `ts`.
+Constraints: `UNIQUE (mint, ts)` (idempotent live + replay ingestion; also serves `(mint, ts)` lookups). Index: `ts`.
 
 ### `predictions`
 Model outputs. One row per inference call.
@@ -109,9 +110,9 @@ Model outputs. One row per inference call.
 | take_profit | NUMERIC | dynamic TP |
 | stop_loss | NUMERIC | dynamic SL |
 | confidence | DOUBLE PRECISION | 0–100 |
-| feature_id | BIGINT | FK → features (input snapshot) |
+| feature_id | BIGINT | FK → features (input snapshot), `ON DELETE SET NULL` |
 
-Indexes: `(mint, ts)`, `(model_id)`.
+Indexes: `(mint, ts)`, `(model_id)`, `(feature_id)`.
 
 ### `trades`
 Paper-trading bot activity. One row per closed (or open) position.
@@ -120,7 +121,7 @@ Paper-trading bot activity. One row per closed (or open) position.
 |--------|------|-------|
 | id | BIGSERIAL PK | |
 | mint | TEXT | FK → tokens_history |
-| prediction_id | BIGINT | FK → predictions (the triggering signal) |
+| prediction_id | BIGINT | FK → predictions (the triggering signal), `ON DELETE SET NULL` |
 | opened_at | TIMESTAMPTZ | |
 | closed_at | TIMESTAMPTZ | nullable while open |
 | entry_price | NUMERIC | |
@@ -135,7 +136,7 @@ Paper-trading bot activity. One row per closed (or open) position.
 | features_snapshot | JSONB | features at entry (for training) |
 | status | TEXT | `open` / `closed` |
 
-Indexes: `(mint)`, `(status)`, `(closed_at)`.
+Indexes: `(mint)`, `(status)`, `(closed_at)`, `(prediction_id)`.
 
 ### `training_events`
 Audit trail of training/retrain runs.
@@ -186,3 +187,4 @@ Index: `(ts)`, `(service, level)`.
 ## Retention (reserved for Sprint 8)
 - `features` and `logs` are high-volume → partition by day / apply TTL.
 - `predictions` keep ~30 days hot, archive beyond.
+- `predictions.feature_id` and `trades.prediction_id` are `ON DELETE SET NULL`, so deleting old rows is not blocked. Day-partitioning `features` would additionally require dropping the `predictions.feature_id` FK (a partitioned table can't be an FK target on `id` alone).

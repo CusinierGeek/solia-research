@@ -1,0 +1,3 @@
+# Migration checksums are computed over the file text; keep SQL LF everywhere.
+* text=auto
+*.sql text eol=lf
