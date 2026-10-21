@@ -20,6 +20,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Npgsql;
+using Solia.Shared.Configuration;
 
 // Arbitrary constant shared by every runner instance; serializes concurrent migrations.
 const long MigrationLockKey = 7_301_445_001;
@@ -27,7 +28,7 @@ const string NoTransactionMarker = "-- solia:no-transaction";
 
 try
 {
-    string connString = BuildConnectionString();
+    string connString = DbConnectionSettings.Resolve(Environment.GetEnvironmentVariable);
     string migrationsDir = ResolveMigrationsDir(args);
 
     string[] files = Directory.GetFiles(migrationsDir, "*.sql")
@@ -118,31 +119,6 @@ catch (Exception ex)
 {
     Console.Error.WriteLine($"[migrator] FAILED: {ex}");
     return 1;
-}
-
-static string BuildConnectionString()
-{
-    string? explicitConn = Environment.GetEnvironmentVariable("SOLIA_DB_CONNECTION");
-    if (!string.IsNullOrWhiteSpace(explicitConn))
-    {
-        return explicitConn;
-    }
-
-    var builder = new NpgsqlConnectionStringBuilder
-    {
-        Host = Env("POSTGRES_HOST", "localhost"),
-        Port = int.Parse(Env("POSTGRES_PORT", "5432")),
-        Database = Env("POSTGRES_DB", "solia"),
-        Username = Env("POSTGRES_USER", "solia"),
-        Password = Env("POSTGRES_PASSWORD", "change_me"),
-    };
-    return builder.ConnectionString;
-}
-
-static string Env(string key, string fallback)
-{
-    string? v = Environment.GetEnvironmentVariable(key);
-    return string.IsNullOrWhiteSpace(v) ? fallback : v;
 }
 
 static string ResolveMigrationsDir(string[] args)

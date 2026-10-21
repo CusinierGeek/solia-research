@@ -1,6 +1,14 @@
 <Solution>
   <Folder Name="/services/" />
+  <Folder Name="/services/data-pipeline/">
+    <Project Path="services/data-pipeline/Solia.DataPipeline.Tests/Solia.DataPipeline.Tests.csproj" />
+    <Project Path="services/data-pipeline/Solia.DataPipeline/Solia.DataPipeline.csproj" />
+  </Folder>
   <Folder Name="/services/db/">
     <Project Path="services/db/Solia.DbMigrator/Solia.DbMigrator.csproj" />
+  </Folder>
+  <Folder Name="/services/shared/">
+    <Project Path="services/shared/Solia.Shared.Tests/Solia.Shared.Tests.csproj" />
+    <Project Path="services/shared/Solia.Shared/Solia.Shared.csproj" />
   </Folder>
 </Solution>
