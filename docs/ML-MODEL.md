@@ -56,6 +56,8 @@ Labels are derived from realized outcomes:
 
 Thresholds are defined in `config.yaml` and documented alongside the dataset builder (Sprint 2).
 
+Labels require the token's **full lifecycle** — including **post-bonding** (post-graduation) price/liquidity on the AMM. The pipeline captures pre- and post-bonding events (see [`DATA-SOURCES.md`](DATA-SOURCES.md)), so a pump/rug occurring after migration is labeled correctly; a pre-bonding-only dataset would bias the labels.
+
 ## Confidence
 
 Confidence (0–100) is derived from head agreement + calibrated probability margin (e.g. temperature-scaled). Precise formula finalized in Sprint 2; must be **monotonic** with historical hit-rate.
