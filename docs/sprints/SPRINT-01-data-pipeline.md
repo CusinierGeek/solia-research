@@ -1,5 +1,7 @@
 # Sprint 1 — Data pipeline
 
+> **This file is the sprint brief.** The actual tasks are tracked as GitHub Issues (T1–T7) under **Milestone #1** and on the **Solia** Project board — each issue is the source of truth for its task and becomes one PR. The task checklist below is kept as the sprint overview.
+
 **Milestone:** Data pipeline · **Depends on:** — · **Service:** `services/data-pipeline` (.NET worker), `services/db`
 
 ## Goal

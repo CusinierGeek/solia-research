@@ -1,5 +1,17 @@
 # Contributing & PR process
 
+## Workflow model
+
+```
+Sprint = GitHub Milestone = a set of Tasks
+Task   = GitHub Issue      = exactly ONE pull request
+```
+
+- Tasks are specified in their **GitHub Issue** (source of truth) using the **Task** issue template: *Business need · Acceptance criteria · Technical details · Dependencies · Out of scope*.
+- The `docs/sprints/SPRINT-0N-*.md` files are the sprint **brief** only; per-task detail lives in issues.
+- **One task = one PR.** Keep PRs scoped to a single issue.
+- All tasks for a sprint are tracked on the **Project (v2) "Solia"** board and under the sprint's **Milestone**.
+
 ## Branching model
 
 - `main` is **protected** and always deployable. No direct pushes.
@@ -44,4 +56,5 @@ A PR is done when: code + tests written, CI green, docs updated if contracts cha
 ## Issues & milestones
 
 - One **milestone per sprint** (mirrors `docs/ROADMAP.md`).
-- Break each sprint's task checklist into issues; label them (`sprint-1`…, `type:feat`, etc.).
+- Each sprint's work is broken into **Task issues** (template: *Task*), labelled `sprint-<n>` + `type:task`, assigned to the sprint milestone, and added to the **Solia** Project board.
+- Each task issue becomes one PR that `Closes #<issue>`.

@@ -1,6 +1,8 @@
 # Sprints
 
-One file per sprint. Each contains: **Goal**, **Scope / Out of scope**, **Task breakdown** (checklist), **Deliverables**, **Definition of Done**, **Dependencies**, and a **Kickoff prompt** to paste into a fresh conversation.
+One file per sprint = the sprint **brief** (goal, scope, context, kickoff prompt).
+
+**The actual tasks live as GitHub Issues** (template: *Task*), grouped by Milestone (= sprint) and tracked on the **Solia** Project board. Each task issue carries its *Business need · Acceptance criteria · Technical details · Dependencies · Out of scope*, and becomes exactly one PR. See [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md#workflow-model) and [`../../CLAUDE.md`](../../CLAUDE.md).
 
 See [`../ROADMAP.md`](../ROADMAP.md) for the big picture.
 
