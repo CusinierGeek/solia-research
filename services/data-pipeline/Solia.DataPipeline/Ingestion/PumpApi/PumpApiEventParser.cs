@@ -48,6 +48,25 @@ public static class PumpApiEventParser
         }
     }
 
+    /// <summary>Parses a UTF-8 frame straight from the receive buffer, without building a string first.</summary>
+    public static RawEvent? ParseUtf8(ReadOnlyMemory<byte> utf8Json)
+    {
+        if (utf8Json.IsEmpty)
+        {
+            return null;
+        }
+
+        try
+        {
+            using JsonDocument doc = JsonDocument.Parse(utf8Json);
+            return Parse(doc.RootElement);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     public static RawEvent? Parse(JsonElement root)
     {
         try
@@ -160,19 +179,25 @@ public static class PumpApiEventParser
     /// Price from reserves when the explicit field is absent. A bonding curve prices off its
     /// <em>virtual</em> reserves, so those win when present; real reserves are the AMM fallback.
     /// </summary>
-    private static decimal? DerivePrice(decimal? quoteInPool, decimal? tokensInPool, decimal? virtualQuote, decimal? virtualTokens)
+    private static decimal? DerivePrice(decimal? quoteInPool, decimal? tokensInPool, decimal? virtualQuote, decimal? virtualTokens) =>
+        Divide(virtualQuote, virtualTokens) ?? Divide(quoteInPool, tokensInPool);
+
+    /// <summary>quote / tokens, or null when either is missing, tokens isn't positive, or the result overflows decimal.</summary>
+    private static decimal? Divide(decimal? quote, decimal? tokens)
     {
-        if (virtualQuote is { } vq && virtualTokens is { } vt && vt > 0)
+        if (quote is not { } q || tokens is not { } t || t <= 0)
         {
-            return vq / vt;
+            return null;
         }
 
-        if (quoteInPool is { } q && tokensInPool is { } t && t > 0)
+        try
         {
             return q / t;
         }
-
-        return null;
+        catch (OverflowException)
+        {
+            return null;
+        }
     }
 
     /// <summary>

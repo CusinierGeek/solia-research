@@ -1,30 +1,30 @@
 namespace Solia.DataPipeline.Ingestion.PumpApi;
 
+/// <summary>One consistent reading of the stream's connection status.</summary>
+public sealed record StreamStatus(bool IsConnected, DateTimeOffset? LastChangeUtc, string? LastError);
+
 /// <summary>
 /// Shared, thread-safe view of the live stream's connection status. Updated by
 /// <see cref="PumpApiStreamSource"/> and read by the health check. Registered as a singleton.
+/// Each change swaps in a whole immutable <see cref="StreamStatus"/>, so a reader never sees
+/// fields from two different updates.
 /// </summary>
 public sealed class StreamConnectionState
 {
-    private volatile bool _connected;
+    private StreamStatus _status = new(false, null, null);
 
-    public bool IsConnected => _connected;
+    /// <summary>Read this once when you need several fields together.</summary>
+    public StreamStatus Current => Volatile.Read(ref _status);
 
-    public DateTimeOffset? LastChangeUtc { get; private set; }
+    public bool IsConnected => Current.IsConnected;
 
-    public string? LastError { get; private set; }
+    public DateTimeOffset? LastChangeUtc => Current.LastChangeUtc;
 
-    public void MarkConnected()
-    {
-        _connected = true;
-        LastChangeUtc = DateTimeOffset.UtcNow;
-        LastError = null;
-    }
+    public string? LastError => Current.LastError;
 
-    public void MarkDisconnected(string? error = null)
-    {
-        _connected = false;
-        LastChangeUtc = DateTimeOffset.UtcNow;
-        LastError = error;
-    }
+    public void MarkConnected() =>
+        Volatile.Write(ref _status, new StreamStatus(true, DateTimeOffset.UtcNow, null));
+
+    public void MarkDisconnected(string? error = null) =>
+        Volatile.Write(ref _status, new StreamStatus(false, DateTimeOffset.UtcNow, error));
 }

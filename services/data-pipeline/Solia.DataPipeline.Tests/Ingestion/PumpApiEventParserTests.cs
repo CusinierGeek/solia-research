@@ -130,6 +130,41 @@ public class PumpApiEventParserTests
     }
 
     [Fact]
+    public void Price_is_null_instead_of_throwing_when_the_division_overflows()
+    {
+        const string json = """
+        {"action":"buy","mint":"MINT1","pool":"pump","vQuoteInBondingCurve":79000000000000000000000000000,
+         "vTokensInBondingCurve":0.001,"timestamp":1700000000000}
+        """;
+
+        RawEvent? evt = PumpApiEventParser.Parse(json);
+
+        Assert.NotNull(evt);
+        Assert.Null(evt!.Price);
+    }
+
+    [Fact]
+    public void Parses_utf8_bytes_like_a_string()
+    {
+        byte[] utf8 = System.Text.Encoding.UTF8.GetBytes(
+            """{"action":"buy","mint":"MINT1","pool":"pump","price":0.5,"timestamp":1700000000000}""");
+
+        RawEvent? evt = PumpApiEventParser.ParseUtf8(utf8.AsMemory());
+
+        Assert.NotNull(evt);
+        Assert.Equal("MINT1", evt!.Mint);
+        Assert.Equal(0.5m, evt.Price);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("not json")]
+    public void Malformed_utf8_bytes_return_null(string text)
+    {
+        Assert.Null(PumpApiEventParser.ParseUtf8(System.Text.Encoding.UTF8.GetBytes(text).AsMemory()));
+    }
+
+    [Fact]
     public void Price_is_null_when_neither_price_nor_reserves_present()
     {
         const string json = """{"action":"buy","mint":"MINT1","pool":"pump","tokensInPool":0,"quoteInPool":1,"timestamp":1700000000000}""";

@@ -5,7 +5,26 @@ namespace Solia.DataPipeline.Ingestion.PumpApi;
 /// <summary>Real <see cref="IWebSocket"/> backed by <see cref="ClientWebSocket"/>.</summary>
 public sealed class SystemWebSocket : IWebSocket
 {
+    private static readonly TimeSpan DefaultCloseTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan KeepAlive = TimeSpan.FromSeconds(15);
+
     private readonly ClientWebSocket _socket = new();
+    private readonly TimeSpan _closeTimeout;
+
+    public SystemWebSocket()
+        : this(DefaultCloseTimeout)
+    {
+    }
+
+    internal SystemWebSocket(TimeSpan closeTimeout)
+    {
+        _closeTimeout = closeTimeout;
+
+        // Ping/pong keep-alive: a peer that stops answering faults the socket instead of
+        // leaving a receive hanging on a half-open connection.
+        _socket.Options.KeepAliveInterval = KeepAlive;
+        _socket.Options.KeepAliveTimeout = KeepAlive;
+    }
 
     public Task ConnectAsync(Uri uri, CancellationToken cancellationToken) =>
         _socket.ConnectAsync(uri, cancellationToken);
@@ -22,7 +41,10 @@ public sealed class SystemWebSocket : IWebSocket
         {
             if (_socket.State == WebSocketState.Open)
             {
-                await _socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
+                // Bounded: a peer that never answers the close handshake must not block
+                // reconnects or shutdown. Cancelling aborts the socket.
+                using var timeout = new CancellationTokenSource(_closeTimeout);
+                await _socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, timeout.Token);
             }
         }
         catch

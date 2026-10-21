@@ -32,8 +32,9 @@ POSTGRES_HOST=localhost dotnet run --project services/data-pipeline/Solia.DataPi
 STREAM_PROBE=true POSTGRES_HOST=localhost dotnet run --project services/data-pipeline/Solia.DataPipeline
 ```
 
-Connects to the pumpapi live stream and **logs every event** (kind, mint, venue, price) as it
-arrives — handy to see real Pump.fun activity and to verify reconnection (drop/restore the
+Connects to the pumpapi live stream and logs every event (kind, mint, venue, price) at **Debug**,
+plus a running count at Information every 30 s (set `Logging__LogLevel__Solia.DataPipeline.Hosting=Debug`
+to see each event) — handy to see real Pump.fun activity and to verify reconnection (drop/restore the
 network and watch it back off and resume). This probe does **not** persist anything; continuous
 ingestion into the DB is wired in T7. When enabled, the `/health` `stream` check reflects the
 connection (`Degraded` while reconnecting).
@@ -58,8 +59,10 @@ but invalid (bad port, `ENRICH_HOLDERS=maybe`) fails startup with the variable's
 `Pipeline` section knobs: `SnapshotCadenceSeconds` (1–3600), `WindowSeconds` (1–86400, and
 ≥ the cadence), `MaxTrackedTokens` (1–1,000,000), `EnrichHolders`, `StreamProbe`. `PumpApi` URLs
 must be absolute (`ws(s)://` for the stream, `http(s)://` for replay); reconnect backoff is
-`ReconnectBaseDelaySeconds` (1–300) doubling up to `ReconnectMaxDelaySeconds` (1–3600). Invalid
-values stop the worker at startup.
+`ReconnectBaseDelaySeconds` (1–300) doubling up to `ReconnectMaxDelaySeconds` (1–3600), reset only
+after a connection that delivered data. `ReceiveIdleTimeoutSeconds` (5–3600, default 60) drops a
+connection that has gone silent; `MaxMessageBytes` (1 KiB–64 MiB, default 1 MiB) drops one that
+sends an oversized message. Invalid values stop the worker at startup.
 
 ## Tests
 

@@ -44,6 +44,37 @@ public class OptionsValidationTests
         Assert.False(new PumpApiOptions { WsUrl = ws, ReplayBaseUrl = replay }.HasValidUrls());
     }
 
+    private static bool IsValid(PumpApiOptions o) =>
+        Validator.TryValidateObject(o, new ValidationContext(o), null, validateAllProperties: true)
+        && o.HasValidUrls() && o.HasConsistentBackoff();
+
+    [Fact]
+    public void Pumpapi_defaults_are_valid()
+    {
+        Assert.True(IsValid(new PumpApiOptions()));
+    }
+
+    [Theory]
+    [InlineData(0, 30, 60, 1_048_576)]      // base delay below range
+    [InlineData(1, 0, 60, 1_048_576)]       // max delay below range
+    [InlineData(1, 3601, 60, 1_048_576)]    // max delay above range
+    [InlineData(10, 5, 60, 1_048_576)]      // max < base
+    [InlineData(1, 30, 1, 1_048_576)]       // idle timeout too short
+    [InlineData(1, 30, 60, 100)]            // message cap too small
+    [InlineData(1, 30, 60, 100_000_000)]    // message cap too large
+    public void Out_of_range_pumpapi_values_are_rejected(int baseDelay, int maxDelay, int idle, int maxBytes)
+    {
+        var o = new PumpApiOptions
+        {
+            ReconnectBaseDelaySeconds = baseDelay,
+            ReconnectMaxDelaySeconds = maxDelay,
+            ReceiveIdleTimeoutSeconds = idle,
+            MaxMessageBytes = maxBytes,
+        };
+
+        Assert.False(IsValid(o));
+    }
+
     [Fact]
     public void Every_log_severity_maps_to_a_value_the_logs_table_accepts()
     {

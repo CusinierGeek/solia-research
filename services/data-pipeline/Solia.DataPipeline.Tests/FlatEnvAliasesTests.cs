@@ -31,6 +31,19 @@ public class FlatEnvAliasesTests
         Assert.Equal("https://replay.example", pump.ReplayBaseUrl);
     }
 
+    [Theory]
+    [InlineData("true", true)]
+    [InlineData("1", true)]
+    [InlineData("false", false)]
+    public void Stream_probe_flat_key_maps_onto_pipeline_options(string raw, bool expected)
+    {
+        ConfigurationManager config = Config(("Pipeline:StreamProbe", (!expected).ToString()), ("STREAM_PROBE", raw));
+
+        config.AddFlatEnvAliases();
+
+        Assert.Equal(expected, config.GetSection(PipelineOptions.Section).Get<PipelineOptions>()!.StreamProbe);
+    }
+
     [Fact]
     public void Unset_flat_keys_leave_section_values_alone()
     {

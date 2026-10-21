@@ -20,8 +20,9 @@ public sealed class StreamHealthCheck(StreamConnectionState state, IOptions<Pipe
             return Task.FromResult(HealthCheckResult.Healthy("stream idle (probe disabled)"));
         }
 
-        return Task.FromResult(state.IsConnected
+        StreamStatus status = state.Current;
+        return Task.FromResult(status.IsConnected
             ? HealthCheckResult.Healthy("stream connected")
-            : HealthCheckResult.Degraded($"stream disconnected ({state.LastError ?? "connecting"})"));
+            : HealthCheckResult.Degraded($"stream disconnected ({status.LastError ?? "connecting"})"));
     }
 }

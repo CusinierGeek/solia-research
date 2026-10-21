@@ -25,6 +25,17 @@ public sealed class PumpApiOptions
     [Range(1, 3600)]
     public int ReconnectMaxDelaySeconds { get; set; } = 30;
 
+    /// <summary>
+    /// The firehose never goes quiet, so no message for this long means a dead (half-open)
+    /// connection: drop it and reconnect.
+    /// </summary>
+    [Range(5, 3600)]
+    public int ReceiveIdleTimeoutSeconds { get; set; } = 60;
+
+    /// <summary>Largest reassembled message accepted; a bigger one drops the connection (memory guard).</summary>
+    [Range(1024, 64 * 1024 * 1024)]
+    public int MaxMessageBytes { get; set; } = 1024 * 1024;
+
     public bool HasValidUrls() =>
         IsAbsolute(WsUrl, "ws", "wss") && IsAbsolute(ReplayBaseUrl, "http", "https");
 
