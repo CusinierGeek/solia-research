@@ -25,7 +25,7 @@ Every task issue has: **Business need** · **Acceptance criteria** · **Technica
 ### Task lifecycle
 1. Pick the lowest-numbered unblocked issue in the current milestone.
 2. Branch off `main`: `sprint/<n>-<task-slug>` or `feat/…`, `fix/…`, `chore/…`, `docs/…`.
-3. Implement + tests; meet the issue's acceptance criteria.
+3. Implement **+ tests** (see *Tests are mandatory* below); meet the issue's acceptance criteria.
 4. Open a PR into `main` using the PR template; `Closes #<issue>`; set the milestone.
 5. CI green + (convention) one review → **squash & merge**; delete the branch.
 
@@ -34,6 +34,14 @@ Every task issue has: **Business need** · **Acceptance criteria** · **Technica
 - **Never** add AI/Claude attribution to commits or PRs (no `Co-authored-by`, no "Generated with…", no 🤖). Authorship is 100% the user's.
 - **No direct pushes to `main`** — always branch + PR. (Branch protection isn't server-enforced on this free private repo; follow it by discipline.)
 - **Never commit secrets**; never log decrypted secrets.
+- **Tests are mandatory.** A task is not finished — and its PR is not opened — until it ships
+  tests for the logic it adds or changes, and `dotnet test` / `pytest` pass locally.
+  - Cover the behaviour the acceptance criteria describe, plus the error paths (invalid
+    config, bad input, unreachable dependency).
+  - Never defer a task's tests to a later task. A test project that doesn't exist yet is
+    created in the same PR.
+  - Only purely non-code changes (docs, templates) are exempt; say so in the PR's
+    *How to test* section.
 
 ## GitHub structure
 
