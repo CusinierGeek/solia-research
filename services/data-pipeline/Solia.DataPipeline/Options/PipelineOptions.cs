@@ -29,6 +29,13 @@ public sealed class PipelineOptions
     /// </summary>
     public bool EnrichHolders { get; set; } = false;
 
+    /// <summary>
+    /// Opt-in (off by default): run the live pumpapi source and log every event, for
+    /// observability / recovery verification. Overridable via the flat STREAM_PROBE env var.
+    /// Continuous ingestion into the DB is wired separately (T7), not by this flag.
+    /// </summary>
+    public bool StreamProbe { get; set; } = false;
+
     /// <summary>A window shorter than the snapshot cadence would compute features over no data.</summary>
     public bool HasConsistentWindow() => WindowSeconds >= SnapshotCadenceSeconds;
 }

@@ -2,6 +2,8 @@ using Npgsql;
 using Solia.DataPipeline;
 using Solia.DataPipeline.Config;
 using Solia.DataPipeline.Health;
+using Solia.DataPipeline.Hosting;
+using Solia.DataPipeline.Ingestion.PumpApi;
 using Solia.DataPipeline.Logging;
 using Solia.DataPipeline.Options;
 using Solia.Shared.Configuration;
@@ -19,8 +21,10 @@ builder.Services.AddOptions<PipelineOptions>()
     .ValidateOnStart();
 builder.Services.AddOptions<PumpApiOptions>()
     .Bind(builder.Configuration.GetSection(PumpApiOptions.Section))
+    .ValidateDataAnnotations()
     .Validate(o => o.HasValidUrls(),
         "PumpApi:WsUrl must be an absolute ws(s):// URL and PumpApi:ReplayBaseUrl an absolute http(s):// URL.")
+    .Validate(o => o.HasConsistentBackoff(), "PumpApi:ReconnectMaxDelaySeconds must be >= ReconnectBaseDelaySeconds.")
     .ValidateOnStart();
 
 // --- Database: a single pooled data source, owned (and disposed) by the container. The
@@ -34,12 +38,19 @@ builder.Services.AddSingleton(sp =>
 // --- Operational log sink (writes to the `logs` table) ---
 builder.Services.AddSingleton<ILogSink, PostgresLogSink>();
 
+// --- Live stream source (pumpapi WebSocket) ---
+builder.Services.AddSingleton<StreamConnectionState>();
+builder.Services.AddSingleton<Func<IWebSocket>>(_ => static () => new SystemWebSocket());
+builder.Services.AddSingleton<PumpApiStreamSource>();
+
 // --- Health (bounded so probes don't hang on an unreachable database) ---
 builder.Services.AddHealthChecks()
-    .AddCheck<DatabaseHealthCheck>("database", timeout: TimeSpan.FromSeconds(3));
+    .AddCheck<DatabaseHealthCheck>("database", timeout: TimeSpan.FromSeconds(3))
+    .AddCheck<StreamHealthCheck>("stream");
 
-// --- Pipeline worker ---
+// --- Pipeline worker + opt-in live-stream probe ---
 builder.Services.AddHostedService<Worker>();
+builder.Services.AddHostedService<StreamProbeService>();
 
 var app = builder.Build();
 

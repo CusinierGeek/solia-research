@@ -14,4 +14,8 @@
     <ProjectReference Include="..\..\shared\Solia.Shared\Solia.Shared.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Solia.DataPipeline.Tests" />
+  </ItemGroup>
+
 </Project>

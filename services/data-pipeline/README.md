@@ -7,9 +7,9 @@ Ingests Pump.fun activity from **pumpapi.io** — live WebSocket **and** histori
 
 ## Status
 
-Skeleton (T2): runnable host with configuration, structured logging + a `logs`-table sink,
-a `/health` endpoint, and graceful shutdown. Ingestion, parsing, features and persistence
-land in later Sprint-1 tasks (T3–T7).
+Runnable host (T2) with config, logging + a `logs`-table sink, `/health`, graceful shutdown.
+Canonical event model + pumpapi parser (T3). Live WebSocket source with auto-reconnect (T4) —
+observable via the opt-in probe below. Features and persistence land in T6/T7.
 
 ## Run locally
 
@@ -26,6 +26,18 @@ POSTGRES_HOST=localhost dotnet run --project services/data-pipeline/Solia.DataPi
   (HTTP 503) otherwise. The database check times out after 3 s.
 - A startup row appears in `logs` (`service = 'data-pipeline'`).
 
+### Watch real events (opt-in probe)
+
+```bash
+STREAM_PROBE=true POSTGRES_HOST=localhost dotnet run --project services/data-pipeline/Solia.DataPipeline
+```
+
+Connects to the pumpapi live stream and **logs every event** (kind, mint, venue, price) as it
+arrives — handy to see real Pump.fun activity and to verify reconnection (drop/restore the
+network and watch it back off and resume). This probe does **not** persist anything; continuous
+ingestion into the DB is wired in T7. When enabled, the `/health` `stream` check reflects the
+connection (`Degraded` while reconnecting).
+
 ## Configuration
 
 Bound from `appsettings.json` (or any configuration source, e.g. `Pipeline__WindowSeconds`), with the
@@ -39,12 +51,15 @@ but invalid (bad port, `ENRICH_HOLDERS=maybe`) fails startup with the variable's
 | `PUMPAPI_WS_URL` | `wss://stream.pumpapi.io/` | live stream |
 | `PUMPAPI_REPLAY_BASE_URL` | `https://replay.pumpapi.io` | historical replay base |
 | `ENRICH_HOLDERS` | `false` | paid holder enrichment (off = approximate from stream); accepts `true/false`, `1/0`, `yes/no`, `on/off` |
+| `STREAM_PROBE` | `false` | opt-in: stream live events and log them (observability), no persistence |
 | `SOLIA_DB_CONNECTION` | — | full Npgsql connection string (wins over `POSTGRES_*`) |
 | `POSTGRES_HOST/PORT/DB/USER/PASSWORD` | `localhost/5432/solia/solia/change_me` | DB parts |
 
 `Pipeline` section knobs: `SnapshotCadenceSeconds` (1–3600), `WindowSeconds` (1–86400, and
-≥ the cadence), `MaxTrackedTokens` (1–1,000,000), `EnrichHolders`. `PumpApi` URLs must be absolute
-(`ws(s)://` for the stream, `http(s)://` for replay). Invalid values stop the worker at startup.
+≥ the cadence), `MaxTrackedTokens` (1–1,000,000), `EnrichHolders`, `StreamProbe`. `PumpApi` URLs
+must be absolute (`ws(s)://` for the stream, `http(s)://` for replay); reconnect backoff is
+`ReconnectBaseDelaySeconds` (1–300) doubling up to `ReconnectMaxDelaySeconds` (1–3600). Invalid
+values stop the worker at startup.
 
 ## Tests
 

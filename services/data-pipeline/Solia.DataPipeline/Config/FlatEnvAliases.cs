@@ -14,6 +14,7 @@ public static class FlatEnvAliases
         ("PUMPAPI_WS_URL", "PumpApi:WsUrl", false),
         ("PUMPAPI_REPLAY_BASE_URL", "PumpApi:ReplayBaseUrl", false),
         ("ENRICH_HOLDERS", "Pipeline:EnrichHolders", true),
+        ("STREAM_PROBE", "Pipeline:StreamProbe", true),
     ];
 
     /// <summary>
