@@ -1,3 +1,4 @@
-# Migration checksums are computed over the file text; keep SQL LF everywhere.
-* text=auto
+# LF everywhere (matches .editorconfig end_of_line = lf, so dotnet format passes on
+# Windows checkouts too). Migration checksums also depend on stable SQL line endings.
+* text=auto eol=lf
 *.sql text eol=lf

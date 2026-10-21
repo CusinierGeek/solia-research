@@ -27,18 +27,26 @@ jobs:
             echo "found=false" >> "$GITHUB_OUTPUT"
             echo "No Python projects yet — skipping."
           fi
-      - name: Install, lint & test
+      # Every step must pass: lint, format and test failures fail the build.
+      # pytest also fails when it collects no tests (tests are mandatory, see CLAUDE.md).
+      - name: Install
         if: steps.detect.outputs.found == 'true'
         run: |
           python -m pip install --upgrade pip ruff black pytest
           # ai-service is the only Python project (data-pipeline is a .NET worker).
           for d in services/ai-service; do
             if [ -f "$d/requirements.txt" ]; then pip install -r "$d/requirements.txt"; fi
-            if [ -f "$d/pyproject.toml" ]; then pip install -e "$d" || true; fi
+            if [ -f "$d/pyproject.toml" ]; then pip install -e "$d"; fi
           done
-          ruff check services || true
-          black --check services || true
-          pytest services || true
+      - name: Lint (ruff)
+        if: steps.detect.outputs.found == 'true'
+        run: ruff check services
+      - name: Format (black)
+        if: steps.detect.outputs.found == 'true'
+        run: black --check services
+      - name: Test (pytest)
+        if: steps.detect.outputs.found == 'true'
+        run: pytest services
 
   dotnet:
     name: .NET build & test
@@ -57,9 +65,15 @@ jobs:
             echo "found=false" >> "$GITHUB_OUTPUT"
             echo "No .NET projects yet — skipping."
           fi
-      - name: Restore, build & test
+      - name: Restore
         if: steps.detect.outputs.found == 'true'
-        run: |
-          dotnet restore
-          dotnet build --no-restore -c Release
-          dotnet test --no-build -c Release
+        run: dotnet restore
+      - name: Format (dotnet format)
+        if: steps.detect.outputs.found == 'true'
+        run: dotnet format --no-restore --verify-no-changes
+      - name: Build
+        if: steps.detect.outputs.found == 'true'
+        run: dotnet build --no-restore -c Release
+      - name: Test
+        if: steps.detect.outputs.found == 'true'
+        run: dotnet test --no-build -c Release
