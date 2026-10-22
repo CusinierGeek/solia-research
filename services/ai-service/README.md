@@ -53,8 +53,25 @@ from this directory so they pick up its `pyproject.toml` settings — CI does th
 - The database tests run against Testcontainers PostgreSQL. Locally they are skipped when Docker
   isn't running; in CI (`CI` set) a missing Docker fails the build instead.
 
+## Dataset & labeling
+
+`solia_ai/dataset.py` slides `seq_len` windows over each token's `features` rows (windows are
+views over rows stored once, so memory doesn't grow with `seq_len`) and labels each horizon from
+the realized future:
+
+- **pump** — the *highest* price in the horizon rose by ≥ `pump_threshold`;
+- **rug** — the *lowest* price **or** liquidity fell by ≥ `rug_threshold`;
+- **expected_return** — the price at the horizon end vs. the anchor.
+
+Pump and rug are independent heads (a violent swing can be both). A horizon is masked when the
+data doesn't cover it or the last row inside it is stale (`max(max_gap_fraction·H,
+min_gap_seconds)`), except when a rug has already happened in the observed part — that's how a
+token that collapses and stops trading still gets its rug label. The temporal split embargoes the
+longest horizon; `positive_weights` (BCE `pos_weight`), `balanced_sampler` and `make_loaders`
+handle the class imbalance.
+
 ## Planned modules (Sprint 2)
 
-`dataset.py` (windowing + labeling), `model.py` (Transformer), `train.py` (training +
+`model.py` (Transformer), `train.py` (training +
 checkpoints), `inference.py` (+ ONNX export), `api.py` (FastAPI). `retrain.py` (continuous
 training) arrives in Sprint 7.

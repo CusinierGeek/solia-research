@@ -101,6 +101,21 @@ def test_invalid_values_are_rejected_with_the_key_named(tmp_path, sections, mess
         load_config(write(tmp_path, variant(**sections)))
 
 
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        ({"max_gap_fraction": 0}, r"'labeling.max_gap_fraction' must be in \(0, 1\]"),
+        ({"max_gap_fraction": 1.5}, r"'labeling.max_gap_fraction' must be in \(0, 1\]"),
+        ({"min_gap_seconds": -5}, "'labeling.min_gap_seconds' must be >= 0"),
+    ],
+)
+def test_invalid_gap_settings_are_rejected(tmp_path, extra, message):
+    labeling = {**VALID["labeling"], **extra}
+
+    with pytest.raises(ConfigError, match=message):
+        load_config(write(tmp_path, variant(labeling=labeling)))
+
+
 def test_every_horizon_needs_a_threshold(tmp_path):
     labeling = {
         "pump_threshold": {

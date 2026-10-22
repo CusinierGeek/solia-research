@@ -29,16 +29,21 @@ loss:
 # Prediction horizons.
 horizons: ["30s", "1m", "5m", "15m", "1h"]
 
-# Labeling thresholds per horizon (fractional move). Provisional — confirm before the first
-# real training run (Sprint 2 kickoff decision).
+# Labeling per horizon (fractional move) — see solia_ai/dataset.py for the exact rules.
+# Thresholds are provisional — confirm before the first real training run (Sprint 2 decision).
 labeling:
-  pump_threshold: # price rose by >= this fraction within the horizon
+  # A horizon is only labeled if the last row inside it is within
+  # max(max_gap_fraction * horizon, min_gap_seconds) of its end (no stale "realized" prices).
+  max_gap_fraction: 0.25
+  min_gap_seconds: 20 # two pipeline snapshot cadences
+
+  pump_threshold: # the highest price in the horizon rose by >= this fraction
     "30s": 0.15
     "1m": 0.25
     "5m": 0.5
     "15m": 1.0
     "1h": 2.0
-  rug_threshold: # price/liquidity collapsed by >= this fraction within the horizon
+  rug_threshold: # the lowest price OR liquidity in the horizon fell by >= this fraction
     "30s": 0.3
     "1m": 0.4
     "5m": 0.5

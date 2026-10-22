@@ -114,6 +114,10 @@ def _validate(config: Any, source: str) -> None:
         fail("'horizons' must be a non-empty list of strings")
 
     labeling = section("labeling")
+    if "max_gap_fraction" in labeling and not 0 < number("labeling", "max_gap_fraction") <= 1:
+        fail("'labeling.max_gap_fraction' must be in (0, 1]")
+    if "min_gap_seconds" in labeling:
+        number("labeling", "min_gap_seconds")
     for kind in ("pump_threshold", "rug_threshold"):
         thresholds = labeling.get(kind)
         if not isinstance(thresholds, dict):
