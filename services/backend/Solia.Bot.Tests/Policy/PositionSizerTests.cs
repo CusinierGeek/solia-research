@@ -57,6 +57,45 @@ public class PositionSizerTests
     }
 
     [Theory]
+    [InlineData(0.0005)] // a sliver of upside with no rug would be full-cap Kelly
+    [InlineData(0.049)]
+    public void An_expected_return_below_the_take_profit_floor_sizes_to_zero(double expectedReturn)
+    {
+        ModelPrediction tiny = PolicyFixtures.Buyable() with { ExpectedReturn = expectedReturn, RugProb = 0.0 };
+
+        Assert.Equal(0.0, PositionSizer.Gain(tiny, Opts));
+        Assert.Equal(0.0, PositionSizer.Fraction(tiny, Opts));
+    }
+
+    [Theory]
+    [InlineData(0.05, 0.05)] // at the floor: tradeable
+    [InlineData(0.2, 0.2)]
+    [InlineData(3.0, 0.5)]   // capped at TakeProfitPct
+    [InlineData(double.NaN, 0.0)]
+    public void Gain_is_the_expected_return_capped_and_floored(double expectedReturn, double gain)
+    {
+        Assert.Equal(gain, PositionSizer.Gain(PolicyFixtures.Buyable() with { ExpectedReturn = expectedReturn }, Opts), 12);
+    }
+
+    [Fact]
+    public void A_zero_take_profit_floor_still_requires_a_positive_gain()
+    {
+        var noFloor = new BotOptions { MinTakeProfitPct = 0 };
+        Assert.Equal(0.0, PositionSizer.Gain(PolicyFixtures.Buyable() with { ExpectedReturn = 0.0 }, noFloor));
+        Assert.Equal(0.0005, PositionSizer.Gain(PolicyFixtures.Buyable() with { ExpectedReturn = 0.0005 }, noFloor), 12);
+    }
+
+    [Fact]
+    public void Size_is_truncated_to_money_precision()
+    {
+        decimal size = PositionSizer.Size(Modest(), WithBalance(10m / 3m), Opts);
+
+        Assert.True(size > 0m);
+        Assert.Equal(Math.Round(size, Money.Decimals, MidpointRounding.ToZero), size);
+        Assert.True(size <= (10m / 3m) * (decimal)PositionSizer.Fraction(Modest(), Opts));
+    }
+
+    [Theory]
     [InlineData(0.1, 0.12)] // more expected return → bigger
     public void Size_increases_with_expected_return(double low, double high)
     {
@@ -92,7 +131,7 @@ public class PositionSizerTests
     public void Size_is_balance_times_fraction()
     {
         decimal size = PositionSizer.Size(Modest(), WithBalance(10m), Uncapped);
-        Assert.Equal(10m * (decimal)PositionSizer.Fraction(Modest(), Uncapped), size);
+        Assert.Equal(Money.Truncate(10m * (decimal)PositionSizer.Fraction(Modest(), Uncapped)), size);
     }
 
     [Fact]

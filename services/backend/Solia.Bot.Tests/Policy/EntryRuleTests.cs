@@ -117,6 +117,7 @@ public class EntryRuleTests
     [Theory]
     [InlineData(-0.2)] // expected loss
     [InlineData(0.0)]  // no expected gain
+    [InlineData(0.01)] // below the MinTakeProfitPct floor
     public void A_buy_signal_without_a_positive_edge_is_rejected(double expectedReturn)
     {
         // The heads say Buy, but the sized bet has no edge — an explicit reason, not an Accept of size 0.

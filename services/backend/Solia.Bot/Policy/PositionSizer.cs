@@ -11,7 +11,8 @@ namespace Solia.Bot.Policy;
 /// The bet, per unit staked:
 /// <list type="bullet">
 ///   <item>no rug (probability <c>p = 1 − rug_prob</c>): gain <c>b = min(expected_return, TakeProfitPct)</c>
-///   — the take-profit caps what the bot can realize;</item>
+///   — the take-profit caps what the bot can realize (<see cref="Gain"/>; below
+///   <see cref="BotOptions.MinTakeProfitPct"/> there is no trade);</item>
 ///   <item>rug (probability <c>q = rug_prob</c>): lose <c>L = StopLossPct</c> — the stop-loss caps the
 ///   loss. This assumes the stop fills; a rug that gaps through it loses more, which the hard
 ///   <see cref="BotOptions.MaxPositionFraction"/> cap and the fractional multiplier absorb.</item>
@@ -28,6 +29,21 @@ namespace Solia.Bot.Policy;
 public static class PositionSizer
 {
     /// <summary>
+    /// The per-unit gain <c>b</c> the bet is sized on — and the take-profit distance
+    /// (<see cref="Trading.ExitLevels"/>), so sizing and exit can't drift apart:
+    /// <c>min(expected_return, TakeProfitPct)</c>, or 0 when that is below
+    /// <see cref="BotOptions.MinTakeProfitPct"/> or not positive (no upside worth trading).
+    /// </summary>
+    public static double Gain(ModelPrediction prediction, BotOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(prediction);
+        ArgumentNullException.ThrowIfNull(options);
+
+        double gain = Math.Min(prediction.ExpectedReturn, options.TakeProfitPct);
+        return gain > 0.0 && gain >= options.MinTakeProfitPct ? gain : 0.0;
+    }
+
+    /// <summary>
     /// The fraction of balance to commit, in [0, <see cref="BotOptions.MaxPositionFraction"/>]. Zero
     /// means the bet has no positive edge (or the prediction is malformed) — no trade.
     /// </summary>
@@ -41,7 +57,7 @@ public static class PositionSizer
             return 0.0;
         }
 
-        double gain = Math.Min(prediction.ExpectedReturn, options.TakeProfitPct);
+        double gain = Gain(prediction, options);
         if (gain <= 0.0)
         {
             return 0.0;
@@ -75,7 +91,7 @@ public static class PositionSizer
         }
 
         // fraction is finite and in (0, MaxPositionFraction ≤ 1], so the cast can't overflow.
-        decimal size = portfolio.Balance * (decimal)fraction;
+        decimal size = Money.Truncate(portfolio.Balance * (decimal)fraction);
         return size < options.MinPositionSize ? 0m : size;
     }
 }

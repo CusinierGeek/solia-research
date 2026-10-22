@@ -75,11 +75,52 @@ public sealed class BotOptions : IValidatableObject
     public double TakeProfitPct { get; set; } = 0.5;
 
     /// <summary>
+    /// Smallest upside worth trading, [0, 10]: a prediction whose capped expected return is below this
+    /// has no tradeable edge (see Policy.PositionSizer.Gain) — otherwise a near-zero expected return would
+    /// set the take-profit at the entry price and blow up the Kelly fraction. Zero disables the floor.
+    /// Must not exceed <see cref="TakeProfitPct"/>.
+    /// </summary>
+    [Range(0.0, 10.0)]
+    public double MinTakeProfitPct { get; set; } = 0.05;
+
+    /// <summary>
     /// Stop-loss as a fraction below entry price (e.g. 0.3 = -30%), (0, 1). Zero would close every
     /// position immediately; 1 or more puts the stop at or below a zero price, so it could never trigger.
     /// </summary>
     [Range(0.0, 1.0, MinimumIsExclusive = true, MaximumIsExclusive = true)]
     public double StopLossPct { get; set; } = 0.3;
+
+    /// <summary>
+    /// Dynamic stop-loss: the stop distance is this many multiples of the prediction's volatility
+    /// (per-tick return σ), clamped to [<see cref="MinStopLossPct"/>, <see cref="StopLossPct"/>]
+    /// (see Trading.ExitLevels), [0, 100]. Zero disables it — every position then uses the fixed
+    /// <see cref="StopLossPct"/>.
+    /// </summary>
+    [Range(0.0, 100.0)]
+    public double StopLossVolatilityMultiple { get; set; } = 3.0;
+
+    /// <summary>
+    /// Floor on the dynamic stop distance, (0, 1) — keeps a near-zero volatility from placing the stop at
+    /// the entry price, where any down-tick would close the position. Must not exceed <see cref="StopLossPct"/>.
+    /// </summary>
+    [Range(0.0, 1.0, MinimumIsExclusive = true, MaximumIsExclusive = true)]
+    public double MinStopLossPct { get; set; } = 0.05;
+
+    /// <summary>
+    /// How old a mint's last price may be and still count as its market, in seconds, [1, 86 400]. An entry
+    /// needs a mark at most this old; a signal or timeout exit on an older mark assumes the unobserved
+    /// market hit the stop (see Trading.PositionManager), so a silent feed can't book a stale break-even.
+    /// </summary>
+    [Range(1, 86_400)]
+    public int MaxMarkAgeSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// How far behind the event clock an event may arrive and still be applied (at the clock's time),
+    /// in seconds, [0, 3 600]. A later event is dropped rather than rewinding the clock — the live
+    /// stream merges sources that aren't perfectly ordered.
+    /// </summary>
+    [Range(0, 3_600)]
+    public int MaxEventLagSeconds { get; set; } = 5;
 
     /// <summary>
     /// Cross-field rules. Runs only once every single-field annotation has passed, so the values here
@@ -94,6 +135,22 @@ public sealed class BotOptions : IValidatableObject
                 $"{nameof(MinPositionSize)} ({MinPositionSize}) exceeds the largest possible position " +
                 $"{nameof(StartingBalance)} · {nameof(MaxPositionFraction)} ({largestPosition}); the bot could never trade.",
                 [nameof(MinPositionSize), nameof(StartingBalance), nameof(MaxPositionFraction)]);
+        }
+
+        if (MinStopLossPct > StopLossPct)
+        {
+            yield return new ValidationResult(
+                $"{nameof(MinStopLossPct)} ({MinStopLossPct}) exceeds {nameof(StopLossPct)} ({StopLossPct}); " +
+                "the dynamic stop's floor would sit above its cap.",
+                [nameof(MinStopLossPct), nameof(StopLossPct)]);
+        }
+
+        if (MinTakeProfitPct > TakeProfitPct)
+        {
+            yield return new ValidationResult(
+                $"{nameof(MinTakeProfitPct)} ({MinTakeProfitPct}) exceeds {nameof(TakeProfitPct)} ({TakeProfitPct}); " +
+                "no prediction could ever clear the take-profit floor.",
+                [nameof(MinTakeProfitPct), nameof(TakeProfitPct)]);
         }
     }
 }

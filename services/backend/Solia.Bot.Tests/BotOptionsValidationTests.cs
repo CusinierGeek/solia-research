@@ -162,4 +162,82 @@ public class BotOptionsValidationTests
     {
         Assert.True(IsValid(new BotOptions { TakeProfitPct = 2.0, StopLossPct = 0.99 }));
     }
+
+    [Theory]
+    [InlineData(-0.1)]
+    [InlineData(100.1)]
+    public void Out_of_range_stop_loss_volatility_multiple_is_rejected(double multiple)
+    {
+        Assert.False(IsValid(new BotOptions { StopLossVolatilityMultiple = multiple }));
+    }
+
+    [Fact]
+    public void Zero_stop_loss_volatility_multiple_disables_the_dynamic_stop_and_is_valid()
+    {
+        Assert.True(IsValid(new BotOptions { StopLossVolatilityMultiple = 0 }));
+    }
+
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(1.0)]
+    public void Out_of_range_min_stop_loss_is_rejected(double minStop)
+    {
+        Assert.False(IsValid(new BotOptions { MinStopLossPct = minStop, StopLossPct = 0.99 }));
+    }
+
+    [Fact]
+    public void Min_stop_loss_above_the_stop_loss_cap_is_rejected()
+    {
+        Assert.False(IsValid(new BotOptions { MinStopLossPct = 0.4, StopLossPct = 0.3 }));
+    }
+
+    [Fact]
+    public void Min_stop_loss_equal_to_the_cap_is_a_fixed_stop_and_is_valid()
+    {
+        Assert.True(IsValid(new BotOptions { MinStopLossPct = 0.3, StopLossPct = 0.3 }));
+    }
+
+    [Theory]
+    [InlineData(-0.01)]
+    [InlineData(10.01)]
+    public void Out_of_range_min_take_profit_is_rejected(double minTakeProfit)
+    {
+        Assert.False(IsValid(new BotOptions { MinTakeProfitPct = minTakeProfit, TakeProfitPct = 10 }));
+    }
+
+    [Fact]
+    public void Min_take_profit_above_the_take_profit_cap_is_rejected()
+    {
+        Assert.False(IsValid(new BotOptions { MinTakeProfitPct = 0.6, TakeProfitPct = 0.5 }));
+    }
+
+    [Theory]
+    [InlineData(0.0)] // floor disabled
+    [InlineData(0.5)] // floor at the cap
+    public void Min_take_profit_within_the_cap_is_valid(double minTakeProfit)
+    {
+        Assert.True(IsValid(new BotOptions { MinTakeProfitPct = minTakeProfit, TakeProfitPct = 0.5 }));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(86_401)]
+    public void Out_of_range_max_mark_age_is_rejected(int seconds)
+    {
+        Assert.False(IsValid(new BotOptions { MaxMarkAgeSeconds = seconds }));
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(3_601)]
+    public void Out_of_range_max_event_lag_is_rejected(int seconds)
+    {
+        Assert.False(IsValid(new BotOptions { MaxEventLagSeconds = seconds }));
+    }
+
+    [Fact]
+    public void Zero_event_lag_means_strict_ordering_and_is_valid()
+    {
+        Assert.True(IsValid(new BotOptions { MaxEventLagSeconds = 0 }));
+    }
 }
