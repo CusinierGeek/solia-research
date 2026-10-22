@@ -190,7 +190,17 @@ class SoliaTransformer(nn.Module):
             padding_mask = None if padding_mask is None else padding_mask[:, -self.seq_len :]
         if padding_mask is not None and padding_mask.all(dim=1).any():
             raise ValueError("a sequence is entirely padding")
+        return self.encode_logits(x, padding_mask)
 
+    def encode_logits(
+        self, x: torch.Tensor, padding_mask: torch.Tensor | None = None
+    ) -> dict[str, torch.Tensor]:
+        """The forward math on already-validated inputs (``L <= seq_len``, no fully-padded row).
+
+        Split out so the ONNX export can trace the computation without :meth:`forward`'s
+        data-dependent validation branches, which ``torch.export`` cannot capture — both paths
+        share this one implementation, so the graph can never drift from training.
+        """
         length = x.shape[1]
         # Right-aligned positions: the most recent row always gets the last encoding.
         hidden = self.input_proj(self.normalizer(x)) + self.positional_encoding[-length:]

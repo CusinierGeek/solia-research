@@ -54,6 +54,32 @@ def _constraint_name(exc: IntegrityError) -> str | None:
     return getattr(diag, "constraint_name", None)
 
 
+def read_champion(engine: Engine) -> ModelRecord | None:
+    """The current champion registry row, or ``None`` if nothing has been promoted yet.
+
+    The single-champion partial index guarantees at most one row matches, so inference always
+    serves an unambiguous checkpoint. Torch-free like the rest of this module: the caller
+    (:mod:`solia_ai.inference`) turns ``path`` into a loaded model.
+    """
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT id, version, path, is_champion, n_params, created_at "
+                "FROM models WHERE is_champion"
+            )
+        ).one_or_none()
+    if row is None:
+        return None
+    return ModelRecord(
+        id=int(row.id),
+        version=row.version,
+        path=row.path,
+        is_champion=bool(row.is_champion),
+        n_params=None if row.n_params is None else int(row.n_params),
+        created_at=row.created_at,
+    )
+
+
 def register_model(
     engine: Engine,
     *,

@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 from test_train import make_features_df, small_config
 
-from solia_ai.registry import register_model
+from solia_ai.registry import read_champion, register_model
 from solia_ai.train import train
 
 
@@ -74,6 +74,44 @@ def test_non_champion_rows_coexist(engine):
     register_model(engine, version="b", path="/b.pt", is_champion=False)
 
     assert len([r for r in _rows(engine) if not r["is_champion"]]) == 2
+
+
+def test_read_champion_is_none_on_an_empty_registry(engine):
+    assert read_champion(engine) is None
+
+
+def test_read_champion_is_none_when_nothing_was_promoted(engine):
+    register_model(engine, version="plain", path="/plain.pt", is_champion=False)
+
+    assert read_champion(engine) is None
+
+
+def test_read_champion_returns_the_promoted_row(engine):
+    registered = register_model(
+        engine, version="champ", path="/models/champ.pt", n_params=42, is_champion=True
+    )
+    register_model(engine, version="other", path="/other.pt", is_champion=False)
+
+    record = read_champion(engine)
+
+    assert record == registered  # every column mapped back from the row
+    assert record.version == "champ"
+    assert record.path == "/models/champ.pt"
+    assert record.is_champion is True
+    assert record.n_params == 42
+
+
+def test_read_champion_follows_a_promotion(engine):
+    register_model(engine, version="old", path="/old.pt", is_champion=True)
+    register_model(engine, version="new", path="/new.pt", is_champion=True)
+
+    assert read_champion(engine).version == "new"
+
+
+def test_read_champion_maps_a_null_n_params(engine):
+    register_model(engine, version="bare", path="/bare.pt", is_champion=True)
+
+    assert read_champion(engine).n_params is None
 
 
 def test_duplicate_version_is_rejected(engine):
