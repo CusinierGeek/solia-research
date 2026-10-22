@@ -1,7 +1,10 @@
+using System.Text.Json;
 using Solia.Bot.Configuration;
 using Solia.Bot.Domain;
+using Solia.Bot.Logging;
 using Solia.Bot.Tests.Policy;
 using Solia.Bot.Trading;
+using Solia.Shared.Logging;
 
 namespace Solia.Bot.Tests.Trading;
 
@@ -491,6 +494,38 @@ public class PositionManagerTests
     {
         Assert.Throws<ArgumentNullException>(() => new PositionManager(null!, _store));
         Assert.Throws<ArgumentNullException>(() => new PositionManager(PolicyFixtures.Options(), null!));
+    }
+
+    [Fact]
+    public async Task Open_and_close_log_rows_share_camel_case_keys_so_they_correlate_by_trade_id()
+    {
+        var sink = new ContextSink();
+        var bot = new PositionManager(PolicyFixtures.Options(), _store, sink);
+
+        foreach (BotEvent e in new[] { Tick(0, Entry), Predict(1), Tick(2, 0.00015m) })
+        {
+            await bot.HandleAsync(e);
+        }
+
+        Assert.Equal(["position opened", "position closed"], sink.Rows.Select(r => r.Message));
+        using JsonDocument opened = JsonDocument.Parse(sink.Rows[0].Json!);
+        using JsonDocument closed = JsonDocument.Parse(sink.Rows[1].Json!);
+        Assert.Equal(opened.RootElement.GetProperty("tradeId").GetInt64(), closed.RootElement.GetProperty("tradeId").GetInt64());
+        Assert.Equal(Mint, opened.RootElement.GetProperty("mint").GetString());
+        Assert.Equal(Mint, closed.RootElement.GetProperty("mint").GetString());
+        Assert.Equal("tp", closed.RootElement.GetProperty("reason").GetString());
+    }
+
+    /// <summary>Captures each entry's context exactly as the Postgres sink would store it.</summary>
+    private sealed class ContextSink : IBotLogSink
+    {
+        public List<(string Message, string? Json)> Rows { get; } = [];
+
+        public Task WriteAsync(LogSeverity level, string message, object? context = null, CancellationToken ct = default)
+        {
+            Rows.Add((message, PostgresLogSink.SerializeContext(context)));
+            return Task.CompletedTask;
+        }
     }
 
     /// <summary>Fails the <paramref name="failingCall"/>-th close once, then behaves.</summary>

@@ -123,6 +123,15 @@ public sealed class BotOptions : IValidatableObject
     public int MaxEventLagSeconds { get; set; } = 5;
 
     /// <summary>
+    /// How often the host sweeps position timeouts while the feed is quiet, in seconds, [0, 3 600]. After
+    /// this long with no event, the bot advances the event clock by the wall time elapsed since the last
+    /// event (see <c>PaperTradingBot</c>), so a silent feed can't hold a position — and its capital —
+    /// past its deadline. Zero disables the sweep: a deterministic replay must run on event time alone.
+    /// </summary>
+    [Range(0, 3_600)]
+    public int TimeoutSweepSeconds { get; set; } = 5;
+
+    /// <summary>
     /// Cross-field rules. Runs only once every single-field annotation has passed, so the values here
     /// are already in range.
     /// </summary>

@@ -1,5 +1,5 @@
 using System.ComponentModel.DataAnnotations;
-using Solia.DataPipeline.Logging;
+using Solia.Shared.Logging;
 using Solia.DataPipeline.Options;
 
 namespace Solia.DataPipeline.Tests;

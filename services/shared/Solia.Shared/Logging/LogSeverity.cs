@@ -1,4 +1,4 @@
-namespace Solia.DataPipeline.Logging;
+namespace Solia.Shared.Logging;
 
 /// <summary>
 /// The levels accepted by the `logs` table (CHECK level IN ('debug','info','warn','error')).

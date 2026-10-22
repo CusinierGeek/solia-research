@@ -240,4 +240,21 @@ public class BotOptionsValidationTests
     {
         Assert.True(IsValid(new BotOptions { MaxEventLagSeconds = 0 }));
     }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(3_601)]
+    public void Out_of_range_timeout_sweep_is_rejected(int seconds)
+    {
+        Assert.False(IsValid(new BotOptions { TimeoutSweepSeconds = seconds }));
+    }
+
+    [Theory]
+    [InlineData(0)] // disabled: deterministic replay
+    [InlineData(5)]
+    [InlineData(3_600)]
+    public void In_range_timeout_sweep_is_valid(int seconds)
+    {
+        Assert.True(IsValid(new BotOptions { TimeoutSweepSeconds = seconds }));
+    }
 }

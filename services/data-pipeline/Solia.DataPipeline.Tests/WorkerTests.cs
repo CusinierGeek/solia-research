@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Solia.DataPipeline.Ingestion;
-using Solia.DataPipeline.Logging;
+using Solia.Shared.Logging;
 using Solia.DataPipeline.Options;
 using Solia.DataPipeline.Pipeline;
 using static Solia.DataPipeline.Tests.Pipeline.PipelineEngineTests;

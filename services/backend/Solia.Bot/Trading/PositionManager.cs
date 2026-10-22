@@ -1,6 +1,9 @@
+using Microsoft.Extensions.Logging;
 using Solia.Bot.Configuration;
 using Solia.Bot.Domain;
+using Solia.Bot.Logging;
 using Solia.Bot.Policy;
+using Solia.Shared.Logging;
 
 namespace Solia.Bot.Trading;
 
@@ -52,19 +55,27 @@ public sealed class PositionManager
 {
     private readonly BotOptions _options;
     private readonly ITradeStore _store;
+    private readonly BestEffortLogWriter _log;
     private readonly Dictionary<string, OpenPosition> _positions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Mark> _marks = new(StringComparer.Ordinal);
 
     // Earliest deadline first; entries of positions closed by another rule are skipped lazily.
     private readonly PriorityQueue<OpenPosition, (DateTimeOffset Deadline, long TradeId)> _deadlines = new();
 
-    public PositionManager(BotOptions options, ITradeStore store)
+    /// <param name="logSink">
+    /// Operational sink for position opens/closes (service = 'bot'). Defaults to the no-op
+    /// <see cref="NullBotLogSink"/> so the engine stays testable without a database; writes go through
+    /// a <see cref="BestEffortLogWriter"/> — bounded, never thrown, so they never alter trading.
+    /// </param>
+    /// <param name="logger">Where a failed operational write is reported; defaults to none.</param>
+    public PositionManager(BotOptions options, ITradeStore store, IBotLogSink? logSink = null, ILogger<PositionManager>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(store);
 
         _options = options;
         _store = store;
+        _log = new BestEffortLogWriter(logSink ?? NullBotLogSink.Instance, logger);
         Balance = options.StartingBalance;
     }
 
@@ -220,6 +231,9 @@ public sealed class PositionManager
         Balance -= opening.Size;
         _positions.Add(opening.Mint, position);
         _deadlines.Enqueue(position, (position.Deadline, position.TradeId));
+
+        await _log.WriteAsync(LogSeverity.Info, "position opened",
+            new { tradeId, mint = opening.Mint, entryPrice = opening.EntryPrice, size = opening.Size }, cancellationToken);
     }
 
     private bool IsFresh(Mark mark, DateTimeOffset at) =>
@@ -247,6 +261,18 @@ public sealed class PositionManager
         {
             Clock = closedAt;
         }
+
+        await _log.WriteAsync(LogSeverity.Info, "position closed",
+            new
+            {
+                tradeId = trade.TradeId,
+                mint = position.Mint,
+                reason = reason.ToCode(),
+                exitPrice = trade.ExitPrice,
+                pnl = trade.Pnl,
+                pnlPct = trade.PnlPct,
+            },
+            cancellationToken);
     }
 
     private readonly record struct Mark(decimal Price, DateTimeOffset Ts);

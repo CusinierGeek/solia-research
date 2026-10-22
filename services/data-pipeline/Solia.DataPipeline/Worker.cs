@@ -1,5 +1,5 @@
 using Microsoft.Extensions.Options;
-using Solia.DataPipeline.Logging;
+using Solia.Shared.Logging;
 using Solia.DataPipeline.Options;
 using Solia.DataPipeline.Pipeline;
 

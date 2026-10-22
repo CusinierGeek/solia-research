@@ -1,4 +1,4 @@
-namespace Solia.DataPipeline.Logging;
+namespace Solia.Shared.Logging;
 
 /// <summary>
 /// Persists operational log entries to the shared `logs` table (surfaced on the dashboard).

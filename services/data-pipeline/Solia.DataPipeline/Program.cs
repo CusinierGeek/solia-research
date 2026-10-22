@@ -6,7 +6,7 @@ using Solia.DataPipeline.Health;
 using Solia.DataPipeline.Hosting;
 using Solia.DataPipeline.Ingestion;
 using Solia.DataPipeline.Ingestion.PumpApi;
-using Solia.DataPipeline.Logging;
+using Solia.Shared.Logging;
 using Solia.DataPipeline.Options;
 using Solia.DataPipeline.Pipeline;
 using Solia.Shared.Configuration;
@@ -41,7 +41,7 @@ builder.Services.AddSingleton(sp =>
 });
 
 // --- Operational log sink (writes to the `logs` table) ---
-builder.Services.AddSingleton<ILogSink, PostgresLogSink>();
+builder.Services.AddSingleton<ILogSink>(sp => new PostgresLogSink(sp.GetRequiredService<NpgsqlDataSource>(), "data-pipeline"));
 
 // --- Live stream source (pumpapi WebSocket) ---
 builder.Services.AddSingleton<StreamConnectionState>();
