@@ -8,8 +8,9 @@ path), and an internal prediction API. Continuous retraining lands in Sprint 7.
 
 ## Status
 
-Scaffold (T1): package, pinned deps, `config.yaml`, lint/format/test tooling. Dataset, model,
-training, inference/ONNX and the API land in T2–T7.
+Sprint 2 complete: feature spec, dataset/labeling, Transformer model, training + checkpoints,
+inference + ONNX export, evaluation, and the internal prediction API. Continuous retraining
+(`retrain.py` + `/model/retrain`) lands in Sprint 7.
 
 ## Dev setup
 
@@ -85,7 +86,38 @@ feature rows, with per-horizon `pump` / `rug` (logits) and `expected_return` hea
 - Shape knobs (`d_model`, `n_heads`, `n_layers`, `ff_dim`, `dropout`, `seq_len`, `min_seq_len`)
   come from `config.yaml`.
 
-## Planned modules (Sprint 2)
+## Evaluation
 
-`train.py` (training + checkpoints), `inference.py` (+ ONNX export), `api.py` (FastAPI).
-`retrain.py` (continuous training) arrives in Sprint 7.
+`solia_ai/evaluate.py` scores a checkpoint over the held-out validation window and reports, per
+horizon (on labeled samples only): **pump / rug** ROC-AUC, PR-AUC and calibration error (ECE);
+**expected_return** information coefficient (Spearman rank IC), Pearson correlation and MAE; and a
+simulated **win-rate / P&L** from a deliberately simple `ReferencePolicy` (enter when `pump_prob`
+is high and `rug_prob` low). That policy is a *yardstick* for the signal only — the real, tunable
+policy lives in the bot (Sprints 3–4). AUCs/correlations are `null` when undefined (a single class
+or a constant series), and the JSON report nulls any non-finite metric.
+
+```bash
+python -m solia_ai.evaluate --champion --out report.json   # or --checkpoint path/to/model.pt
+```
+
+## Prediction API
+
+`solia_ai/api.py` — the internal FastAPI the backend calls (`docs/API-CONTRACTS.md`):
+
+- `POST /predict` — **stateless**: the caller sends the token's recent feature window (objects
+  keyed by feature name, or arrays in `FEATURE_COLUMNS` order) and gets back, per requested
+  horizon, `pump_prob` / `rug_prob` / `expected_return` / `confidence` plus the `model_version`.
+- `GET /model/status` — the loaded champion's version, parameter count and training metrics.
+- `GET /health` — liveness (never touches the database).
+
+The champion is loaded lazily and cached, so the process starts before a model is promoted;
+`/predict` and `/model/status` return `503` until one exists. Errors use the shared
+`{"error": {"code", "message"}}` shape.
+
+```bash
+uvicorn solia_ai.api:app --port 8000
+```
+
+## Planned modules
+
+`retrain.py` (continuous-training orchestrator + `/model/retrain`) arrives in Sprint 7.

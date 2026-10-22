@@ -10,6 +10,7 @@ import torch
 import solia_ai.db
 import solia_ai.registry
 import solia_ai.train as train_module
+from solia_ai.dataset import make_datasets
 from solia_ai.features import FEATURE_COLUMNS
 from solia_ai.loss import SoliaLoss
 from solia_ai.model import SoliaTransformer
@@ -156,6 +157,7 @@ def test_checkpoint_is_self_describing_and_reloads(tmp_path):
 
     checkpoint = torch.load(result.checkpoint_path, weights_only=False)
     assert checkpoint["version"] == "reload"
+    assert isinstance(checkpoint["train_end_ts"], int)  # evaluation's held-out boundary
     assert checkpoint["horizons"] == ["30s", "1m"]
     assert checkpoint["feature_columns"] == FEATURE_COLUMNS
 
@@ -359,3 +361,14 @@ def test_main_prints_the_trained_version(tmp_path, monkeypatch, capsys):
     assert "trained v9: 10 params, best epoch 2, val_total=0.5000" in capsys.readouterr().out
     assert calls[0]["register"] is False
     assert calls[0]["version"] == "v9"
+
+
+def test_checkpoint_records_the_last_training_window_end(tmp_path):
+    df, cfg = make_features_df(), small_config()
+    result = train(df, cfg, model_dir=tmp_path, register=False, version="cutoff")
+
+    train_ds, val_ds = make_datasets(df, cfg)
+    checkpoint = torch.load(result.checkpoint_path, weights_only=False)
+
+    assert checkpoint["train_end_ts"] == int(train_ds.samples.end_ts[train_ds.indices].max())
+    assert checkpoint["train_end_ts"] < int(val_ds.samples.end_ts[val_ds.indices].min())

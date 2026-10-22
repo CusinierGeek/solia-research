@@ -388,19 +388,8 @@ def make_datasets(
     shorter than the embargo), rather than failing later in training.
     """
     cfg = load_config() if config is None else config
-    horizons = tuple(cfg["horizons"])
-    labeling = cfg["labeling"]
-    samples = build_samples(
-        df,
-        seq_len=cfg["model"]["seq_len"],
-        min_seq_len=cfg["model"].get("min_seq_len"),
-        horizons=horizons,
-        pump_thresholds=labeling["pump_threshold"],
-        rug_thresholds=labeling["rug_threshold"],
-        max_gap_fraction=labeling.get("max_gap_fraction", DEFAULT_MAX_GAP_FRACTION),
-        min_gap_seconds=labeling.get("min_gap_seconds", DEFAULT_MIN_GAP_SECONDS),
-    )
-    embargo = max(horizon_seconds(h) for h in horizons)
+    samples = _config_samples(df, cfg)
+    embargo = embargo_seconds(samples.horizons)
     train_idx, val_idx = temporal_split(
         samples.end_ts, val_fraction=val_fraction, embargo_seconds=embargo
     )
@@ -411,3 +400,44 @@ def make_datasets(
             "(longest horizon) — use a longer time range"
         )
     return SequenceDataset(samples, train_idx), SequenceDataset(samples, val_idx)
+
+
+def embargo_seconds(horizons: Sequence[str]) -> int:
+    """The train/validation gap: the longest horizon's label look-ahead."""
+    return max(horizon_seconds(h) for h in horizons)
+
+
+def _config_samples(df: pd.DataFrame, cfg: Mapping[str, Any]) -> Samples:
+    labeling = cfg["labeling"]
+    return build_samples(
+        df,
+        seq_len=cfg["model"]["seq_len"],
+        min_seq_len=cfg["model"].get("min_seq_len"),
+        horizons=tuple(cfg["horizons"]),
+        pump_thresholds=labeling["pump_threshold"],
+        rug_thresholds=labeling["rug_threshold"],
+        max_gap_fraction=labeling.get("max_gap_fraction", DEFAULT_MAX_GAP_FRACTION),
+        min_gap_seconds=labeling.get("min_gap_seconds", DEFAULT_MIN_GAP_SECONDS),
+    )
+
+
+def make_holdout_dataset(
+    df: pd.DataFrame, config: Mapping[str, Any] | None = None, *, train_end_ts: int
+) -> SequenceDataset:
+    """Every window of ``df`` that ends after a model's training data, embargo included.
+
+    ``train_end_ts`` is the checkpoint's last training window end; keeping only windows ending
+    strictly after ``train_end_ts + embargo`` is the same rule :func:`temporal_split` applies, so
+    no window the model was fit on (nor one whose label overlaps its training labels) is scored.
+    Raises when nothing is left — evaluating on an empty window would report nothing.
+    """
+    cfg = load_config() if config is None else config
+    samples = _config_samples(df, cfg)
+    after = int(train_end_ts) + embargo_seconds(samples.horizons)
+    indices = np.where(samples.end_ts > after)[0]
+    if len(indices) == 0:
+        raise ValueError(
+            f"no window ends after the model's training data (train_end_ts={train_end_ts}, "
+            f"+{after - int(train_end_ts)}s embargo); read a later time range to evaluate"
+        )
+    return SequenceDataset(samples, indices)

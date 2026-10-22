@@ -75,7 +75,12 @@ Base: `/`
 // request
 { "mint": "So1...", "features": { /* latest vector */ },
   "horizons": ["1m","5m"] }
+// `features` is either the latest vector (one object = a one-row window) or the token's recent
+// window, oldest row first: a non-empty list of objects keyed by feature name, or of arrays in
+// FEATURE_COLUMNS order. `horizons` is optional (default: all); when present it must be non-empty.
 // response: same prediction shape as backend /predict "predictions"
+// errors: 400 invalid_features / invalid_request, 422 invalid_request (malformed body),
+//         503 no_champion / champion_unavailable, 500 internal_error
 ```
 
 ### `GET /model/status`

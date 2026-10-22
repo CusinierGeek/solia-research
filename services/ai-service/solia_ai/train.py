@@ -145,8 +145,14 @@ def build_checkpoint(
     *,
     version: str,
     metrics: Mapping[str, float] | None = None,
+    train_end_ts: int | None = None,
 ) -> dict[str, Any]:
-    """The serialized checkpoint: weights plus everything needed to rebuild and identify it."""
+    """The serialized checkpoint: weights plus everything needed to rebuild and identify it.
+
+    ``train_end_ts`` is the epoch second of the latest training window's last row: evaluation only
+    scores windows strictly after it (plus the label embargo), so held-out metrics never re-score
+    data the model was fit on, whatever window the evaluation run reads.
+    """
     return {
         "version": version,
         "created_at": datetime.now(UTC).isoformat(),
@@ -156,6 +162,7 @@ def build_checkpoint(
         "feature_columns": list(model.feature_columns),
         "n_params": model.n_params,
         "metrics": dict(metrics or {}),
+        "train_end_ts": train_end_ts,
     }
 
 
@@ -270,7 +277,11 @@ def train(
     ).resolve()
     directory.mkdir(parents=True, exist_ok=True)
     checkpoint_path = directory / f"{version}.pt"
-    save_checkpoint(build_checkpoint(model, cfg, version=version, metrics=metrics), checkpoint_path)
+    train_end_ts = int(train_ds.samples.end_ts[train_ds.indices].max())
+    checkpoint = build_checkpoint(
+        model, cfg, version=version, metrics=metrics, train_end_ts=train_end_ts
+    )
+    save_checkpoint(checkpoint, checkpoint_path)
 
     model_id = None
     if register and engine is not None:

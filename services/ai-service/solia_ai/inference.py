@@ -104,6 +104,8 @@ def derive_confidence(
 
 # --------------------------------------------------------------------------- checkpoints
 
+NO_CHAMPION = "no champion is registered; train and promote a model first"
+
 
 def load_checkpoint(path: str | Path) -> dict[str, Any]:
     """Load a checkpoint written by :func:`solia_ai.train.build_checkpoint`.
@@ -175,10 +177,13 @@ class Predictor:
         *,
         model_version: str,
         temperature: float = 1.0,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         self.model = model.eval()
         self.model_version = model_version
         self.temperature = _check_temperature(temperature)
+        # The checkpoint's non-weight fields (metrics, created_at, train_end_ts, ...).
+        self.metadata = dict(metadata or {})
 
     @property
     def horizons(self) -> tuple[str, ...]:
@@ -192,7 +197,21 @@ class Predictor:
     def from_checkpoint(cls, path: str | Path, *, temperature: float = 1.0) -> Predictor:
         checkpoint = load_checkpoint(path)
         version = checkpoint.get("version") or Path(path).stem
-        return cls(build_model(checkpoint), model_version=version, temperature=temperature)
+        metadata = {k: v for k, v in checkpoint.items() if k != "model_state"}
+        return cls(
+            build_model(checkpoint),
+            model_version=version,
+            temperature=temperature,
+            metadata=metadata,
+        )
+
+    @classmethod
+    def from_record(cls, record: Any, *, temperature: float = 1.0) -> Predictor:
+        """Load a registry record's checkpoint, stamped with the registry version (the traceable
+        identity callers echo back)."""
+        predictor = cls.from_checkpoint(record.path, temperature=temperature)
+        predictor.model_version = record.version
+        return predictor
 
     @classmethod
     def from_champion(cls, engine: Any, *, temperature: float = 1.0) -> Predictor:
@@ -201,10 +220,8 @@ class Predictor:
 
         record = read_champion(engine)
         if record is None:
-            raise LookupError("no champion is registered; train and promote a model first")
-        predictor = cls.from_checkpoint(record.path, temperature=temperature)
-        predictor.model_version = record.version
-        return predictor
+            raise LookupError(NO_CHAMPION)
+        return cls.from_record(record, temperature=temperature)
 
     def _horizon_indices(self, horizons: Sequence[str] | None) -> list[int]:
         if horizons is None:

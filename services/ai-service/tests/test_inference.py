@@ -525,3 +525,21 @@ def test_cli_rejects_a_non_positive_temperature(tmp_path):
 def test_cli_requires_a_source(tmp_path):
     with pytest.raises(SystemExit):
         main(["--out", str(tmp_path / "x.onnx")])
+
+
+def test_from_checkpoint_keeps_the_non_weight_metadata(tmp_path):
+    _, path = saved_checkpoint(tmp_path, version="meta-1")
+
+    predictor = Predictor.from_checkpoint(path)
+
+    assert predictor.metadata["version"] == "meta-1"
+    assert "model_state" not in predictor.metadata
+    assert "train_end_ts" in predictor.metadata
+
+
+def test_from_record_stamps_the_registry_version(tmp_path):
+    _, path = saved_checkpoint(tmp_path, version="file-version")
+
+    predictor = Predictor.from_record(SimpleNamespace(version="registry-v7", path=str(path)))
+
+    assert predictor.model_version == "registry-v7"
