@@ -2,7 +2,7 @@ namespace Solia.Bot.Trading;
 
 /// <summary>
 /// Where the <see cref="PositionManager"/> records trades — one <c>trades</c> row per position, inserted
-/// on open and updated on close (docs/DATA-MODEL.md). The Postgres implementation lands in a later task;
+/// on open and updated on close (docs/DATA-MODEL.md). <see cref="PostgresTradeStore"/> is the durable implementation;
 /// <see cref="InMemoryTradeStore"/> backs unit tests and replays. The manager only mutates its own state
 /// once a store call has succeeded, so a failing store never leaves the book and the record out of step.
 /// </summary>

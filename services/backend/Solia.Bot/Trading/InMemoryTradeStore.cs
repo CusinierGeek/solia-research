@@ -5,7 +5,7 @@ namespace Solia.Bot.Trading;
 /// Rejects closing an unknown or already-closed trade, as the database would leave such an update
 /// matching no open row. Not thread-safe: the <see cref="PositionManager"/> consumes events one at a time.
 /// </summary>
-public sealed class InMemoryTradeStore : ITradeStore
+public sealed class InMemoryTradeStore : ITradeStore, IClosedTradeCounter
 {
     private readonly Dictionary<long, TradeOpening> _open = [];
     private readonly List<ClosedTrade> _closed = [];
@@ -39,5 +39,11 @@ public sealed class InMemoryTradeStore : ITradeStore
 
         _closed.Add(trade);
         return Task.CompletedTask;
+    }
+
+    public Task<long> CountClosedSinceAsync(DateTimeOffset? since, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult((long)_closed.Count(t => since is null || t.ClosedAt > since));
     }
 }

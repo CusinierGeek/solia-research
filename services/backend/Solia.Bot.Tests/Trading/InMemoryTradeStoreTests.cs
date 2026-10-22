@@ -46,4 +46,19 @@ public class InMemoryTradeStoreTests
         await Assert.ThrowsAsync<OperationCanceledException>(() => store.OpenAsync(Opening(), new CancellationToken(true)));
         Assert.Empty(store.Open);
     }
+
+    [Fact]
+    public async Task Closed_trades_are_counted_since_a_cutoff()
+    {
+        var store = new InMemoryTradeStore();
+        long a = await store.OpenAsync(Opening());
+        long b = await store.OpenAsync(Opening());
+        await store.OpenAsync(Opening()); // still open: not counted
+        await store.CloseAsync(Close(a));
+        await store.CloseAsync(Close(b) with { ClosedAt = T0.AddSeconds(10) });
+
+        Assert.Equal(2, await store.CountClosedSinceAsync(null));
+        Assert.Equal(1, await store.CountClosedSinceAsync(T0.AddSeconds(1)));
+        Assert.Equal(0, await store.CountClosedSinceAsync(T0.AddSeconds(10)));
+    }
 }

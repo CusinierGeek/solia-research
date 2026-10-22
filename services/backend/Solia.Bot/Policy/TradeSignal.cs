@@ -12,3 +12,15 @@ public enum TradeSignal
     Buy = 1,
     Sell = 2,
 }
+
+public static class TradeSignalExtensions
+{
+    /// <summary>The value stored in <c>trades.strategy</c> / <c>predictions.strategy</c>.</summary>
+    public static string ToCode(this TradeSignal signal) => signal switch
+    {
+        TradeSignal.Buy => "buy",
+        TradeSignal.Sell => "sell",
+        TradeSignal.Hold => "hold",
+        _ => throw new ArgumentOutOfRangeException(nameof(signal), signal, "Unknown trade signal."),
+    };
+}

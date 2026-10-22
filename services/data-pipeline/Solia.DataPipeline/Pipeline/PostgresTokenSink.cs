@@ -2,6 +2,7 @@ using System.Text.Json;
 using Npgsql;
 using NpgsqlTypes;
 using Solia.DataPipeline.Features;
+using static Solia.Shared.Data.NpgsqlParameters;
 
 namespace Solia.DataPipeline.Pipeline;
 
@@ -160,8 +161,6 @@ public sealed class PostgresTokenSink(NpgsqlDataSource dataSource) : ITokenSink
         cmd.Parameters.AddRange(parameters);
         return cmd;
     }
-
-    private static NpgsqlParameter Param(string name, NpgsqlDbType type, object value) => new(name, type) { Value = value };
 
     // Explicitly typed so arrays containing NULLs don't trip type inference.
     private static NpgsqlParameter Array(string name, NpgsqlDbType elementType, System.Array values) =>

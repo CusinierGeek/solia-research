@@ -36,6 +36,12 @@ public sealed record ModelPrediction
     public string? ModelVersion { get; init; }
 
     /// <summary>
+    /// Id of the <c>predictions</c> row this prediction was persisted as — the trade's
+    /// <c>prediction_id</c> FK. Null when it was never persisted (e.g. a replay fed straight from the model).
+    /// </summary>
+    public long? PredictionId { get; init; }
+
+    /// <summary>
     /// The numeric feature vector the prediction was computed from, keyed by feature name — carried
     /// for traceability/debugging only. The bot never derives decisions from it directly. Compared by
     /// content in <see cref="Equals(ModelPrediction?)"/> (a dictionary alone compares by reference).
@@ -55,6 +61,7 @@ public sealed record ModelPrediction
         && Confidence.Equals(other.Confidence)
         && Volatility.Equals(other.Volatility)
         && ModelVersion == other.ModelVersion
+        && PredictionId == other.PredictionId
         && FeaturesEqual(Features, other.Features);
 
     /// <summary>Consistent with <see cref="Equals(ModelPrediction?)"/>: order-independent over <see cref="Features"/>.</summary>
@@ -70,6 +77,7 @@ public sealed record ModelPrediction
         hash.Add(Confidence);
         hash.Add(Volatility);
         hash.Add(ModelVersion);
+        hash.Add(PredictionId);
         int features = 0;
         foreach ((string name, double? value) in Features)
         {
