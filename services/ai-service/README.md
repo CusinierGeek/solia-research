@@ -70,8 +70,22 @@ token that collapses and stops trading still gets its rug label. The temporal sp
 longest horizon; `positive_weights` (BCE `pos_weight`), `balanced_sampler` and `make_loaders`
 handle the class imbalance.
 
+## Model
+
+`solia_ai/model.py` — `SoliaTransformer`: a pre-norm Transformer encoder over a token's recent
+feature rows, with per-horizon `pump` / `rug` (logits) and `expected_return` heads.
+
+- **Input normalization is part of the model**: signed `log1p`, then per-feature standardization
+  fitted on the training rows (`model.fit_normalizer(rows)`), stored as buffers so checkpoints and
+  the ONNX export apply the same transform.
+- **Young tokens**: sequences of `min_seq_len .. seq_len` rows, left-padded with a padding mask
+  (`dataset.pad_window`); attention and the masked-mean pooling ignore padding.
+- **Checkpoints carry their horizons and feature spec** and refuse to load into a mismatched model.
+- `predict()` returns probabilities and restores the caller's train/eval mode.
+- Shape knobs (`d_model`, `n_heads`, `n_layers`, `ff_dim`, `dropout`, `seq_len`, `min_seq_len`)
+  come from `config.yaml`.
+
 ## Planned modules (Sprint 2)
 
-`model.py` (Transformer), `train.py` (training +
-checkpoints), `inference.py` (+ ONNX export), `api.py` (FastAPI). `retrain.py` (continuous
-training) arrives in Sprint 7.
+`train.py` (training + checkpoints), `inference.py` (+ ONNX export), `api.py` (FastAPI).
+`retrain.py` (continuous training) arrives in Sprint 7.

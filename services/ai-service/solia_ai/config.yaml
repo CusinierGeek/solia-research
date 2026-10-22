@@ -7,8 +7,10 @@ model:
   d_model: 128
   n_heads: 8
   n_layers: 4
+  ff_dim: 512 # encoder feed-forward width (4 * d_model)
   dropout: 0.1
-  seq_len: 64
+  seq_len: 64 # longest history the model attends over (most recent rows)
+  min_seq_len: 8 # shortest history a window may have: young tokens get padded, masked windows
 
 training:
   learning_rate: 0.0003

@@ -26,6 +26,10 @@ token is treated as dead).
 The split is temporal with an embargo so a training window's look-ahead can't leak into
 validation. Windows are not copied: samples keep each token's feature rows once and slice
 windows on access, so memory stays proportional to the data, not ``seq_len`` times it.
+
+Young tokens matter most, so windows may be shorter than ``seq_len`` (down to ``min_seq_len``
+rows): a window holds a token's most recent ``<= seq_len`` rows, and :func:`pad_window` left-pads
+it to ``seq_len`` with a padding mask the model uses to ignore the padding.
 """
 
 from __future__ import annotations
@@ -63,9 +67,10 @@ def horizon_seconds(label: str) -> int:
 @dataclass(frozen=True)
 class Samples:
     """Labeled windows over shared feature rows. First axis of every per-sample array is the
-    sample index; :meth:`window` slices a sample's ``[seq_len, F]`` input on demand."""
+    sample index; :meth:`window` slices a sample's ``[<= seq_len, F]`` input on demand."""
 
     features: np.ndarray  # [R, F] float32 — every token's rows, tokens contiguous
+    start_row: np.ndarray  # [N] int64 — row index (into features) of each window's first row
     end_row: np.ndarray  # [N] int64 — row index (into features) of each window's last row
     seq_len: int
     pump: np.ndarray  # [N, H] float32 (0/1)
@@ -80,17 +85,38 @@ class Samples:
         return len(self.end_row)
 
     def window(self, i: int) -> np.ndarray:
-        """The ``[seq_len, F]`` input of sample ``i`` (a view, no copy)."""
-        end = int(self.end_row[i])
-        return self.features[end - self.seq_len + 1 : end + 1]
+        """The unpadded ``[L, F]`` input of sample ``i``, ``L <= seq_len`` (a view, no copy)."""
+        return self.features[int(self.start_row[i]) : int(self.end_row[i]) + 1]
+
+    def padded(self, i: int) -> tuple[np.ndarray, np.ndarray]:
+        """Sample ``i`` left-padded to ``[seq_len, F]``, with its ``[seq_len]`` padding mask."""
+        return pad_window(self.window(i), self.seq_len)
 
     @property
     def x(self) -> np.ndarray:
-        """All windows as one dense ``[N, seq_len, F]`` array. Materializes ``seq_len`` copies of
-        every row — for small sets and inspection only; training goes through :meth:`window`."""
+        """All windows, left-padded, as one dense ``[N, seq_len, F]`` array. Materializes
+        ``seq_len`` copies of every row — for small sets and inspection only; training goes through
+        :meth:`padded`."""
         if len(self) == 0:
             return np.empty((0, self.seq_len, self.features.shape[1]), np.float32)
-        return np.stack([self.window(i) for i in range(len(self))])
+        return np.stack([self.padded(i)[0] for i in range(len(self))])
+
+
+def pad_window(window: np.ndarray, seq_len: int) -> tuple[np.ndarray, np.ndarray]:
+    """Left-pad (or keep the most recent ``seq_len`` rows of) a ``[L, F]`` window.
+
+    Returns ``(x[seq_len, F] float32, padding_mask[seq_len] bool)`` where ``True`` marks padding.
+    The most recent row is always last, so positions are relative to "now" whatever ``L`` is.
+    """
+    if window.ndim != 2 or len(window) == 0:
+        raise ValueError(f"expected a non-empty [L, F] window, got shape {window.shape}")
+    rows = window[-seq_len:]
+    pad = seq_len - len(rows)
+    x = np.zeros((seq_len, window.shape[1]), np.float32)
+    x[pad:] = rows
+    padding_mask = np.zeros(seq_len, bool)
+    padding_mask[:pad] = True
+    return x, padding_mask
 
 
 def build_samples(
@@ -102,11 +128,19 @@ def build_samples(
     rug_thresholds: Mapping[str, float],
     max_gap_fraction: float = DEFAULT_MAX_GAP_FRACTION,
     min_gap_seconds: float = DEFAULT_MIN_GAP_SECONDS,
+    min_seq_len: int | None = None,
 ) -> Samples:
-    """Slide windows per mint and label each by the realized future trajectory (module doc)."""
+    """Slide windows per mint and label each by the realized future trajectory (module doc).
+
+    A window ends at every row from the token's ``min_seq_len``-th on (default ``seq_len``: full
+    windows only) and holds its most recent ``<= seq_len`` rows.
+    """
     horizons = tuple(horizons)
     if seq_len < 1:
         raise ValueError(f"seq_len must be >= 1, got {seq_len}")
+    min_len = seq_len if min_seq_len is None else min_seq_len
+    if not 1 <= min_len <= seq_len:
+        raise ValueError(f"min_seq_len must be in [1, seq_len ({seq_len})], got {min_len}")
     if not horizons:
         raise ValueError("at least one horizon is required")
     if not 0 < max_gap_fraction <= 1:
@@ -126,6 +160,7 @@ def build_samples(
     max_gap = np.maximum(horizon_s * max_gap_fraction, min_gap_seconds)
 
     blocks: list[np.ndarray] = []
+    start_rows: list[np.ndarray] = []
     end_rows: list[np.ndarray] = []
     labels: list[tuple[np.ndarray, ...]] = []
     end_ts: list[np.ndarray] = []
@@ -133,7 +168,7 @@ def build_samples(
     offset = 0
 
     for mint, sub in df.groupby("mint", sort=True):
-        if len(sub) < seq_len:
+        if len(sub) < min_len:
             continue
         # Stable sort (ties keep a deterministic order: by id when present, else input order).
         sort_keys = ["ts", "id"] if "id" in sub.columns else ["ts"]
@@ -145,7 +180,7 @@ def build_samples(
         ts_utc = pd.to_datetime(sub["ts"], utc=True).dt.tz_localize(None)
         ts_sec = ts_utc.to_numpy().astype("datetime64[s]").astype(np.int64)
 
-        window_ends = np.arange(seq_len - 1, len(sub))
+        window_ends = np.arange(min_len - 1, len(sub))
         pump, rug, ret, mask = _label(
             window_ends, ts_sec, price, liquidity, horizon_s, pump_thr, rug_thr, max_gap
         )
@@ -154,6 +189,7 @@ def build_samples(
             continue
 
         blocks.append(matrix)
+        start_rows.append(np.maximum(window_ends[keep] - seq_len + 1, 0) + offset)
         end_rows.append(window_ends[keep] + offset)
         labels.append((pump[keep], rug[keep], ret[keep], mask[keep]))
         end_ts.append(ts_sec[window_ends[keep]])
@@ -167,6 +203,7 @@ def build_samples(
         return Samples(
             np.empty((0, n_feat), np.float32),
             np.empty((0,), np.int64),
+            np.empty((0,), np.int64),
             seq_len,
             empty_h,
             empty_h.copy(),
@@ -179,6 +216,7 @@ def build_samples(
 
     return Samples(
         np.concatenate(blocks),
+        np.concatenate(start_rows).astype(np.int64),
         np.concatenate(end_rows).astype(np.int64),
         seq_len,
         *(np.concatenate([lab[k] for lab in labels]).astype(np.float32) for k in range(4)),
@@ -258,8 +296,9 @@ def temporal_split(
 
 
 class SequenceDataset(Dataset):
-    """Torch view over :class:`Samples`. Yields ``(x[seq_len, F], targets)`` where targets holds
-    ``pump`` / ``rug`` / ``expected_return`` / ``mask`` as ``[H]`` float32 tensors."""
+    """Torch view over :class:`Samples`. Yields ``(x[seq_len, F], padding_mask[seq_len], targets)``:
+    ``x`` is left-padded, ``padding_mask`` is ``True`` on padding, and targets holds ``pump`` /
+    ``rug`` / ``expected_return`` / ``mask`` as ``[H]`` float32 tensors."""
 
     def __init__(self, samples: Samples, indices: np.ndarray | None = None) -> None:
         self.samples = samples
@@ -268,7 +307,7 @@ class SequenceDataset(Dataset):
     def __len__(self) -> int:
         return len(self.indices)
 
-    def __getitem__(self, k: int) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    def __getitem__(self, k: int) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
         i = int(self.indices[k])
         s = self.samples
         targets = {
@@ -277,7 +316,8 @@ class SequenceDataset(Dataset):
             "expected_return": torch.from_numpy(s.expected_return[i]),
             "mask": torch.from_numpy(s.mask[i]),
         }
-        return torch.from_numpy(np.ascontiguousarray(s.window(i))), targets
+        x, padding_mask = s.padded(i)
+        return torch.from_numpy(x), torch.from_numpy(padding_mask), targets
 
 
 # --------------------------------------------------------------------------- class imbalance
@@ -347,12 +387,13 @@ def make_datasets(
     The embargo is the longest horizon. Raises if either split ends up empty (e.g. a data span
     shorter than the embargo), rather than failing later in training.
     """
-    cfg = config or load_config()
+    cfg = load_config() if config is None else config
     horizons = tuple(cfg["horizons"])
     labeling = cfg["labeling"]
     samples = build_samples(
         df,
         seq_len=cfg["model"]["seq_len"],
+        min_seq_len=cfg["model"].get("min_seq_len"),
         horizons=horizons,
         pump_thresholds=labeling["pump_threshold"],
         rug_thresholds=labeling["rug_threshold"],

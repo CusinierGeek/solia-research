@@ -12,6 +12,7 @@ from solia_ai.dataset import (
     horizon_seconds,
     make_datasets,
     make_loaders,
+    pad_window,
     positive_weights,
     temporal_split,
 )
@@ -209,6 +210,55 @@ def test_windows_are_views_over_rows_stored_once():
     np.testing.assert_array_equal(s.window(0)[:, PRICE], np.float32([1.0, 1.01, 1.02, 1.03]))
 
 
+def test_young_tokens_get_short_windows_down_to_min_seq_len():
+    prices = [1.0 + i / 100 for i in range(13)]
+    s = samples(frame(prices, TS), seq_len=4, min_seq_len=2)
+
+    lengths = [len(s.window(i)) for i in range(len(s))]
+    assert lengths[:3] == [2, 3, 4]  # grows with the token's history, then capped at seq_len
+    assert max(lengths) == 4
+    x, mask = s.padded(0)
+    assert mask.tolist() == [True, True, False, False]  # left padding
+    np.testing.assert_array_equal(x[2:, PRICE], np.float32([1.0, 1.01]))
+    assert (x[:2] == 0).all()
+
+
+def test_tokens_shorter_than_min_seq_len_are_skipped():
+    s = samples(frame([1.0] * 13, TS), seq_len=20, min_seq_len=14)
+
+    assert len(s) == 0
+
+
+def test_min_seq_len_defaults_to_full_windows_and_is_validated():
+    assert min(len(w) for w in map(samples(frame([1.0] * 13, TS), seq_len=4).window, range(3))) == 4
+    with pytest.raises(ValueError, match="min_seq_len"):
+        samples(frame([1.0] * 13, TS), seq_len=4, min_seq_len=5)
+
+
+def test_pad_window_left_pads_and_truncates_to_the_most_recent_rows():
+    window = np.arange(6, dtype=np.float32).reshape(3, 2)
+
+    x, mask = pad_window(window, 5)
+    assert mask.tolist() == [True, True, False, False, False]
+    np.testing.assert_array_equal(x[2:], window)
+
+    x, mask = pad_window(window, 2)
+    assert not mask.any()
+    np.testing.assert_array_equal(x, window[-2:])
+
+    with pytest.raises(ValueError, match="non-empty"):
+        pad_window(np.empty((0, 2), np.float32), 4)
+
+
+def test_make_datasets_uses_min_seq_len_from_config():
+    ts = list(range(0, 1200, 10))
+    cfg = {**CFG, "model": {"seq_len": 6, "min_seq_len": 2}}
+
+    train, _ = make_datasets(frame([1.0] * len(ts), ts), cfg, val_fraction=0.3)
+
+    assert min(len(train.samples.window(i)) for i in train.indices) == 2
+
+
 def test_duplicate_timestamps_give_the_same_samples_in_any_input_order():
     df = frame([1.0, 2.0, 1.5] + [1.5] * 11, [0, 10, 10] + TS[2:])
     df["id"] = range(len(df))
@@ -292,6 +342,7 @@ def labeled(pump, rug, mask=None) -> SequenceDataset:
     n = len(pump)
     synthetic = Samples(
         features=np.zeros((n, len(FEATURE_COLUMNS)), np.float32),
+        start_row=np.arange(n, dtype=np.int64),
         end_row=np.arange(n, dtype=np.int64),
         seq_len=1,
         pump=np.asarray(pump, np.float32).reshape(n, 1),
@@ -313,10 +364,11 @@ def test_sequence_dataset_yields_tensors():
     s = samples(frame([1.0] * 13, TS), seq_len=2)
 
     ds = SequenceDataset(s)
-    x, targets = ds[0]
+    x, padding_mask, targets = ds[0]
 
     assert x.shape == (2, len(FEATURE_COLUMNS))
     assert x.dtype == torch.float32
+    assert padding_mask.dtype == torch.bool and not padding_mask.any()
     assert set(targets) == {"pump", "rug", "expected_return", "mask"}
     assert targets["pump"].shape == (1,)
 
@@ -359,9 +411,10 @@ def test_make_loaders_batches_train_balanced_and_val_in_order():
     train, val = make_datasets(frame([1.0] * len(ts), ts), CFG, val_fraction=0.3)
 
     train_loader, val_loader = make_loaders(train, val, batch_size=8)
-    x, targets = next(iter(train_loader))
+    x, padding_mask, targets = next(iter(train_loader))
 
     assert x.shape == (8, 2, len(FEATURE_COLUMNS))
+    assert padding_mask.shape == (8, 2)
     assert targets["mask"].shape == (8, 1)
     assert isinstance(train_loader.sampler, torch.utils.data.WeightedRandomSampler)
     assert list(val_loader.sampler) == list(range(len(val)))  # unshuffled

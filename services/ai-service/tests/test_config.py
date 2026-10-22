@@ -33,9 +33,9 @@ def variant(**sections):
 
 
 def test_explicit_path_wins(tmp_path):
-    path = write(tmp_path, variant(model={**VALID["model"], "seq_len": 7}))
+    path = write(tmp_path, variant(model={**VALID["model"], "seq_len": 70}))
 
-    assert load_config(path)["model"]["seq_len"] == 7
+    assert load_config(path)["model"]["seq_len"] == 70
 
 
 def test_env_override_is_used_when_no_path_given(tmp_path, monkeypatch):
@@ -83,7 +83,9 @@ def test_missing_sections_are_named(tmp_path):
         ({"model": "nope"}, "'model' must be a mapping"),
         ({"model": {**VALID["model"], "d_model": 0}}, "'model.d_model' must be > 0"),
         ({"model": {**VALID["model"], "n_heads": 2.5}}, "'model.n_heads' must be an integer"),
-        ({"model": {**VALID["model"], "d_model": 130}}, "divisible by 'model.n_heads'"),
+        ({"model": {**VALID["model"], "d_model": 130}}, r"d_model \(130\) must be divisible"),
+        ({"model": {**VALID["model"], "min_seq_len": 65}}, r"min_seq_len \(65\) must be in"),
+        ({"model": {**VALID["model"], "ff_dim": 0}}, "'model.ff_dim' must be > 0"),
         ({"model": {**VALID["model"], "dropout": 1.0}}, r"'model.dropout' must be in \[0, 1\)"),
         (
             {"training": {**VALID["training"], "learning_rate": -1}},

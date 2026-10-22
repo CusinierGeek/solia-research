@@ -32,6 +32,19 @@ class ConfigError(ValueError):
     """Invalid or missing configuration (config file or database environment)."""
 
 
+# --------------------------------------------------------------------------- model shape
+
+
+def model_shape_error(*, d_model: int, n_heads: int, seq_len: int, min_seq_len: int) -> str | None:
+    """Why a model shape is invalid, or None. Shared by config validation and the model itself
+    (so the rules live in one place, without importing torch here)."""
+    if d_model % n_heads:
+        return f"d_model ({d_model}) must be divisible by n_heads ({n_heads})"
+    if not 1 <= min_seq_len <= seq_len:
+        return f"min_seq_len ({min_seq_len}) must be in [1, seq_len ({seq_len})]"
+    return None
+
+
 # --------------------------------------------------------------------------- config.yaml
 
 
@@ -90,10 +103,19 @@ def _validate(config: Any, source: str) -> None:
             fail(f"'{sec}.{key}' must be >= 0, got {value!r}")
         return value
 
+    model = section("model")
     for key in ("d_model", "n_heads", "n_layers", "seq_len"):
         number("model", key, positive=True, integer=True)
-    if section("model")["d_model"] % section("model")["n_heads"]:
-        fail("'model.d_model' must be divisible by 'model.n_heads'")
+    for key in ("ff_dim", "min_seq_len"):
+        if key in model:
+            number("model", key, positive=True, integer=True)
+    if problem := model_shape_error(
+        d_model=model["d_model"],
+        n_heads=model["n_heads"],
+        seq_len=model["seq_len"],
+        min_seq_len=model.get("min_seq_len", model["seq_len"]),
+    ):
+        fail(f"'model': {problem}")
     if not 0 <= number("model", "dropout") < 1:
         fail("'model.dropout' must be in [0, 1)")
 
