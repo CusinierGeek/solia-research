@@ -93,7 +93,7 @@ are **rules**, not model outputs — implemented in the paper-trading bot (Sprin
 configurable without retraining. They consume the model's predictions, for example:
 
 - enter when `pump_prob ≥ P` **and** `rug_prob ≤ R` (and liquidity/age gates pass);
-- size ∝ `expected_return` discounted by `rug_prob` (Kelly-style), capped;
+- size = fractional Kelly on `expected_return` (capped at TP) vs `rug_prob` (loss capped at SL), scaled by confidence, capped;
 - TP/SL from `expected_return` and recent volatility.
 
 Keeping decisions out of the model lets risk appetite change instantly and keeps the model purely

@@ -5,12 +5,12 @@ namespace Solia.Bot.Configuration;
 /// <summary>
 /// Paper-trading bot knobs — the tunable <em>policy layer</em> (see docs/ML-MODEL.md): entry gates,
 /// sizing and exit rules applied to the model's predictions. Bound from the "Bot" config section and
-/// validated at startup. Every rule lives in the DataAnnotations below — the single place a rule is
-/// defined. <see cref="StartingBalance"/> and <see cref="MaxConcurrentPositions"/> are also overridable
-/// via the flat PAPER_STARTING_BALANCE / PAPER_MAX_CONCURRENT_POSITIONS env keys (mirrors
+/// validated at startup. Every rule lives on this class — single-field rules as the DataAnnotations
+/// below, cross-field rules in <see cref="Validate"/> — the single place a rule is defined.
+/// <see cref="StartingBalance"/> and <see cref="MaxConcurrentPositions"/> are also overridable via the flat PAPER_STARTING_BALANCE / PAPER_MAX_CONCURRENT_POSITIONS env keys (mirrors
 /// .env.example). Money is <see cref="decimal"/>; probabilities/ratios are <see cref="double"/>.
 /// </summary>
-public sealed class BotOptions
+public sealed class BotOptions : IValidatableObject
 {
     public const string Section = "Bot";
 
@@ -51,6 +51,25 @@ public sealed class BotOptions
     [Range(0.0, 1.0, MinimumIsExclusive = true)]
     public double MaxPositionFraction { get; set; } = 0.2;
 
+    /// <summary>
+    /// Fractional-Kelly multiplier applied to the Kelly-optimal fraction when sizing a position, (0, 1]
+    /// (see Policy.PositionSizer). 0.5 = half-Kelly (dampened, the usual choice); 1 = full Kelly. Lets global risk appetite scale
+    /// without retraining. Separate from <see cref="MaxPositionFraction"/>, which is the hard cap.
+    /// </summary>
+    [Range(0.0, 1.0, MinimumIsExclusive = true)]
+    public double RiskFraction { get; set; } = 0.5;
+
+    /// <summary>
+    /// Dust floor: a computed position smaller than this is skipped (size 0) rather than opened, and the
+    /// entry gate also requires the balance to be at least this much, [0, 1 000 000]. Zero disables the
+    /// floor. Avoids economically meaningless positions. Must not exceed the largest position the bot could
+    /// ever open (<see cref="StartingBalance"/> · <see cref="MaxPositionFraction"/>), or every trade would
+    /// be dust. Money is <see cref="decimal"/>.
+    /// </summary>
+    [Range(typeof(decimal), "0", "1000000",
+        ParseLimitsInInvariantCulture = true, ConvertValueInInvariantCulture = true)]
+    public decimal MinPositionSize { get; set; } = 0.001m;
+
     /// <summary>Take-profit as a fraction above entry price (e.g. 0.5 = +50%), (0, 10] — zero would close every position immediately.</summary>
     [Range(0.0, 10.0, MinimumIsExclusive = true)]
     public double TakeProfitPct { get; set; } = 0.5;
@@ -61,4 +80,20 @@ public sealed class BotOptions
     /// </summary>
     [Range(0.0, 1.0, MinimumIsExclusive = true, MaximumIsExclusive = true)]
     public double StopLossPct { get; set; } = 0.3;
+
+    /// <summary>
+    /// Cross-field rules. Runs only once every single-field annotation has passed, so the values here
+    /// are already in range.
+    /// </summary>
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        decimal largestPosition = StartingBalance * (decimal)MaxPositionFraction;
+        if (MinPositionSize > largestPosition)
+        {
+            yield return new ValidationResult(
+                $"{nameof(MinPositionSize)} ({MinPositionSize}) exceeds the largest possible position " +
+                $"{nameof(StartingBalance)} · {nameof(MaxPositionFraction)} ({largestPosition}); the bot could never trade.",
+                [nameof(MinPositionSize), nameof(StartingBalance), nameof(MaxPositionFraction)]);
+        }
+    }
 }

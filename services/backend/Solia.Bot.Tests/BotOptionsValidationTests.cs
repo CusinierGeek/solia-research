@@ -100,6 +100,48 @@ public class BotOptionsValidationTests
     }
 
     [Theory]
+    [InlineData(0)]   // zero would make every position size to nothing
+    [InlineData(1.1)] // above full Kelly
+    public void Out_of_range_risk_fraction_is_rejected(double riskFraction)
+    {
+        Assert.False(IsValid(new BotOptions { RiskFraction = riskFraction }));
+    }
+
+    [Fact]
+    public void Risk_fraction_bounds_are_accepted()
+    {
+        Assert.True(IsValid(new BotOptions { RiskFraction = 1.0 }));
+        Assert.True(IsValid(new BotOptions { RiskFraction = 0.01 }));
+    }
+
+    [Theory]
+    [InlineData("-0.01")]
+    [InlineData("1000000.01")] // above the sanity cap
+    public void Out_of_range_min_position_size_is_rejected(string minSize)
+    {
+        Assert.False(IsValid(new BotOptions { MinPositionSize = Dec(minSize) }));
+    }
+
+    [Fact]
+    public void Zero_min_position_size_is_accepted()
+    {
+        Assert.True(IsValid(new BotOptions { MinPositionSize = 0m })); // dust floor disabled
+    }
+
+    [Fact]
+    public void A_min_position_size_above_the_largest_possible_position_is_rejected()
+    {
+        // Largest position = 10 · 0.2 = 2: a floor of 5 would make every trade dust.
+        Assert.False(IsValid(new BotOptions { StartingBalance = 10m, MaxPositionFraction = 0.2, MinPositionSize = 5m }));
+    }
+
+    [Fact]
+    public void A_min_position_size_equal_to_the_largest_possible_position_is_accepted()
+    {
+        Assert.True(IsValid(new BotOptions { StartingBalance = 10m, MaxPositionFraction = 0.2, MinPositionSize = 2m }));
+    }
+
+    [Theory]
     [InlineData(0, 0.3)]
     [InlineData(0.5, 0)]
     public void Zero_take_profit_or_stop_loss_is_rejected(double takeProfit, double stopLoss)
