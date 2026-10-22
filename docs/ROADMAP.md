@@ -25,3 +25,15 @@ S1 ─▶ S2 ─▶ S3 ─▶ S4 ─▶ S5
 - One sprint ≈ one focused conversation. Start it by pasting that sprint's **Kickoff prompt**.
 - Freeze the contracts (`API-CONTRACTS.md`, `DATA-MODEL.md`) before building dependents; change them via PR.
 - Every PR must satisfy the sprint's **Definition of Done** and pass CI.
+
+## Future phase — Feature enrichment & tuning
+
+After Sprint 2 ships a trained baseline **and** the evaluation harness, a dedicated phase enriches
+the model's inputs and tunes it — each change justified by **measured lift (ablation)**, never
+added blind. On this problem, feature quality beats model complexity. Candidates (prefer free,
+stream-derivable signals): price/volume **acceleration**, buy pressure by SOL volume (net flow),
+holder **concentration proxy** from traders, promoting `burnedLiquidity` to a column, `venue`
+one-hot; plus hyperparameter/threshold tuning and probability calibration.
+
+Tracked by milestone **"Feature enrichment & tuning"** (epic #34). Not a numbered sprint — runs
+when the baseline exists and we can measure improvements.
