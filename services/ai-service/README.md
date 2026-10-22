@@ -40,8 +40,21 @@ from this directory so they pick up its `pyproject.toml` settings — CI does th
   are escaped. The local-dev default password is only used for a local host; a remote database
   without `POSTGRES_PASSWORD` fails at startup. Built by `database_url()` in `solia_ai/config.py`.
 
+## Feature spec & DB access
+
+- `solia_ai/features.py` — `FEATURE_COLUMNS` is the ordered model input spec. Two parity tests
+  keep it in lockstep with the `features` table: one replays `CREATE TABLE` / `ALTER TABLE` across
+  **every** migration (any column type), the other reads `information_schema` from a migrated
+  database. `build_feature_matrix` imputes NULLs and non-finite values to `0.0`, encodes
+  `is_migrated` as `0/1`, and raises on a missing column or a non-numeric value.
+- `solia_ai/db.py` — read-only `read_features` / `read_trades` into pandas, ordered by
+  `(mint, time)`. Time bounds are half-open and must be timezone-aware (normalized to UTC);
+  `chunksize` streams through a server-side cursor so memory stays bounded.
+- The database tests run against Testcontainers PostgreSQL. Locally they are skipped when Docker
+  isn't running; in CI (`CI` set) a missing Docker fails the build instead.
+
 ## Planned modules (Sprint 2)
 
-`features.py` (DB read + feature-spec parity), `dataset.py` (windowing + labeling),
-`model.py` (Transformer), `train.py` (training + checkpoints), `inference.py` (+ ONNX export),
-`api.py` (FastAPI). `retrain.py` (continuous training) arrives in Sprint 7.
+`dataset.py` (windowing + labeling), `model.py` (Transformer), `train.py` (training +
+checkpoints), `inference.py` (+ ONNX export), `api.py` (FastAPI). `retrain.py` (continuous
+training) arrives in Sprint 7.

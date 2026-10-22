@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest==9.1.1", "ruff==0.17.1", "black==26.10.1"]
+dev = ["pytest==9.1.1", "ruff==0.17.1", "black==26.10.1", "testcontainers[postgres]==4.15.0"]
 
 [tool.hatch.build.targets.wheel]
 # config.yaml lives inside the package, so it ships in the wheel and installed copies find it.
