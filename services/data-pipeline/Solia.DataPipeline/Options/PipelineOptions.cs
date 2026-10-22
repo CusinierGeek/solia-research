@@ -23,6 +23,14 @@ public sealed class PipelineOptions
     [Range(1, 1_000_000)]
     public int MaxTrackedTokens { get; set; } = 5000;
 
+    /// <summary>Span of the price EMA feature (as in a span-N exponential moving average).</summary>
+    [Range(2, 1000)]
+    public int EmaSpan { get; set; } = 20;
+
+    /// <summary>Look-back period (in price updates) for the RSI feature.</summary>
+    [Range(2, 1000)]
+    public int RsiPeriod { get; set; } = 14;
+
     /// <summary>
     /// When false (default), holders are approximated from unique traders seen in the
     /// stream (free). When true, a paid Get Token Info enrichment may be used.

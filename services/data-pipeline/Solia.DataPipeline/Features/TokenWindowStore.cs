@@ -1,0 +1,129 @@
+using Microsoft.Extensions.Options;
+using Solia.DataPipeline.Ingestion;
+using Solia.DataPipeline.Options;
+
+namespace Solia.DataPipeline.Features;
+
+/// <summary>
+/// Holds the rolling <see cref="TokenState"/> for every tracked token. Collapses the firehose
+/// into a bounded working set: a token starts being tracked only on a market event (create /
+/// trade / pool / liquidity / migrate) — a <see cref="EventKind.Transfer"/> or
+/// <see cref="EventKind.Other"/> only updates a token that is already tracked, so transfer noise
+/// never creates entries. Enforces <see cref="PipelineOptions.MaxTrackedTokens"/> by first
+/// dropping idle tokens, then evicting the least recently updated (O(1), via a recency list), and
+/// prunes tokens idle beyond the window. A token whose newest event is dated more than
+/// <see cref="MaxFutureSkew"/> past the snapshot time is pruned too, so a bad timestamp can't pin it
+/// in memory (it is re-tracked cleanly on its next real event).
+/// Produces feature snapshots on demand (driven by T7).
+/// Not thread-safe: the pipeline applies events and snapshots from a single loop.
+/// </summary>
+public sealed class TokenWindowStore
+{
+    internal static readonly TimeSpan MaxFutureSkew = TimeSpan.FromSeconds(60);
+
+    private static readonly HashSet<EventKind> TrackingKinds =
+    [
+        EventKind.Create, EventKind.Buy, EventKind.Sell, EventKind.Migrate,
+        EventKind.CreatePool, EventKind.AddLiquidity, EventKind.RemoveLiquidity,
+    ];
+
+    private readonly PipelineOptions _options;
+    private readonly Dictionary<string, LinkedListNode<TokenState>> _tokens = new(StringComparer.Ordinal);
+    private readonly LinkedList<TokenState> _byRecency = new(); // least recently updated first
+
+    public TokenWindowStore(IOptions<PipelineOptions> options)
+        : this(options.Value)
+    {
+    }
+
+    internal TokenWindowStore(PipelineOptions options) => _options = options;
+
+    public int TrackedCount => _tokens.Count;
+
+    public void Apply(RawEvent e)
+    {
+        if (_tokens.TryGetValue(e.Mint, out LinkedListNode<TokenState>? node))
+        {
+            node.Value.Apply(e);
+            _byRecency.Remove(node);
+            _byRecency.AddLast(node);
+            return;
+        }
+
+        if (!TrackingKinds.Contains(e.Kind))
+        {
+            return;
+        }
+
+        MakeRoom(e.Timestamp);
+        var state = new TokenState(e.Mint, _options.WindowSeconds, _options.EmaSpan, _options.RsiPeriod, e.Timestamp);
+        state.Apply(e);
+        _tokens[e.Mint] = _byRecency.AddLast(state);
+    }
+
+    /// <summary>
+    /// Evicts idle tokens, then returns one snapshot per token still active in the window. Eager:
+    /// each call snapshots exactly once (snapshots advance each token's growth-rate baseline).
+    /// </summary>
+    public IReadOnlyList<FeatureSnapshot> SnapshotActive(DateTimeOffset now)
+    {
+        Prune(now);
+
+        var snapshots = new List<FeatureSnapshot>();
+        foreach (TokenState state in _byRecency)
+        {
+            if (state.HasActivityInWindow(now))
+            {
+                snapshots.Add(state.Snapshot(now));
+            }
+        }
+
+        return snapshots;
+    }
+
+    /// <summary>Removes tokens with no activity within the window, or whose activity is implausibly far in the future.</summary>
+    public void Prune(DateTimeOffset now)
+    {
+        DateTimeOffset cutoff = now - TimeSpan.FromSeconds(_options.WindowSeconds);
+        DateTimeOffset future = now + MaxFutureSkew;
+
+        LinkedListNode<TokenState>? node = _byRecency.First;
+        while (node is not null)
+        {
+            LinkedListNode<TokenState>? next = node.Next;
+            DateTimeOffset last = node.Value.LastActivity;
+            if (last < cutoff || last > future)
+            {
+                Remove(node);
+            }
+
+            node = next;
+        }
+    }
+
+    /// <summary>At capacity, drop idle tokens from the cold end first; evict the coldest live one only if still full.</summary>
+    private void MakeRoom(DateTimeOffset now)
+    {
+        if (_tokens.Count < _options.MaxTrackedTokens)
+        {
+            return;
+        }
+
+        DateTimeOffset cutoff = now - TimeSpan.FromSeconds(_options.WindowSeconds);
+        while (_byRecency.First is { } coldest && coldest.Value.LastActivity < cutoff)
+        {
+            Remove(coldest);
+        }
+
+        if (_tokens.Count >= _options.MaxTrackedTokens && _byRecency.First is { } victim)
+        {
+            Remove(victim);
+        }
+    }
+
+    private void Remove(LinkedListNode<TokenState> node)
+    {
+        _tokens.Remove(node.Value.Mint);
+        _byRecency.Remove(node);
+    }
+}
