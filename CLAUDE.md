@@ -29,6 +29,14 @@ Every task issue has: **Business need** · **Acceptance criteria** · **Technica
 4. Open a PR into `main` using the PR template; `Closes #<issue>`; set the milestone.
 5. CI green + (convention) one review → **squash & merge**; delete the branch.
 
+### Working lean (token budget)
+Default to the cheapest path that still ships quality:
+- **One task = one fresh conversation** (or `/clear` between tasks). Don't chain many tasks in one long chat — the whole history is re-processed every turn.
+- **Skip plan mode for well-scoped tasks** (issue is clear). Use it only for ambiguous/architectural work, or when asked; otherwise go straight to implement → PR.
+- **Local = fast unit tests; let CI run the heavy/integration tests** (e.g. Testcontainers). Don't re-run the full suite locally every task.
+- **Trim tool output** (`-q`, `| tail`/`grep`) and keep summaries terse.
+- Don't re-read files already in context; don't spawn sub-agents (cold start = expensive).
+
 ### Hard conventions
 - **Conventional Commits**: `type(scope): summary` (`feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `perf`, `ci`).
 - **Never** add AI/Claude attribution to commits or PRs (no `Co-authored-by`, no "Generated with…", no 🤖). Authorship is 100% the user's.
