@@ -23,11 +23,14 @@ Request a prediction for a token (proxied to ai-service).
   "model_version": "v3",
   "predictions": [
     { "horizon": "1m", "pump_prob": 0.72, "rug_prob": 0.08,
-      "strategy": "buy", "position_size": 0.15,
-      "take_profit": 1.4, "stop_loss": 0.85, "confidence": 81.5 }
+      "expected_return": 0.35, "confidence": 81.5 }
   ]
 }
 ```
+
+> The model is a **signal model**: predictions only. Trade **decisions** (strategy, position
+> sizing, take-profit, stop-loss) are the paper-trading bot's **policy layer** (Sprints 3–4),
+> derived from these predictions — not returned here. See [`ML-MODEL.md`](ML-MODEL.md#policy-layer-not-the-model).
 
 ### `GET /tokens/live`
 Currently tracked tokens with latest snapshot. Supports `?limit=&sort=`.

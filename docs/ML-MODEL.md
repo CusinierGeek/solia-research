@@ -2,77 +2,111 @@
 
 ## Problem framing
 
-A **multi-task, multi-horizon time-series** model. Given a sequence of feature snapshots for a token, predict — **for each horizon** (30s, 1m, 5m, 15m, 1h):
+A **signal model**: a multi-task, multi-horizon time-series **Transformer**. Given a *sequence* of
+feature snapshots for a token, it predicts — **for each horizon** (30s, 1m, 5m, 15m, 1h) — only
+targets that have an objective label:
 
 1. **pump probability** `p_pump ∈ [0,1]`
 2. **rug probability** `p_rug ∈ [0,1]`
+3. **expected forward return** `r̂` (regression)
 
-and, as derived heads:
+plus a derived **confidence ∈ [0,100]** (from calibration, not a learned head).
 
-3. **strategy** `{buy, sell, hold}` (classification)
-4. **position size** (regression, 0–1 fraction of budget)
-5. **take-profit** multiplier (regression)
-6. **stop-loss** multiplier (regression)
-7. **confidence** `∈ [0,100]` (derived from calibrated head uncertainty)
+> **Prediction ≠ decision.** The model does *not* output buy/sell/hold, position size, or TP/SL.
+> Those are **decisions** with no objective training label; they live in a separate, tunable
+> **policy layer** (the paper-trading bot, Sprints 3–4) that consumes the model's predictions
+> (see [Policy layer](#policy-layer-not-the-model)). This plays to the Transformer's strength — a
+> rich temporal representation feeding well-labeled predictions — and keeps risk tunable without
+> retraining.
+
+## Why a Transformer (and how we exploit it)
+
+- **Sequence attention is the whole point.** The input is a *sequence* of the token's recent
+  feature snapshots, so attention can capture the *shape* of a run-up (accelerating buys, holder
+  growth, volatility regime, early dumps). Feeding a single row would waste the architecture — a
+  plain MLP would do.
+- **Shared encoder + many prediction heads is cheap and helps.** One context vector feeds all
+  heads; multi-task, multi-horizon supervision regularizes and strengthens the representation. We
+  add heads only for targets with real labels (pump, rug, return) — never for un-labelable
+  decisions.
 
 ## Architecture
 
 - **Type**: Transformer encoder for time series (no decoder).
-- **Input**: `[batch, seq_len, n_features]`. `seq_len` = rolling window of snapshots (e.g. 64); `n_features` ≈ the feature set in [`DATA-MODEL.md`](DATA-MODEL.md).
+- **Input**: `[batch, seq_len, n_features]`. `seq_len` = rolling window of snapshots (e.g. 64);
+  `n_features` = the `FEATURE_COLUMNS` spec (`services/ai-service/solia_ai/features.py`, parity-checked against [`DATA-MODEL.md`](DATA-MODEL.md)).
 - **Blocks**:
-  - Input projection (`Linear(n_features → d_model)`) + learned/positional encoding.
+  - Input projection (`Linear(n_features → d_model)`) + positional encoding.
   - `N` × TransformerEncoderLayer (multi-head self-attention + FFN, pre-norm).
   - Masked mean / attention pooling over the sequence → context vector.
-- **Heads** (per horizon): small MLPs
+- **Heads** (per horizon): small MLPs on the shared context vector
   - `pump_head`, `rug_head` → sigmoid
-  - `strategy_head` → softmax(3)
-  - `sizing_head`, `tp_head`, `sl_head` → bounded regression (sigmoid/softplus)
+  - `return_head` → linear (expected forward return)
 - Default hyperparams (tunable in `services/ai-service/solia_ai/config.yaml`): `d_model=128`, `n_heads=8`, `n_layers=4`, `dropout=0.1`, `seq_len=64`.
 
 ## Losses
 
-Total loss = weighted sum:
+Total loss = weighted sum (per-horizon and per-task weights configurable):
 
 - **pump / rug**: BCE **+ Focal Loss** (class imbalance — pumps/rugs are rare).
   `L = α · BCE + (1-α) · Focal(γ)`
-- **strategy**: cross-entropy.
-- **sizing / TP / SL**: smooth L1 (Huber).
-- Per-horizon weights and loss weights configurable.
+- **expected return**: Huber (smooth L1).
 
 ## Optimizer & training
 
 - **Optimizer**: AdamW (`lr`, `weight_decay` in config).
 - **Scheduler**: cosine with warmup.
-- **Regularization**: dropout, gradient clipping, early stopping on val AUC.
+- **Regularization**: dropout, gradient clipping, early stopping on the validation metric.
 - **Mixed precision** optional.
 - **Split**: temporal split (train on past, validate on more recent) to avoid leakage. **Never** shuffle across the time boundary within a token.
 
 ## Labeling
 
-Labels are derived from realized outcomes:
-- `pump` label at horizon `h` = price rose ≥ threshold within `h`.
-- `rug` label = liquidity/price collapsed ≥ threshold within `h`.
-- Strategy/sizing/TP/SL targets derived from closed **paper trades** (`trades` table) — this is what makes continuous learning work.
+All labels come straight from the realized future price/liquidity trajectory — **objective, no
+policy required**, so the model trains from day one, before any paper trades exist:
 
-Thresholds are defined in `config.yaml` and documented alongside the dataset builder (Sprint 2).
+- `pump` at horizon `h` = price rose ≥ threshold within `h`.
+- `rug` at horizon `h` = liquidity/price collapsed ≥ threshold within `h`.
+- `expected_return` at horizon `h` = realized forward return over `h`.
 
-Labels require the token's **full lifecycle** — including **post-bonding** (post-graduation) price/liquidity on the AMM. The pipeline captures pre- and post-bonding events (see [`DATA-SOURCES.md`](DATA-SOURCES.md)), so a pump/rug occurring after migration is labeled correctly; a pre-bonding-only dataset would bias the labels.
+Thresholds live in `config.yaml` (documented with the dataset builder, Sprint 2).
+
+Labels require the token's **full lifecycle** — including **post-bonding** price/liquidity on the
+AMM. The pipeline captures pre- and post-bonding events (see [`DATA-SOURCES.md`](DATA-SOURCES.md)),
+so a pump/rug after migration is labeled correctly; a pre-bonding-only dataset would bias labels.
 
 ## Confidence
 
-Confidence (0–100) is derived from head agreement + calibrated probability margin (e.g. temperature-scaled). Precise formula finalized in Sprint 2; must be **monotonic** with historical hit-rate.
+Confidence (0–100) is **derived** from the calibrated probabilities (e.g. temperature-scaled
+margin), not a learned head; it must be monotonic with historical hit-rate. Finalized in Sprint 2.
 
 ## Outputs contract
 
-The inference response (see [`API-CONTRACTS.md`](API-CONTRACTS.md)) returns, per requested horizon, all seven outputs plus the `model_version` used.
+The inference response (see [`API-CONTRACTS.md`](API-CONTRACTS.md)) returns, per requested horizon:
+`pump_prob`, `rug_prob`, `expected_return`, `confidence` — plus the `model_version`. Nothing about
+trade decisions (those are the policy layer's job).
+
+## Policy layer (not the model)
+
+Buy/sell/hold, position **sizing**, dynamic **take-profit / stop-loss**, and the entry threshold
+are **rules**, not model outputs — implemented in the paper-trading bot (Sprints 3–4) and
+configurable without retraining. They consume the model's predictions, for example:
+
+- enter when `pump_prob ≥ P` **and** `rug_prob ≤ R` (and liquidity/age gates pass);
+- size ∝ `expected_return` discounted by `rug_prob` (Kelly-style), capped;
+- TP/SL from `expected_return` and recent volatility.
+
+Keeping decisions out of the model lets risk appetite change instantly and keeps the model purely
+predictive. A *learned* policy (e.g. RL) is possible later only if it clearly beats the rules.
 
 ## Continuous training loop
 
 1. Count new **closed** trades since last training (`training_events`).
-2. When `>= RETRAIN_EVERY_N_TRADES`: build an updated dataset (historical + live trades).
+2. When `>= RETRAIN_EVERY_N_TRADES`: build an updated dataset (historical + live).
 3. Train a **candidate** from the champion checkpoint (warm start) or from scratch (configurable).
 4. Evaluate candidate vs champion on a held-out recent window.
-5. **Promote** candidate to champion only if it beats the champion by a margin on the primary metric (e.g. val AUC / expected P&L); otherwise **reject** / **rollback**.
+5. **Promote** only if it beats the champion by a margin on the primary metric (val AUC and/or
+   policy-simulated P&L); otherwise **reject** / **rollback**.
 6. Record everything in `training_events` and `models`; log to `logs`.
 
 Checkpoints, versioning, comparison, and rollback are first-class — see Sprint 7.
@@ -81,17 +115,17 @@ Checkpoints, versioning, comparison, and rollback are first-class — see Sprint
 
 | File | Role |
 |------|------|
-| `model.py` | Transformer + heads |
-| `dataset.py` | Dataset/DataLoader, windowing, labeling |
-| `features.py` | Shared feature definitions / parity with pipeline |
+| `model.py` | Transformer + prediction heads (pump / rug / return) |
+| `dataset.py` | Dataset/DataLoader, sequence windowing, labeling |
+| `features.py` | Shared feature spec / parity with pipeline |
 | `train.py` | Initial training entrypoint |
-| `inference.py` | Load champion, run predictions |
-| `retrain.py` | Continuous-training orchestrator |
+| `inference.py` | Load champion, run predictions (+ ONNX export) |
+| `retrain.py` | Continuous-training orchestrator (Sprint 7) |
 | `api.py` | FastAPI app (`/predict`, `/model/status`, `/model/retrain`) |
 | `config.yaml` | All hyperparameters & thresholds |
 
 ## Evaluation metrics
 
-- pump/rug: ROC-AUC, PR-AUC, precision/recall at operating threshold, calibration (ECE).
-- strategy: accuracy, confusion matrix.
-- economic: simulated win-rate and expected P&L on the validation window (the metric that actually matters).
+- pump / rug: ROC-AUC, PR-AUC, precision/recall at the operating threshold, calibration (ECE).
+- expected return: information coefficient (IC) / correlation, MAE.
+- economic: simulated win-rate & P&L on the validation window **via the policy layer** — the metric that ultimately matters.
