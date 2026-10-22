@@ -4,6 +4,10 @@
     <Project Path="services/data-pipeline/Solia.DataPipeline.Tests/Solia.DataPipeline.Tests.csproj" />
     <Project Path="services/data-pipeline/Solia.DataPipeline/Solia.DataPipeline.csproj" />
   </Folder>
+  <Folder Name="/services/backend/">
+    <Project Path="services/backend/Solia.Bot.Tests/Solia.Bot.Tests.csproj" />
+    <Project Path="services/backend/Solia.Bot/Solia.Bot.csproj" />
+  </Folder>
   <Folder Name="/services/db/">
     <Project Path="services/db/Solia.DbMigrator/Solia.DbMigrator.csproj" />
   </Folder>
