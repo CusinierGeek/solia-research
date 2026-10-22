@@ -18,35 +18,25 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Detect Python projects
-        id: detect
-        run: |
-          if ls services/*/pyproject.toml services/*/requirements.txt >/dev/null 2>&1; then
-            echo "found=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "found=false" >> "$GITHUB_OUTPUT"
-            echo "No Python projects yet — skipping."
-          fi
       # Every step must pass: lint, format and test failures fail the build.
       # pytest also fails when it collects no tests (tests are mandatory, see CLAUDE.md).
+      # The tools run from the service directory so they read its pyproject.toml settings
+      # (line length 100, pytest testpaths) instead of their defaults.
       - name: Install
-        if: steps.detect.outputs.found == 'true'
+        working-directory: services/ai-service
         run: |
-          python -m pip install --upgrade pip ruff black pytest
-          # ai-service is the only Python project (data-pipeline is a .NET worker).
-          for d in services/ai-service; do
-            if [ -f "$d/requirements.txt" ]; then pip install -r "$d/requirements.txt"; fi
-            if [ -f "$d/pyproject.toml" ]; then pip install -e "$d"; fi
-          done
+          python -m pip install --upgrade pip
+          # Pinned runtime + dev tools from pyproject.toml; the CPU index avoids multi-GB CUDA wheels.
+          pip install --extra-index-url https://download.pytorch.org/whl/cpu -e ".[dev]"
       - name: Lint (ruff)
-        if: steps.detect.outputs.found == 'true'
-        run: ruff check services
+        working-directory: services/ai-service
+        run: ruff check .
       - name: Format (black)
-        if: steps.detect.outputs.found == 'true'
-        run: black --check services
+        working-directory: services/ai-service
+        run: black --check .
       - name: Test (pytest)
-        if: steps.detect.outputs.found == 'true'
-        run: pytest services
+        working-directory: services/ai-service
+        run: pytest
 
   dotnet:
     name: .NET build & test

@@ -1,0 +1,46 @@
+# Solia AI — single source of model/training knobs (see docs/ML-MODEL.md).
+# The database connection is NOT stored here; it comes from the environment
+# (SOLIA_DB_CONNECTION, else POSTGRES_* — see solia_ai/config.py and .env.example).
+# Override the file with SOLIA_AI_CONFIG=/path/to/config.yaml; it is validated on load.
+
+model:
+  d_model: 128
+  n_heads: 8
+  n_layers: 4
+  dropout: 0.1
+  seq_len: 64
+
+training:
+  learning_rate: 0.0003
+  weight_decay: 0.01
+  epochs: 50
+  batch_size: 256
+  warmup_steps: 500
+  grad_clip: 1.0
+  early_stopping_patience: 8
+  seed: 42
+
+loss:
+  alpha: 0.5 # pump/rug loss = alpha * BCE + (1 - alpha) * Focal(gamma)  (docs/ML-MODEL.md)
+  focal_gamma: 2.0
+  strategy_weight: 1.0
+  regression_weight: 1.0 # sizing / take-profit / stop-loss (Huber)
+
+# Prediction horizons.
+horizons: ["30s", "1m", "5m", "15m", "1h"]
+
+# Labeling thresholds per horizon (fractional move). Provisional — confirm before the first
+# real training run (Sprint 2 kickoff decision).
+labeling:
+  pump_threshold: # price rose by >= this fraction within the horizon
+    "30s": 0.15
+    "1m": 0.25
+    "5m": 0.5
+    "15m": 1.0
+    "1h": 2.0
+  rug_threshold: # price/liquidity collapsed by >= this fraction within the horizon
+    "30s": 0.3
+    "1m": 0.4
+    "5m": 0.5
+    "15m": 0.6
+    "1h": 0.7

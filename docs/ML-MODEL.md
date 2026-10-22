@@ -27,7 +27,7 @@ and, as derived heads:
   - `pump_head`, `rug_head` → sigmoid
   - `strategy_head` → softmax(3)
   - `sizing_head`, `tp_head`, `sl_head` → bounded regression (sigmoid/softplus)
-- Default hyperparams (tunable in `config.yaml`): `d_model=128`, `n_heads=8`, `n_layers=4`, `dropout=0.1`, `seq_len=64`.
+- Default hyperparams (tunable in `services/ai-service/solia_ai/config.yaml`): `d_model=128`, `n_heads=8`, `n_layers=4`, `dropout=0.1`, `seq_len=64`.
 
 ## Losses
 

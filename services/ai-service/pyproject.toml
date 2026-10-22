@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling==1.32.4"]
+build-backend = "hatchling.build"
+
+[project]
+name = "solia-ai"
+version = "0.1.0"
+description = "Solia AI service — predictive Transformer for Pump.fun tokens (paper-trading research)."
+requires-python = ">=3.11"
+# Exact pins (the versions the suite is tested with) so CI and every machine build the same
+# environment; bump deliberately, one PR at a time.
+dependencies = [
+    "torch==2.14.1",
+    "numpy==2.4.6",
+    "pandas==3.0.6",
+    "pyyaml==6.0.3",
+    "scikit-learn==1.9.1",
+    "onnx==1.23.2",
+    "onnxruntime==1.31.0",
+    "sqlalchemy==2.1.6",
+    "psycopg[binary]==3.3.6",
+    "fastapi==0.159.1",
+    "uvicorn==0.54.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==9.1.1", "ruff==0.17.1", "black==26.10.1"]
+
+[tool.hatch.build.targets.wheel]
+# config.yaml lives inside the package, so it ships in the wheel and installed copies find it.
+packages = ["solia_ai"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
