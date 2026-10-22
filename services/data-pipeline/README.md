@@ -8,8 +8,9 @@ Ingests Pump.fun activity from **pumpapi.io** — live WebSocket **and** histori
 ## Status
 
 Runnable host (T2) with config, logging + a `logs`-table sink, `/health`, graceful shutdown.
-Canonical event model + pumpapi parser (T3). Live WebSocket source with auto-reconnect (T4) —
-observable via the opt-in probe below. Features and persistence land in T6/T7.
+Canonical event model + pumpapi parser (T3). Live WebSocket source with auto-reconnect (T4),
+historical replay (T5), rolling feature engineering (T6), and end-to-end persistence to
+PostgreSQL (T7) via the opt-in **ingest mode** below. Sprint 1 complete.
 
 ## Run locally
 
@@ -35,9 +36,35 @@ STREAM_PROBE=true POSTGRES_HOST=localhost dotnet run --project services/data-pip
 Connects to the pumpapi live stream and logs every event (kind, mint, venue, price) at **Debug**,
 plus a running count at Information every 30 s (set `Logging__LogLevel__Solia.DataPipeline.Hosting=Debug`
 to see each event) — handy to see real Pump.fun activity and to verify reconnection (drop/restore the
-network and watch it back off and resume). This probe does **not** persist anything; continuous
-ingestion into the DB is wired in T7. When enabled, the `/health` `stream` check reflects the
-connection (`Degraded` while reconnecting).
+network and watch it back off and resume). This probe does **not** persist anything; for that use
+the ingest mode below. When enabled, the `/health` `stream` check reflects the connection
+(`Degraded` while reconnecting).
+
+### Ingest mode (persist to PostgreSQL)
+
+```bash
+INGEST=true POSTGRES_HOST=localhost dotnet run --project services/data-pipeline/Solia.DataPipeline
+```
+
+Runs the full engine: live source → rolling windows → feature snapshots (every
+`Pipeline:SnapshotCadenceSeconds`) → PostgreSQL. Each flush is one transaction of set-based
+statements: it marks tokens that left the window inactive in `tokens_live`, upserts
+`tokens_history` (only widening first/last seen), upserts `tokens_live` only when newer than the
+stored row (so a replay of an older window never rolls live data back), and inserts `features`
+(idempotent on `(mint, ts)`). Requires a migrated database.
+
+- The snapshot clock follows event time but ignores a lone far-future timestamp; a real jump
+  (e.g. a missing replay hour) is followed once 5 consecutive events confirm it.
+- A failed write is retried 3 times with backoff, then that batch is dropped and logged, and
+  ingestion continues. Only shutdown stops the engine; any other source failure stops the host.
+- On shutdown a final flush (bounded to 10 s) persists the last window.
+- On startup, ingest mode marks every `tokens_live` row inactive (a fresh process tracks nothing
+  yet); tokens turn active again with their next snapshot. `updated_at` is left untouched. This
+  runs only in live ingest mode — a replay never resets the live table. Best-effort: retried,
+  then logged and skipped if the database is down.
+
+`INGEST` and `STREAM_PROBE` are mutually exclusive (both use the single live connection):
+enabling both fails startup.
 
 ### Replay historical data
 

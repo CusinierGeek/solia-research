@@ -1,0 +1,169 @@
+using System.Text.Json;
+using Npgsql;
+using NpgsqlTypes;
+using Solia.DataPipeline.Features;
+
+namespace Solia.DataPipeline.Pipeline;
+
+/// <summary>
+/// Persists a flush to PostgreSQL in one transaction of at most four set-based statements (one
+/// array parameter per column, expanded with <c>unnest</c>), however many tokens it carries:
+/// <list type="number">
+/// <item>mark deactivated mints inactive in <c>tokens_live</c>;</item>
+/// <item>upsert <c>tokens_history</c> (FK target), only ever widening <c>first_seen_at</c> /
+/// <c>last_seen_at</c> and filling a missing <c>created_at</c>;</item>
+/// <item>upsert the hot <c>tokens_live</c> row only when the snapshot is at least as new as the
+/// stored one, so replaying an older window never rolls live data back in time;</item>
+/// <item>insert <c>features</c> <c>ON CONFLICT (mint, ts) DO NOTHING</c> (idempotent re-runs).</item>
+/// </list>
+/// Snapshots in one flush have distinct mints (one per tracked token).
+/// </summary>
+public sealed class PostgresTokenSink(NpgsqlDataSource dataSource) : ITokenSink
+{
+    private const string DeactivateSql =
+        "UPDATE tokens_live SET is_active = FALSE, updated_at = @ts " +
+        "WHERE mint = ANY(@mints) AND is_active AND updated_at <= @ts";
+
+    private const string TokensHistorySql =
+        "INSERT INTO tokens_history (mint, created_at, first_seen_at, last_seen_at) " +
+        "SELECT * FROM unnest(@mint, @created, @first, @ts) " +
+        "ON CONFLICT (mint) DO UPDATE SET " +
+        "created_at = COALESCE(tokens_history.created_at, EXCLUDED.created_at), " +
+        "first_seen_at = LEAST(tokens_history.first_seen_at, EXCLUDED.first_seen_at), " +
+        "last_seen_at = GREATEST(tokens_history.last_seen_at, EXCLUDED.last_seen_at)";
+
+    private const string TokensLiveSql =
+        "INSERT INTO tokens_live " +
+        "(mint, created_at, last_price, last_market_cap, last_liquidity, holders, trending_score, venue, is_migrated, is_active, updated_at) " +
+        "SELECT m, c, p, mc, liq, h, tr, v, mig, TRUE, t " +
+        "FROM unnest(@mint, @created, @price, @mc, @liq, @holders, @trending, @venue, @migrated, @ts) " +
+        "AS u(m, c, p, mc, liq, h, tr, v, mig, t) " +
+        "ON CONFLICT (mint) DO UPDATE SET " +
+        "created_at = COALESCE(tokens_live.created_at, EXCLUDED.created_at), " +
+        "last_price = EXCLUDED.last_price, last_market_cap = EXCLUDED.last_market_cap, " +
+        "last_liquidity = EXCLUDED.last_liquidity, holders = EXCLUDED.holders, trending_score = EXCLUDED.trending_score, " +
+        "venue = EXCLUDED.venue, is_migrated = tokens_live.is_migrated OR EXCLUDED.is_migrated, " +
+        "is_active = TRUE, updated_at = EXCLUDED.updated_at " +
+        "WHERE tokens_live.updated_at <= EXCLUDED.updated_at";
+
+    private const string FeaturesSql =
+        "INSERT INTO features " +
+        "(mint, ts, venue, is_migrated, pool_address, price, volume, market_cap, holders, liquidity, " +
+        "buy_events, sell_events, buy_sell_ratio, token_age_sec, trending_score, social_mentions, " +
+        "holders_growth_rate, volume_growth_rate, tx_creation_rate, volatility, ema, rsi, price_derivative, " +
+        "onchain_signals, behavioral_signals) " +
+        "SELECT * FROM unnest(@mint, @ts, @venue, @migrated, @pool, @price, @volume, @mc, @holders, @liq, " +
+        "@buys, @sells, @ratio, @age, @trending, @social, @hgrowth, @vgrowth, @txrate, @vol, @ema, @rsi, @deriv, " +
+        "@onchain, @behavioral) " +
+        "ON CONFLICT (mint, ts) DO NOTHING";
+
+    public async Task WriteAsync(FlushBatch batch, CancellationToken cancellationToken)
+    {
+        if (batch.IsEmpty)
+        {
+            return;
+        }
+
+        await using NpgsqlConnection connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var commands = new NpgsqlBatch(connection, transaction);
+
+        // Deactivate first, so a mint dropped and re-tracked within one interval ends up active.
+        if (batch.Deactivated.Count > 0)
+        {
+            commands.BatchCommands.Add(Command(DeactivateSql,
+                Param("ts", NpgsqlDbType.TimestampTz, batch.Ts),
+                Array("mints", NpgsqlDbType.Text, batch.Deactivated.ToArray())));
+        }
+
+        IReadOnlyList<FeatureSnapshot> s = batch.Snapshots;
+        if (s.Count > 0)
+        {
+            string[] mints = Column(s, x => x.Mint);
+            DateTimeOffset[] ts = Column(s, x => x.Ts);
+            DateTimeOffset?[] created = Column(s, x => x.CreatedAtUtc);
+
+            commands.BatchCommands.Add(Command(TokensHistorySql,
+                Array("mint", NpgsqlDbType.Text, mints),
+                Array("created", NpgsqlDbType.TimestampTz, created),
+                Array("first", NpgsqlDbType.TimestampTz, Column(s, x => x.FirstSeenUtc)),
+                Array("ts", NpgsqlDbType.TimestampTz, ts)));
+
+            commands.BatchCommands.Add(Command(TokensLiveSql,
+                Array("mint", NpgsqlDbType.Text, mints),
+                Array("created", NpgsqlDbType.TimestampTz, created),
+                Array("price", NpgsqlDbType.Numeric, Column(s, x => x.Price)),
+                Array("mc", NpgsqlDbType.Numeric, Column(s, x => x.MarketCap)),
+                Array("liq", NpgsqlDbType.Numeric, Column(s, x => x.Liquidity)),
+                Array("holders", NpgsqlDbType.Integer, Column(s, x => x.Holders)),
+                Array("trending", NpgsqlDbType.Double, Column(s, x => x.TrendingScore)),
+                Array("venue", NpgsqlDbType.Text, Column(s, x => x.Venue)),
+                Array("migrated", NpgsqlDbType.Boolean, Column(s, x => x.IsMigrated)),
+                Array("ts", NpgsqlDbType.TimestampTz, ts)));
+
+            commands.BatchCommands.Add(Command(FeaturesSql,
+                Array("mint", NpgsqlDbType.Text, mints),
+                Array("ts", NpgsqlDbType.TimestampTz, ts),
+                Array("venue", NpgsqlDbType.Text, Column(s, x => x.Venue)),
+                Array("migrated", NpgsqlDbType.Boolean, Column(s, x => x.IsMigrated)),
+                Array("pool", NpgsqlDbType.Text, Column(s, x => x.PoolAddress)),
+                Array("price", NpgsqlDbType.Numeric, Column(s, x => x.Price)),
+                Array("volume", NpgsqlDbType.Numeric, Column(s, x => x.Volume)),
+                Array("mc", NpgsqlDbType.Numeric, Column(s, x => x.MarketCap)),
+                Array("holders", NpgsqlDbType.Integer, Column(s, x => x.Holders)),
+                Array("liq", NpgsqlDbType.Numeric, Column(s, x => x.Liquidity)),
+                Array("buys", NpgsqlDbType.Integer, Column(s, x => x.BuyEvents)),
+                Array("sells", NpgsqlDbType.Integer, Column(s, x => x.SellEvents)),
+                Array("ratio", NpgsqlDbType.Double, Column(s, x => x.BuySellRatio)),
+                Array("age", NpgsqlDbType.Integer, Column(s, x => x.TokenAgeSec)),
+                Array("trending", NpgsqlDbType.Double, Column(s, x => x.TrendingScore)),
+                Array("social", NpgsqlDbType.Integer, Column(s, x => x.SocialMentions)),
+                Array("hgrowth", NpgsqlDbType.Double, Column(s, x => x.HoldersGrowthRate)),
+                Array("vgrowth", NpgsqlDbType.Double, Column(s, x => x.VolumeGrowthRate)),
+                Array("txrate", NpgsqlDbType.Double, Column(s, x => x.TxCreationRate)),
+                Array("vol", NpgsqlDbType.Double, Column(s, x => x.Volatility)),
+                Array("ema", NpgsqlDbType.Double, Column(s, x => x.Ema)),
+                Array("rsi", NpgsqlDbType.Double, Column(s, x => x.Rsi)),
+                Array("deriv", NpgsqlDbType.Double, Column(s, x => x.PriceDerivative)),
+                Array("onchain", NpgsqlDbType.Jsonb, Column(s, x => JsonSerializer.Serialize(x.OnchainSignals))),
+                Array("behavioral", NpgsqlDbType.Jsonb, Column(s, x => JsonSerializer.Serialize(x.BehavioralSignals)))));
+        }
+
+        await commands.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Leaves <c>updated_at</c> untouched: the row's data hasn't changed, and the newer-wins guard
+    /// on the live upsert must keep comparing snapshot times.
+    /// </summary>
+    public async Task DeactivateAllAsync(CancellationToken cancellationToken)
+    {
+        await using NpgsqlCommand cmd = dataSource.CreateCommand("UPDATE tokens_live SET is_active = FALSE WHERE is_active");
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static T[] Column<T>(IReadOnlyList<FeatureSnapshot> snapshots, Func<FeatureSnapshot, T> select)
+    {
+        var values = new T[snapshots.Count];
+        for (int i = 0; i < values.Length; i++)
+        {
+            values[i] = select(snapshots[i]);
+        }
+
+        return values;
+    }
+
+    private static NpgsqlBatchCommand Command(string sql, params NpgsqlParameter[] parameters)
+    {
+        var cmd = new NpgsqlBatchCommand(sql);
+        cmd.Parameters.AddRange(parameters);
+        return cmd;
+    }
+
+    private static NpgsqlParameter Param(string name, NpgsqlDbType type, object value) => new(name, type) { Value = value };
+
+    // Explicitly typed so arrays containing NULLs don't trip type inference.
+    private static NpgsqlParameter Array(string name, NpgsqlDbType elementType, System.Array values) =>
+        new(name, NpgsqlDbType.Array | elementType) { Value = values };
+}

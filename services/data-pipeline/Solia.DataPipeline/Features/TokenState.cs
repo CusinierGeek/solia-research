@@ -217,6 +217,8 @@ internal sealed class TokenState
         {
             Mint = Mint,
             Ts = now,
+            FirstSeenUtc = _firstSeen,
+            CreatedAtUtc = _hasCreate ? _createdAt : null,
             Venue = _venue,
             IsMigrated = _isMigrated,
             PoolAddress = _poolId,

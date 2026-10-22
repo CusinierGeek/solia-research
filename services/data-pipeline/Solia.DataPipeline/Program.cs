@@ -1,11 +1,14 @@
 using Npgsql;
 using Solia.DataPipeline;
 using Solia.DataPipeline.Config;
+using Solia.DataPipeline.Features;
 using Solia.DataPipeline.Health;
 using Solia.DataPipeline.Hosting;
+using Solia.DataPipeline.Ingestion;
 using Solia.DataPipeline.Ingestion.PumpApi;
 using Solia.DataPipeline.Logging;
 using Solia.DataPipeline.Options;
+using Solia.DataPipeline.Pipeline;
 using Solia.Shared.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -18,6 +21,8 @@ builder.Services.AddOptions<PipelineOptions>()
     .Bind(builder.Configuration.GetSection(PipelineOptions.Section))
     .ValidateDataAnnotations()
     .Validate(o => o.HasConsistentWindow(), "Pipeline:WindowSeconds must be >= Pipeline:SnapshotCadenceSeconds.")
+    .Validate(o => o.HasExclusiveLiveConsumer(),
+        "Pipeline:Ingest and Pipeline:StreamProbe (INGEST / STREAM_PROBE) can't both be enabled: each owns the single live connection.")
     .ValidateOnStart();
 builder.Services.AddOptions<PumpApiOptions>()
     .Bind(builder.Configuration.GetSection(PumpApiOptions.Section))
@@ -42,6 +47,12 @@ builder.Services.AddSingleton<ILogSink, PostgresLogSink>();
 builder.Services.AddSingleton<StreamConnectionState>();
 builder.Services.AddSingleton<Func<IWebSocket>>(_ => static () => new SystemWebSocket());
 builder.Services.AddSingleton<PumpApiStreamSource>();
+
+// --- Ingestion engine (source → rolling features → PostgreSQL) ---
+builder.Services.AddSingleton<IDataSource>(sp => sp.GetRequiredService<PumpApiStreamSource>());
+builder.Services.AddSingleton<TokenWindowStore>();
+builder.Services.AddSingleton<ITokenSink, PostgresTokenSink>();
+builder.Services.AddSingleton<PipelineEngine>();
 
 // --- Health (bounded so probes don't hang on an unreachable database) ---
 builder.Services.AddHealthChecks()

@@ -18,6 +18,16 @@ public class OptionsValidationTests
     }
 
     [Theory]
+    [InlineData(false, false, true)]
+    [InlineData(true, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, true, false)] // both would open the single live connection
+    public void At_most_one_live_consumer_may_be_enabled(bool ingest, bool probe, bool valid)
+    {
+        Assert.Equal(valid, new PipelineOptions { Ingest = ingest, StreamProbe = probe }.HasExclusiveLiveConsumer());
+    }
+
+    [Theory]
     [InlineData(0, 300, 5000)]
     [InlineData(-1, 300, 5000)]
     [InlineData(10, 0, 5000)]

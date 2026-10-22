@@ -11,6 +11,12 @@ public sealed record FeatureSnapshot
     public required string Mint { get; init; }
     public required DateTimeOffset Ts { get; init; }
 
+    /// <summary>When the pipeline first saw the token (earliest event timestamp).</summary>
+    public DateTimeOffset FirstSeenUtc { get; init; }
+
+    /// <summary>The token's on-chain creation time, when its create event was seen.</summary>
+    public DateTimeOffset? CreatedAtUtc { get; init; }
+
     public string? Venue { get; init; }
     public bool IsMigrated { get; init; }
     public string? PoolAddress { get; init; }

@@ -174,6 +174,29 @@ public class TokenWindowStoreTests
     }
 
     [Fact]
+    public void Removed_tokens_are_reported_once_and_re_tracked_ones_are_not()
+    {
+        var store = new TokenWindowStore(Opts(window: 60));
+        store.Apply(Ev("A", EventKind.Buy, 0));
+        store.Apply(Ev("B", EventKind.Buy, 0));
+        store.Prune(T0.AddSeconds(120)); // both idle -> removed
+        store.Apply(Ev("B", EventKind.Buy, 121)); // B comes back
+
+        Assert.Equal(new[] { "A" }, store.DrainRemoved());
+        Assert.Empty(store.DrainRemoved());
+    }
+
+    [Fact]
+    public void Evicted_tokens_are_reported()
+    {
+        var store = new TokenWindowStore(Opts(max: 1));
+        store.Apply(Ev("A", EventKind.Buy, 0));
+        store.Apply(Ev("B", EventKind.Buy, 1));
+
+        Assert.Equal(new[] { "A" }, store.DrainRemoved());
+    }
+
+    [Fact]
     public void Idle_tokens_are_pruned_and_not_snapshotted()
     {
         var store = new TokenWindowStore(Opts(window: 60));

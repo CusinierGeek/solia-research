@@ -30,6 +30,7 @@ public sealed class TokenWindowStore
     private readonly PipelineOptions _options;
     private readonly Dictionary<string, LinkedListNode<TokenState>> _tokens = new(StringComparer.Ordinal);
     private readonly LinkedList<TokenState> _byRecency = new(); // least recently updated first
+    private readonly HashSet<string> _removed = new(StringComparer.Ordinal);
 
     public TokenWindowStore(IOptions<PipelineOptions> options)
         : this(options.Value)
@@ -39,6 +40,17 @@ public sealed class TokenWindowStore
     internal TokenWindowStore(PipelineOptions options) => _options = options;
 
     public int TrackedCount => _tokens.Count;
+
+    /// <summary>
+    /// Mints pruned or evicted since the last call that aren't tracked again, so the hot table
+    /// can mark them inactive. Each mint is reported once.
+    /// </summary>
+    public IReadOnlyList<string> DrainRemoved()
+    {
+        List<string> removed = _removed.Where(mint => !_tokens.ContainsKey(mint)).ToList();
+        _removed.Clear();
+        return removed;
+    }
 
     public void Apply(RawEvent e)
     {
@@ -125,5 +137,6 @@ public sealed class TokenWindowStore
     {
         _tokens.Remove(node.Value.Mint);
         _byRecency.Remove(node);
+        _removed.Add(node.Value.Mint);
     }
 }

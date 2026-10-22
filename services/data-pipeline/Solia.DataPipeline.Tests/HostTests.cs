@@ -27,6 +27,18 @@ public class HostTests
     }
 
     [Fact]
+    public void Ingest_and_stream_probe_together_fail_at_startup()
+    {
+        using WebApplicationFactory<Program> factory = Factory(
+            ("SOLIA_DB_CONNECTION", "Host=127.0.0.1;Port=1"),
+            ("Pipeline:Ingest", "true"),
+            ("Pipeline:StreamProbe", "true"));
+
+        var ex = Assert.Throws<OptionsValidationException>(() => factory.CreateClient());
+        Assert.Contains("can't both be enabled", ex.Message);
+    }
+
+    [Fact]
     public async Task Health_is_unhealthy_when_database_refuses_connections()
     {
         using WebApplicationFactory<Program> factory = Factory(

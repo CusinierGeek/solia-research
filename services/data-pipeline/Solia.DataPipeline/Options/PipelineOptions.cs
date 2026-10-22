@@ -40,9 +40,19 @@ public sealed class PipelineOptions
     /// <summary>
     /// Opt-in (off by default): run the live pumpapi source and log every event, for
     /// observability / recovery verification. Overridable via the flat STREAM_PROBE env var.
-    /// Continuous ingestion into the DB is wired separately (T7), not by this flag.
+    /// Mutually exclusive with <see cref="Ingest"/> (both would open the single live connection);
+    /// enabling both fails startup validation.
     /// </summary>
     public bool StreamProbe { get; set; } = false;
+
+    /// <summary>
+    /// Opt-in (off by default): run the full ingestion engine (live source → features →
+    /// PostgreSQL). Overridable via the flat INGEST env var. Requires a reachable database.
+    /// </summary>
+    public bool Ingest { get; set; } = false;
+
+    /// <summary>Ingest and the probe each own the single live connection, so at most one may be on.</summary>
+    public bool HasExclusiveLiveConsumer() => !(Ingest && StreamProbe);
 
     /// <summary>A window shorter than the snapshot cadence would compute features over no data.</summary>
     public bool HasConsistentWindow() => WindowSeconds >= SnapshotCadenceSeconds;
