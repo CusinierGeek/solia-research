@@ -94,6 +94,18 @@ def test_missing_sections_are_named(tmp_path):
         ({"loss": {**VALID["loss"], "alpha": 1.5}}, r"'loss.alpha' must be in \[0, 1\]"),
         ({"loss": {**VALID["loss"], "alpha": True}}, "'loss.alpha' must be a number"),
         ({"loss": {**VALID["loss"], "focal_gamma": -2}}, "'loss.focal_gamma' must be >= 0"),
+        (
+            {"training": {**VALID["training"], "balanced_sampling": "yes"}},
+            "'training.balanced_sampling' must be a boolean",
+        ),
+        (
+            {"loss": {**VALID["loss"], "horizon_weights": {"1hr": 3.0}}},
+            r"'loss.horizon_weights' has unknown horizon\(s\): 1hr",
+        ),
+        (
+            {"loss": {**VALID["loss"], "horizon_weights": {"1h": -1}}},
+            "'loss.horizon_weights.1h' must be a non-negative number",
+        ),
         ({"horizons": []}, "'horizons' must be a non-empty list"),
         ({"horizons": ["30s", 5]}, "'horizons' must be a non-empty list of strings"),
     ],

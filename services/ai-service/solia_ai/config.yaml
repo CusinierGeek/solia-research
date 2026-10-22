@@ -21,12 +21,18 @@ training:
   grad_clip: 1.0
   early_stopping_patience: 8
   seed: 42
+  # Class imbalance is corrected once: balanced batches (events ~50%) by default; when false,
+  # batches follow the natural distribution and the BCE term gets pos_weight = neg/pos instead.
+  balanced_sampling: true
 
 loss:
   alpha: 0.5 # pump/rug loss = alpha * BCE + (1 - alpha) * Focal(gamma)  (docs/ML-MODEL.md)
   focal_gamma: 2.0
-  strategy_weight: 1.0
-  regression_weight: 1.0 # sizing / take-profit / stop-loss (Huber)
+  strategy_weight: 1.0 # weight of the pump + rug classification terms
+  regression_weight: 1.0 # weight of the expected_return term (Huber)
+  # Optional per-horizon weights (default 1.0 each); unlisted horizons keep 1.0.
+  # horizon_weights:
+  #   "1h": 1.5
 
 # Prediction horizons.
 horizons: ["30s", "1m", "5m", "15m", "1h"]

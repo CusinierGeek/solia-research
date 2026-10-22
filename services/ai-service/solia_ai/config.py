@@ -121,6 +121,9 @@ def _validate(config: Any, source: str) -> None:
 
     for key in ("learning_rate", "batch_size", "epochs"):
         number("training", key, positive=True)
+    balanced = section("training").get("balanced_sampling", True)
+    if not isinstance(balanced, bool):
+        fail(f"'training.balanced_sampling' must be a boolean, got {balanced!r}")
 
     if not 0 <= number("loss", "alpha") <= 1:
         fail("'loss.alpha' must be in [0, 1] (L = alpha*BCE + (1-alpha)*Focal)")
@@ -134,6 +137,19 @@ def _validate(config: Any, source: str) -> None:
         or not all(isinstance(h, str) for h in horizons)
     ):
         fail("'horizons' must be a non-empty list of strings")
+
+    horizon_weights = section("loss").get("horizon_weights")
+    if horizon_weights is not None:
+        if not isinstance(horizon_weights, dict):
+            fail("'loss.horizon_weights' must be a mapping of horizon -> weight")
+        unknown = [str(h) for h in horizon_weights if h not in horizons]
+        if unknown:
+            fail(f"'loss.horizon_weights' has unknown horizon(s): {', '.join(unknown)}")
+        for horizon, value in horizon_weights.items():
+            if isinstance(value, bool) or not isinstance(value, int | float) or value < 0:
+                fail(
+                    f"'loss.horizon_weights.{horizon}' must be a non-negative number, got {value!r}"
+                )
 
     labeling = section("labeling")
     if "max_gap_fraction" in labeling and not 0 < number("labeling", "max_gap_fraction") <= 1:
