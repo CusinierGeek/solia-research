@@ -17,9 +17,11 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <Using Include="Solia.Testing" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\shared\Solia.Testing\Solia.Testing.csproj" />
     <ProjectReference Include="..\Solia.Api\Solia.Api.csproj" />
   </ItemGroup>
 

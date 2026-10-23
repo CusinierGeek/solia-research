@@ -1,7 +1,11 @@
+using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Solia.Api.Endpoints;
 using Solia.Api.Hosting;
 using Solia.Api.Logging;
 using Solia.Api.Middleware;
 using Solia.Api.OpenApi;
+using Solia.Bot.Configuration;
 using Solia.Core.Ai;
 using Solia.Core.Data;
 using Solia.Core.Http;
@@ -11,6 +15,16 @@ var builder = WebApplication.CreateBuilder(args);
 // --- Options: bound from config sections + flat .env.example keys (BACKEND_URL, ...), validated at
 // startup (fail fast on bad values) ---
 builder.Services.AddApiOptions(builder.Configuration);
+
+// --- Bot options (Bot:* / PAPER_*): the equity curve starts from the configured starting balance; the bot
+// host itself lands in T6 ---
+builder.Configuration.AddBotFlatEnvAliases();
+builder.Services.AddBotOptions(builder.Configuration);
+builder.Services.TryAddSingleton(TimeProvider.System);
+
+// --- JSON: snake_case on the wire (docs/API-CONTRACTS.md: total_pnl, page_size, ...) ---
+builder.Services.ConfigureHttpJsonOptions(options =>
+    options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower);
 
 // --- Data: pooled EF Core context mapped over the Sprint-1 schema (read endpoints, stats, bot host).
 // Shares the pooled NpgsqlDataSource with the log sink; DB password moves to the secrets provider in T7. ---
@@ -41,8 +55,8 @@ if (app.Environment.IsDevelopment())
 // Liveness only; real DB/ai-service readiness checks land in T8.
 app.MapGet(ApiRoutes.Health, () => Results.Ok(new { status = "ok" }));
 
-// Versioned public surface — endpoints land in T4/T5. Empty seam for now.
-app.MapGroup(ApiRoutes.BasePath);
+// Versioned public surface: read/query endpoints (T4); the AI-proxy endpoints land in T5.
+app.MapGroup(ApiRoutes.BasePath).MapReadEndpoints();
 
 app.Run();
 

@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\shared\Solia.Shared\Solia.Shared.csproj" />
+    <ProjectReference Include="..\Solia.Bot\Solia.Bot.csproj" />
     <ProjectReference Include="..\Solia.Core\Solia.Core.csproj" />
     <ProjectReference Include="..\Solia.Secrets\Solia.Secrets.csproj" />
   </ItemGroup>

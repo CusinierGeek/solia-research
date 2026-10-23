@@ -1,30 +1,15 @@
 using System.Net;
 using System.Text.Json;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 
 namespace Solia.Api.Tests;
 
-/// <summary>
-/// Boots the real host. No database is needed: the log sink is best-effort and these point it at an
-/// unreachable one, so writes fail fast and are swallowed.
-/// </summary>
+/// <summary>Boots the real host. No database is needed (see <see cref="TestApiFactory"/>).</summary>
 public class HostSmokeTests
 {
     private static WebApplicationFactory<Program> Factory(string environment, params (string Key, string Value)[] settings) =>
-        new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
-        {
-            builder.UseEnvironment(environment);
-            // An unreachable DB by default; a test's own SOLIA_DB_CONNECTION wins.
-            var values = new Dictionary<string, string?> { ["SOLIA_DB_CONNECTION"] = "Host=127.0.0.1;Port=1;Timeout=1" };
-            foreach ((string key, string value) in settings)
-            {
-                values[key] = value;
-            }
-            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(values));
-        });
+        TestApiFactory.Create(environment, settings);
 
     [Fact]
     public async Task Backend_url_supplied_by_a_late_config_source_reaches_the_openapi_document()

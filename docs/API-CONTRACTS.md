@@ -32,28 +32,66 @@ Request a prediction for a token (proxied to ai-service).
 > sizing, take-profit, stop-loss) are the paper-trading bot's **policy layer** (Sprints 3–4),
 > derived from these predictions — not returned here. See [`ML-MODEL.md`](ML-MODEL.md#policy-layer-not-the-model).
 
+### Read endpoints — shared conventions
+- Response properties are **snake_case**; money/prices are exact decimals, probabilities/ratios doubles.
+- `from`/`to` are ISO-8601 timestamps, inclusive; either may be omitted, `from > to` is a `400`.
+- Enum-like params (`outcome`, `status`, `level`, `service`, `sort`, `window`) are case-insensitive; an
+  unknown value is a `400 invalid_request` naming the parameter and its allowed values. An empty or blank
+  value (`?status=`) is the same as omitting it.
+- **Paginated** endpoints take `page` (1-based, default 1) and `pageSize` (1–200, default 50) and return:
+```jsonc
+{ "items": [ ... ], "page": 1, "page_size": 50, "total": 1234 }   // total = rows matching the filters
+```
+  A page past the end returns empty `items` with the same `total`. A page may reach at most 10 000 rows deep
+  (`page × pageSize ≤ 10000`, else `400`) — narrow `from`/`to` to go further back. `total` and `items` come
+  from one snapshot.
+
 ### `GET /tokens/live`
-Currently tracked tokens with latest snapshot. Supports `?limit=&sort=`.
+Currently tracked tokens (`is_active`) with their latest snapshot, as a plain array.
+`?limit=` (1–500, default 50) `&sort=` `updated_at` (default) | `market_cap` | `liquidity` | `holders` |
+`trending_score` | `created_at` — always descending, missing values last.
+```jsonc
+[ { "mint": "So1...", "symbol": "ABC", "name": "...", "created_at": "...", "last_price": 0.0000001234,
+    "last_market_cap": 1000.5, "last_liquidity": 42.0, "holders": 311, "trending_score": 0.7,
+    "venue": "pumpfun", "is_migrated": false, "updated_at": "..." } ]
+```
 
 ### `GET /tokens/history`
-Paginated token registry. `?from=&to=&outcome=&page=&pageSize=`.
+Paginated token registry, newest `first_seen_at` first. `?from=&to=` bound `first_seen_at`;
+`?outcome=` `pump` | `rug` | `neutral`; `?page=&pageSize=`.
+Items: `{ mint, symbol, name, created_at, first_seen_at, last_seen_at, final_outcome }`.
 
 ### `GET /trades/history`
-Paper trades. `?status=&from=&to=&page=&pageSize=`.
+Paginated paper trades, most recently opened first. `?status=` `open` | `closed`; `?from=&to=` bound
+`opened_at`; `?page=&pageSize=`.
+Items: `{ id, mint, prediction_id, opened_at, closed_at, entry_price, exit_price, size, duration_sec, pnl,
+pnl_pct, strategy, confidence, exit_reason, status }`.
 
 ### `GET /stats/winrate`
+`wins / closed trades` — the backtest's (`ReplayResult`) definition: win = `pnl > 0`, loss = `pnl < 0`,
+break-even (`0` or no P&L) is neither but still counts in the denominator; `0` when nothing closed. Closed
+trades = `status = 'closed'` with a `closed_at` (the same set as `/stats/performance`). `?window=` `all`
+(default) | `24h` | `7d` | `30d`: closed strictly after now − window, by `closed_at`.
 ```jsonc
-{ "winrate": 0.58, "wins": 290, "losses": 210, "window": "all" }
+{ "winrate": 0.58, "wins": 290, "losses": 190, "break_even": 20, "window": "all" }
 ```
 
 ### `GET /stats/performance`
-Equity curve points for the dashboard chart.
+Equity curve points for the dashboard chart: one point per closed trade in `closed_at` order, limited to the
+latest `?limit=` (1–10000, default 1000), `equity` = the bot's configured starting balance
+(`Bot:StartingBalance` / `PAPER_STARTING_BALANCE`) + realized P&L so far (earlier trades included), `pnl` =
+that trade's P&L; `total_pnl` covers every closed trade.
 ```jsonc
-{ "points": [ { "ts": "...", "equity": 10.0, "pnl": 0.0 } ], "total_pnl": 3.2 }
+{ "points": [ { "ts": "...", "equity": 11.5, "pnl": 1.5 } ], "total_pnl": 3.2 }
 ```
 
 ### `GET /logs/bot`
-Recent bot/system logs. `?level=&service=&limit=`.
+Recent bot/system logs, newest first, as a plain array. `?level=` is a **minimum** severity
+(`debug` < `info` < `warn` < `error`); `?service=` `data-pipeline` | `ai-service` | `backend` | `bot`;
+`?limit=` (1–1000, default 100).
+```jsonc
+[ { "id": 1, "ts": "...", "service": "bot", "level": "warn", "message": "...", "context": { ... } } ]
+```
 
 ### `GET /model/status`
 ```jsonc
