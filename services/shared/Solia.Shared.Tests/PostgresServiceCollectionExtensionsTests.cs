@@ -66,6 +66,33 @@ public class PostgresServiceCollectionExtensionsTests
     }
 
     [Fact]
+    public void The_fallback_message_names_the_setting_but_never_echoes_the_connection_string()
+    {
+        string password = "fake-" + Guid.NewGuid().ToString("N");
+        string connection = $"Host=db;Password={password};Port=not-a-number";
+        ArgumentException rejected = Assert.ThrowsAny<ArgumentException>(() => NpgsqlDataSource.Create(connection));
+
+        string message = PostgresServiceCollectionExtensions.DisabledMessage("backend", rejected);
+
+        Assert.StartsWith("[backend] `logs` table sink disabled", message, StringComparison.Ordinal);
+        Assert.DoesNotContain(password, message, StringComparison.Ordinal);
+        Assert.DoesNotContain(rejected.Message, message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_non_configuration_failure_building_the_data_source_propagates()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<NpgsqlDataSource>(_ => throw new InvalidOperationException("secrets could not be decrypted"));
+
+        services.AddPostgresLogSink(Config("Host=x"), "backend");
+        using ServiceProvider provider = services.BuildServiceProvider();
+
+        var ex = Assert.Throws<InvalidOperationException>(() => provider.GetRequiredService<ILogSink>());
+        Assert.Equal("secrets could not be decrypted", ex.Message);
+    }
+
+    [Fact]
     public void A_blank_service_name_is_rejected() =>
         Assert.Throws<ArgumentException>(() => new ServiceCollection().AddPostgresLogSink(Config("Host=x"), " "));
 

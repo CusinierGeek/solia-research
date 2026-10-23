@@ -16,6 +16,11 @@ var builder = WebApplication.CreateBuilder(args);
 // startup (fail fast on bad values) ---
 builder.Services.AddApiOptions(builder.Configuration);
 
+// --- Secrets: secrets/secrets.enc (SOLIA_SECRETS_FILE) decrypted in memory with SOLIA_MASTER_KEY (AES-256-GCM).
+// Registered first: it provides the shared DB data source (db_connection / db_password override plaintext
+// config) that the bot, EF context and log sink all reuse. ---
+builder.Services.AddSoliaSecrets(builder.Configuration);
+
 // --- Paper-trading bot (Bot:* / PAPER_*): validated options (the equity curve starts from the configured
 // starting balance), the DB/ai-service feed, the Postgres trade store and the hosted bot, run only when
 // Bot:Enabled / PAPER_BOT_ENABLED is set. Paper only. ---
@@ -27,7 +32,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower);
 
 // --- Data: pooled EF Core context mapped over the Sprint-1 schema (read endpoints, stats, bot host).
-// Shares the pooled NpgsqlDataSource with the log sink; DB password moves to the secrets provider in T7. ---
+// Shares the pooled, secrets-aware NpgsqlDataSource with the log sink and the bot. ---
 builder.Services.AddSoliaDbContext(builder.Configuration);
 
 // --- ai-service: typed HttpClient (AiService:BaseUrl / AI_SERVICE_URL) with timeout, retry + jitter and
@@ -37,6 +42,9 @@ builder.Services.AddSoliaAiClient(builder.Configuration);
 // --- Logging: console (default) + best-effort mirror of notable entries into the `logs` table ---
 builder.Services.AddBackendLogSink(builder.Configuration);
 builder.Logging.AddPostgresLogSink();
+
+// --- Redaction: every logger scrubs known secret values (and the master key) before any provider sees them ---
+builder.Logging.AddSecretRedaction();
 
 // --- OpenAPI document (served in Development), with the public base URL as its server ---
 builder.Services.AddOpenApi(options => options.AddDocumentTransformer<ApiServerDocumentTransformer>());

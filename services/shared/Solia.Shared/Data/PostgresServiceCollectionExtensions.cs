@@ -29,9 +29,11 @@ public static class PostgresServiceCollectionExtensions
 
     /// <summary>
     /// Registers the <see cref="PostgresLogSink"/> for <paramref name="service"/> (the `logs.service` value)
-    /// on the shared data source. The sink is best-effort: if the data source can't even be built (e.g. a
-    /// malformed connection string) it falls back to <see cref="NullLogSink"/> and reports why on stderr,
-    /// rather than failing the host over an optional log mirror. Uses <c>TryAdd</c>.
+    /// on the shared data source. The sink is best-effort: if the connection string is rejected (malformed,
+    /// an <see cref="ArgumentException"/>) it falls back to <see cref="NullLogSink"/> and says so on stderr,
+    /// rather than failing the host over an optional log mirror. Any other failure building the data source
+    /// (e.g. secrets that can't be decrypted) is not a log-mirror problem and propagates, so the host fails
+    /// on its real cause. Uses <c>TryAdd</c>.
     /// </summary>
     public static IServiceCollection AddPostgresLogSink(
         this IServiceCollection services, IConfiguration configuration, string service)
@@ -48,11 +50,18 @@ public static class PostgresServiceCollectionExtensions
         {
             return new PostgresLogSink(services.GetRequiredService<NpgsqlDataSource>(), service);
         }
-        catch (Exception ex)
+        catch (ArgumentException ex)
         {
-            // Not through ILogger: the sink is being built for the logging pipeline itself.
-            Console.Error.WriteLine($"[{service}] `logs` table sink disabled, the database is not configured correctly: {ex.Message}");
+            // Not through ILogger (the sink is being built for the logging pipeline itself), so not redacted
+            // either: name the rejected setting, never echo the message, which can quote the connection string.
+            Console.Error.WriteLine(DisabledMessage(service, ex));
             return NullLogSink.Instance;
         }
     }
+
+    /// <summary>The stderr line for a rejected connection string: the setting it names, never its text.</summary>
+    public static string DisabledMessage(string service, ArgumentException ex) =>
+        $"[{service}] `logs` table sink disabled: the database connection string was rejected " +
+        $"({ex.GetType().Name}{(ex.ParamName is null ? "" : $", setting '{ex.ParamName}'")}). " +
+        "Check SOLIA_DB_CONNECTION / POSTGRES_* (or the db_connection / db_password secrets).";
 }

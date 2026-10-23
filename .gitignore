@@ -1,9 +1,16 @@
 # ---- Secrets & env ----
 .env
 *.env.local
-secrets/*.enc
-secrets/*.key
 *.pem
+# Secrets: only the encrypted secrets/secrets.enc is ever committed (docs/SECRETS.md)
+secrets/*
+!secrets/secrets.enc
+secrets.plain.json
+*.plain.json
+*.key
+*.enc.tmp
+master.key
+*.masterkey
 
 # ---- .NET ----
 bin/

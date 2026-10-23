@@ -11,9 +11,10 @@ REST API for the dashboard and external callers; AI-service client; hosts the pa
 |---------|------|
 | `Solia.Api` | ASP.NET Core host — composition, logging, error-shape, OpenAPI, `/health`. Endpoints land in T4/T5. |
 | `Solia.Core` | Domain types, options and contracts — no ASP.NET dependency. |
-| `Solia.Secrets` | AES secrets provider + CLI (T7). Scaffolded empty in T1. |
+| `Solia.Secrets` | AES-256-GCM crypto core, `ISecretsProvider`, `SecretRedactor` (T7). No dependencies beyond the BCL. |
+| `Solia.Secrets.Cli` | `solia-secrets` CLI (`encrypt` / `rotate` / `get` / `keygen`) over the same crypto core. |
 | `Solia.Bot` | Paper-trading bot (Sprint 3). |
-| `*.Tests` | `Solia.Api.Tests` (integration, `WebApplicationFactory`), `Solia.Core.Tests` + `Solia.Bot.Tests` (unit, plus Testcontainers tests tagged `Category=Integration` — skip locally with `--filter "Category!=Integration"`). |
+| `*.Tests` | `Solia.Api.Tests` (integration, `WebApplicationFactory`), `Solia.Secrets.Tests` (crypto + CLI), `Solia.Core.Tests` + `Solia.Bot.Tests` (unit, plus Testcontainers tests tagged `Category=Integration` — skip locally with `--filter "Category!=Integration"`). |
 
 ## Host conventions (T1)
 
@@ -28,5 +29,12 @@ REST API for the dashboard and external callers; AI-service client; hosts the pa
 - Off by default; `Bot:Enabled` / `PAPER_BOT_ENABLED=true` runs `PaperTradingBot` inside the API host (`GatedPaperTradingBot`).
 - **Feed** (`DbBotEventSource`): polls new `features` rows every `Bot:PollInterval` (by id; an insert that commits after a higher id is waited for up to `Bot:MaxCommitDelay`) → price ticks of active `tokens_live` tokens. Each token with a new row is queued (one entry per token, newest row, oldest-waiting first — none is dropped) and a separate loop scores it on its feature window *ending at that row* through the ai-service for `Bot:Horizon` (default `1m`), so a slow ai-service never holds ticks back. The prediction is written to `predictions` and fed to the bot. Events go through a `Bot:ReorderWindow` (default 2 s) buffer so they reach the engine in time order. Rows older than `Bot:MaxMarkAgeSeconds` are skipped. When the ai-service or the DB fails, or scoring fails unexpectedly, the token or poll is skipped; the bot keeps running.
 - **Persistence**: `trades` via `PostgresTradeStore` (also the closed-trade counter), bot milestones in `logs` with `service = bot`.
+
+## Secrets (T7)
+
+- At startup the host decrypts `secrets/secrets.enc` (`SOLIA_SECRETS_FILE` to override) with `SOLIA_MASTER_KEY` into memory (`ISecretsProvider`). No file at the default path → plaintext config only; an explicit `SOLIA_SECRETS_FILE` that doesn't exist, a missing/wrong key or a tampered file → startup fails.
+- **DB**: a `db_connection` secret replaces the configured connection string; otherwise `db_password` replaces its password. The secrets-aware `NpgsqlDataSource` is shared by EF, the log sink and the bot.
+- **Redaction**: the `ILoggerFactory` is wrapped (`AddSecretRedaction`) so every logger scrubs known secret values and the master key (message, structured values, exception text, scopes) before any provider sees them. The bot's `logs` rows bypass `ILogger`, so its sink (`RedactingBotLogSink`) scrubs message and context itself. The password inside a `db_connection` secret is redacted on its own.
+- CLI: `dotnet run --project Solia.Secrets.Cli -- <command>` (see [SECRETS.md](../../docs/SECRETS.md)).
 
 Paper trading only — no real execution, ever.

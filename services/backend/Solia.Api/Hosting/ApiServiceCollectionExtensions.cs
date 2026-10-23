@@ -6,7 +6,7 @@ namespace Solia.Api.Hosting;
 /// <summary>
 /// Host wiring for the backend API: validated <see cref="ApiOptions"/> and the Postgres log sink
 /// (service = 'backend'). The EF <c>SoliaDbContext</c> is wired in <c>Program.cs</c> via
-/// <c>AddSoliaDbContext</c> and the AI client via <c>AddSoliaAiClient</c>; the bot host and the secrets provider land with their own tasks.
+/// <c>AddSoliaDbContext</c> and the AI client via <c>AddSoliaAiClient</c>; the secrets provider and the secrets-aware data source via <c>AddSoliaSecrets</c>.
 /// </summary>
 public static class ApiServiceCollectionExtensions
 {

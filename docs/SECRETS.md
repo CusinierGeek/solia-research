@@ -30,14 +30,35 @@ secrets.enc  ──(AES-256-GCM, key=SOLIA_MASTER_KEY)──▶  { "db_password"
 ## Rules
 
 1. **Never** commit `.env`, `secrets.enc` is committed **encrypted only**; `*.key` and master keys are gitignored.
-2. **Never** log decrypted secrets (add a redaction filter).
+2. **Never** log decrypted secrets. The backend scrubs every `ILogger` entry and the bot's `logs` rows; the password inside `db_connection` is masked on its own too.
 3. Rotate by re-encrypting with a new key; keep the previous key only long enough to re-encrypt.
 4. In CI, use repository/organization secrets — never the committed file's real values.
 
-## Local dev quickstart (once Sprint 4 lands)
+## Well-known secret names
+
+| Name | Effect in the backend |
+|------|-----------------------|
+| `db_connection` | Full Postgres connection string; replaces `SOLIA_DB_CONNECTION` / `POSTGRES_*`. |
+| `db_password` | Replaces the password of the configured connection string. |
+
+Any other name is readable via `ISecretsProvider.Get(name)`.
+
+## Startup behaviour (backend)
+
+| Situation | Result |
+|-----------|--------|
+| No `secrets.enc` at the default path (`secrets/secrets.enc`) | Plaintext config only. |
+| `SOLIA_SECRETS_FILE` set but the file does not exist (typo, missing mount) | Startup fails. |
+| File present, `SOLIA_MASTER_KEY` missing or not 32 base64 bytes | Startup fails. |
+| Wrong key or tampered file (GCM tag mismatch) | Startup fails; nothing is decrypted. |
+
+## Local dev quickstart
 
 ```bash
-export SOLIA_MASTER_KEY=$(openssl rand -base64 32)
-solia-secrets encrypt --in secrets.plain.json --out secrets/secrets.enc
-# secrets.plain.json is gitignored; delete after encrypting
+cd services/backend
+export SOLIA_MASTER_KEY=$(dotnet run --project Solia.Secrets.Cli -- keygen)   # or: openssl rand -base64 32
+dotnet run --project Solia.Secrets.Cli -- encrypt --in secrets.plain.json --out ../../secrets/secrets.enc
+dotnet run --project Solia.Secrets.Cli -- get --name db_password --file ../../secrets/secrets.enc
+dotnet run --project Solia.Secrets.Cli -- rotate --old-key "$SOLIA_MASTER_KEY" --new-key "<new b64>" --file ../../secrets/secrets.enc
+# secrets.plain.json is gitignored; delete it after encrypting
 ```
