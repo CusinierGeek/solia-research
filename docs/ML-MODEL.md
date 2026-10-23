@@ -105,11 +105,28 @@ predictive. A *learned* policy (e.g. RL) is possible later only if it clearly be
 2. When `>= RETRAIN_EVERY_N_TRADES`: build an updated dataset (historical + live).
 3. Train a **candidate** from the champion checkpoint (warm start) or from scratch (configurable).
 4. Evaluate candidate vs champion on a held-out recent window.
-5. **Promote** only if it beats the champion by a margin on the primary metric (val AUC and/or
-   policy-simulated P&L); otherwise **reject** / **rollback**.
+5. **Promote** only if it beats the champion by a margin on the primary metric; otherwise **reject**
+   / **rollback**.
 6. Record everything in `training_events` and `models`; log to `logs`.
 
 Checkpoints, versioning, comparison, and rollback are first-class — see Sprint 7.
+
+### Promotion gate: guard against luck-driven false champions
+
+The promotion gate is a **controlled offline comparison**: candidate and champion are scored on the
+**same held-out recent window** under the same policy (apples-to-apples). It is **not** the live
+paper-trading account — a single live path has no counterfactual for the champion. Live P&L drives
+*when* to retrain (`RETRAIN_EVERY_N_TRADES`) and drift detection, not promotion.
+
+- **Primary metric is a *predictive* one** (ROC-AUC / PR-AUC / calibration), computed over thousands
+  of labeled windows → statistically stable. **Policy-simulated P&L is a secondary sanity check**,
+  not the gate: Pump.fun P&L is heavy-tailed (a few 10× tokens dominate), so promoting on a short
+  window's backtest P&L is the classic way to crown a **false champion** (skill vs luck).
+- **Promote by a margin**, never on a razor-thin edge, and use **rolling** held-out windows (don't
+  re-select against the same window forever — multiple-comparisons overfitting).
+- When building Sprint 7, add **statistical rigor** to the P&L comparison: significance test /
+  confidence interval (bootstrap, Deflated Sharpe) and require the lift to hold across **multiple
+  windows / seeds**, not a single run. `seed` makes *training* reproducible, not eval-sample luck.
 
 ## Files (ai-service, built in Sprints 2 & 7)
 

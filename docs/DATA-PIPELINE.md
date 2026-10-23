@@ -64,6 +64,19 @@ Derived: `buy_sell_ratio, holders_growth_rate, volume_growth_rate, tx_creation_r
 
 Feature definitions must stay **in sync** with `ai-service/features.py` — single documented spec, mirrored, with a parity test (Sprint 2).
 
+### Granularity: aggregated snapshots, not raw trades
+
+The pipeline persists **one aggregated `FeatureSnapshot` per token per cadence** — it does **not** store individual trade events. `TokenState.Apply` streams every `RawEvent` into an in-memory rolling window (carrying `Ts`, `Kind`, `QuoteAmount` in SOL, `QuoteMint`, and the `Trader`/txSigner), and `Snapshot` reduces that window to the feature row. The `features.raw` JSONB column exists but is currently **unused**.
+
+Consequence: **per-trade granularity is not recoverable from the database** — a feature that needs it (net SOL flow, holder concentration from `txSigner`, large-buy distribution) cannot be backfilled from stored rows.
+
+This is **not** a problem, because the real source of truth is **re-playable**:
+
+- The raw material already flows through `RawEvent` (SOL amounts, reserves, txSigner), so new per-trade features are computed in `TokenState`/`Snapshot` with **no new ingestion path** — just a wider feature set. Adding them is low-impact; see the enrichment epic.
+- To apply a new feature to historical data, **re-run the free pumpapi replay** (`PumpApiReplaySource`) through the same path — it regenerates the whole `features` table enriched. See *Historical backfill* below.
+
+Persisting raw per-trade rows (a dedicated `trade_events` table) is deliberately **avoided**: it adds write volume and retention burden for no gain, since re-replay already covers backfill.
+
 ## Post-bonding coverage
 
 Events carry a `venue` and migration markers, so a token is tracked **continuously through graduation** (bonding curve → AMM). This is required for correct `pump`/`rug` labels over the full lifecycle (see [`ML-MODEL.md`](ML-MODEL.md)).
