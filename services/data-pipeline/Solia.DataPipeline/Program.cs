@@ -1,4 +1,3 @@
-using Npgsql;
 using Solia.DataPipeline;
 using Solia.DataPipeline.Config;
 using Solia.DataPipeline.Features;
@@ -9,7 +8,7 @@ using Solia.DataPipeline.Ingestion.PumpApi;
 using Solia.Shared.Logging;
 using Solia.DataPipeline.Options;
 using Solia.DataPipeline.Pipeline;
-using Solia.Shared.Configuration;
+using Solia.Shared.Data;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -32,16 +31,10 @@ builder.Services.AddOptions<PumpApiOptions>()
     .Validate(o => o.HasConsistentBackoff(), "PumpApi:ReconnectMaxDelaySeconds must be >= ReconnectBaseDelaySeconds.")
     .ValidateOnStart();
 
-// --- Database: a single pooled data source, owned (and disposed) by the container. The
-// connection string comes from IConfiguration (env vars or any other source) on first use.
-builder.Services.AddSingleton(sp =>
-{
-    IConfiguration config = sp.GetRequiredService<IConfiguration>();
-    return new NpgsqlDataSourceBuilder(DbConnectionSettings.Resolve(key => config[key])).Build();
-});
-
-// --- Operational log sink (writes to the `logs` table) ---
-builder.Services.AddSingleton<ILogSink>(sp => new PostgresLogSink(sp.GetRequiredService<NpgsqlDataSource>(), "data-pipeline"));
+// --- Database: a single pooled data source, owned (and disposed) by the container; the
+// connection string is resolved on first use. Plus the operational log sink (`logs` table).
+builder.Services.AddSoliaDataSource(builder.Configuration);
+builder.Services.AddPostgresLogSink(builder.Configuration, "data-pipeline");
 
 // --- Live stream source (pumpapi WebSocket) ---
 builder.Services.AddSingleton<StreamConnectionState>();

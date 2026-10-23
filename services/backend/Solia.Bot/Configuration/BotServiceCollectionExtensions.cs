@@ -8,6 +8,7 @@ using Solia.Bot.Intake;
 using Solia.Bot.Logging;
 using Solia.Bot.Trading;
 using Solia.Shared.Configuration;
+using Solia.Shared.Data;
 
 namespace Solia.Bot.Configuration;
 
@@ -35,7 +36,7 @@ public static class BotServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddPostgresTradeStore(this IServiceCollection services, IConfiguration configuration)
     {
-        services.TryAddSingleton(_ => NpgsqlDataSource.Create(DbConnectionSettings.Resolve(key => configuration[key])));
+        services.AddSoliaDataSource(configuration);
         services.AddSingleton<PostgresTradeStore>();
         services.AddSingleton<ITradeStore>(sp => sp.GetRequiredService<PostgresTradeStore>());
         services.AddSingleton<IClosedTradeCounter>(sp => sp.GetRequiredService<PostgresTradeStore>());

@@ -99,6 +99,11 @@ Liveness/readiness.
 { "error": { "code": "not_found", "message": "unknown mint" } }
 ```
 
+Backend codes by status (stable — clients may switch on them): 400/422 `invalid_request`, 401 `unauthorized`,
+403 `forbidden`, 404 `not_found`, 405 `method_not_allowed`, 406 `not_acceptable`, 409 `conflict`,
+413 `payload_too_large`, 415 `unsupported_media_type`, 429 `rate_limited`, 503 `unavailable`, other 5xx
+`internal_error`. Headers a status relies on (`Allow`, `WWW-Authenticate`, `Retry-After`) are preserved.
+
 ## Versioning
 - Public API is versioned by path (`/api/v1`).
 - Prediction responses always include `model_version` for traceability.

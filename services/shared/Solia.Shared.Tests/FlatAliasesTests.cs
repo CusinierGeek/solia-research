@@ -63,4 +63,15 @@ public class FlatAliasesTests
         var ex = Assert.Throws<InvalidOperationException>(() => config.AddFlatAliases(Aliases));
         Assert.Contains("SOME_FLAG", ex.Message);
     }
+
+    [Fact]
+    public void Resolve_reads_through_the_lookup_without_touching_configuration()
+    {
+        var env = new Dictionary<string, string?> { ["SOME_URL"] = " late-url ", ["SOME_FLAG"] = "yes" };
+
+        Dictionary<string, string?> values = FlatAliases.Resolve(key => env.GetValueOrDefault(key), Aliases);
+
+        Assert.Equal("late-url", values["Section:Url"]);
+        Assert.Equal(bool.TrueString, values["Section:Flag"]);
+    }
 }

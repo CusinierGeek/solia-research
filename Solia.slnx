@@ -5,8 +5,13 @@
     <Project Path="services/data-pipeline/Solia.DataPipeline/Solia.DataPipeline.csproj" />
   </Folder>
   <Folder Name="/services/backend/">
+    <Project Path="services/backend/Solia.Api.Tests/Solia.Api.Tests.csproj" />
+    <Project Path="services/backend/Solia.Api/Solia.Api.csproj" />
     <Project Path="services/backend/Solia.Bot.Tests/Solia.Bot.Tests.csproj" />
     <Project Path="services/backend/Solia.Bot/Solia.Bot.csproj" />
+    <Project Path="services/backend/Solia.Core.Tests/Solia.Core.Tests.csproj" />
+    <Project Path="services/backend/Solia.Core/Solia.Core.csproj" />
+    <Project Path="services/backend/Solia.Secrets/Solia.Secrets.csproj" />
   </Folder>
   <Folder Name="/services/db/">
     <Project Path="services/db/Solia.DbMigrator/Solia.DbMigrator.csproj" />

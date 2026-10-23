@@ -20,20 +20,28 @@ public static class FlatAliases
     /// are left to the binder + options validation, which name the offending option.
     /// </summary>
     public static IConfigurationBuilder AddFlatAliases(
-        this IConfigurationManager configuration, IEnumerable<FlatAlias> aliases)
+        this IConfigurationManager configuration, IEnumerable<FlatAlias> aliases) =>
+        configuration.AddInMemoryCollection(Resolve(key => configuration[key], aliases));
+
+    /// <summary>
+    /// The aliased values currently visible through <paramref name="lookup"/>, keyed by their section path
+    /// (same trimming / bool parsing / skipping rules as <see cref="AddFlatAliases"/>). Use this to apply the
+    /// aliases lazily — e.g. when options are resolved — so configuration sources added later still count.
+    /// </summary>
+    public static Dictionary<string, string?> Resolve(Func<string, string?> lookup, IEnumerable<FlatAlias> aliases)
     {
         var values = new Dictionary<string, string?>();
         foreach ((string flatKey, string path, bool isBool) in aliases)
         {
-            string? raw = configuration[flatKey];
+            string? raw = lookup(flatKey);
             if (string.IsNullOrWhiteSpace(raw))
             {
                 continue;
             }
             values[path] = isBool
-                ? FlatValues.GetBool(key => configuration[key], flatKey)!.Value.ToString()
+                ? FlatValues.GetBool(lookup, flatKey)!.Value.ToString()
                 : raw.Trim();
         }
-        return configuration.AddInMemoryCollection(values);
+        return values;
     }
 }
