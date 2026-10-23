@@ -2,6 +2,7 @@ using Solia.Api.Hosting;
 using Solia.Api.Logging;
 using Solia.Api.Middleware;
 using Solia.Api.OpenApi;
+using Solia.Core.Ai;
 using Solia.Core.Data;
 using Solia.Core.Http;
 
@@ -14,6 +15,10 @@ builder.Services.AddApiOptions(builder.Configuration);
 // --- Data: pooled EF Core context mapped over the Sprint-1 schema (read endpoints, stats, bot host).
 // Shares the pooled NpgsqlDataSource with the log sink; DB password moves to the secrets provider in T7. ---
 builder.Services.AddSoliaDbContext(builder.Configuration);
+
+// --- ai-service: typed HttpClient (AiService:BaseUrl / AI_SERVICE_URL) with timeout, retry + jitter and
+// a circuit breaker; failures surface as AiServiceException (mapped to the error envelope) ---
+builder.Services.AddSoliaAiClient(builder.Configuration);
 
 // --- Logging: console (default) + best-effort mirror of notable entries into the `logs` table ---
 builder.Services.AddBackendLogSink(builder.Configuration);
