@@ -147,8 +147,20 @@ Trades-since-last-train and the retrain threshold are added by the retrain orche
 ### `POST /model/retrain`
 Kick off the retrain orchestrator. Body: `{ "trigger": "manual" }`. Returns `202` + `training_event_id`.
 
-### `GET /health`
-Liveness/readiness.
+### `GET /health`, `GET /health/ready`, `GET /health/live`
+Probes (outside `/api/v1`). `/health/live` checks nothing (process up); `/health/ready` checks the database and
+the ai-service (its `/health`); `/health` runs every check. Unhealthy → `503`, otherwise `200`, both with:
+```jsonc
+{ "status": "Unhealthy", "total_duration": "00:00:00.0123",
+  "entries": {
+    "database":   { "status": "Healthy",   "description": "database reachable",     "duration": "00:00:00.004", "tags": ["ready"] },
+    "ai_service": { "status": "Unhealthy", "description": "ai-service unreachable", "duration": "00:00:00.008", "tags": ["ready"] } } }
+```
+Descriptions are fixed strings (`database reachable|unreachable`, `ai-service reachable|unreachable`,
+`ai-service reports it is not healthy`); anything else — e.g. a check that throws or times out — is reported as
+`check failed`, never with an exception message. `/health/live` is always `200`. The ai-service probe is a single
+attempt (no retry) that the circuit breaker neither counts nor blocks; each check is bounded to 5 s. A failing
+check is logged once when it starts failing and once when it recovers, not on every probe.
 
 ---
 

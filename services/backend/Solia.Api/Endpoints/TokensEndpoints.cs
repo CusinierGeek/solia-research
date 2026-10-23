@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Solia.Api.OpenApi;
 using Solia.Core.Data;
 using Solia.Core.Data.Entities;
 
@@ -19,8 +20,14 @@ public static class TokensEndpoints
 
     public static RouteGroupBuilder MapTokensEndpoints(this RouteGroupBuilder group)
     {
-        group.MapGet("/tokens/live", GetLiveAsync);
-        group.MapGet("/tokens/history", GetHistoryAsync);
+        group.MapGet("/tokens/live", GetLiveAsync)
+            .WithName("GetLiveTokens").WithTags("tokens")
+            .WithSummary("Tokens still tracked, newest update first (or by ?sort=).")
+            .ProducesError(StatusCodes.Status400BadRequest);
+        group.MapGet("/tokens/history", GetHistoryAsync)
+            .WithName("GetTokenHistory").WithTags("tokens")
+            .WithSummary("The token registry, newest first, paginated.")
+            .ProducesError(StatusCodes.Status400BadRequest);
         return group;
     }
 

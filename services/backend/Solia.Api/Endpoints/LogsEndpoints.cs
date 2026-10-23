@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Solia.Api.OpenApi;
 using Solia.Core.Data;
 using Solia.Core.Data.Entities;
 
@@ -19,7 +20,10 @@ public static class LogsEndpoints
 
     public static RouteGroupBuilder MapLogsEndpoints(this RouteGroupBuilder group)
     {
-        group.MapGet("/logs/bot", GetRecentAsync);
+        group.MapGet("/logs/bot", GetRecentAsync)
+            .WithName("GetBotLogs").WithTags("logs")
+            .WithSummary("Recent bot/system log entries, newest first.")
+            .ProducesError(StatusCodes.Status400BadRequest);
         return group;
     }
 

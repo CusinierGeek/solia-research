@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Solia.Api.OpenApi;
 using Solia.Bot.Configuration;
 using Solia.Core.Data;
 using Solia.Core.Data.Entities;
@@ -43,8 +44,14 @@ public static class StatsEndpoints
 
     public static RouteGroupBuilder MapStatsEndpoints(this RouteGroupBuilder group)
     {
-        group.MapGet("/stats/winrate", GetWinRateAsync);
-        group.MapGet("/stats/performance", GetPerformanceAsync);
+        group.MapGet("/stats/winrate", GetWinRateAsync)
+            .WithName("GetWinRate").WithTags("stats")
+            .WithSummary("Win rate over the closed trades of a window.")
+            .ProducesError(StatusCodes.Status400BadRequest);
+        group.MapGet("/stats/performance", GetPerformanceAsync)
+            .WithName("GetPerformance").WithTags("stats")
+            .WithSummary("Total P&L and the equity curve over the latest closed trades.")
+            .ProducesError(StatusCodes.Status400BadRequest);
         return group;
     }
 

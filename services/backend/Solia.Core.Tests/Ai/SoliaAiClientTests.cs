@@ -52,6 +52,92 @@ public class SoliaAiClientTests
     }
 
     [Fact]
+    public async Task Health_gets_the_health_route()
+    {
+        var handler = new StubHandler(Json(HttpStatusCode.OK, """{"status":"ok"}"""));
+        using ServiceProvider provider = AiClientTestHost.Build(handler);
+
+        AiHealthResponse health = await provider.Client().CheckHealthAsync();
+
+        Assert.True(health.IsOk);
+        RecordedRequest sent = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Get, sent.Method);
+        Assert.Equal("http://ai-service:8000/root/health", sent.Uri!.ToString());
+    }
+
+    [Fact]
+    public async Task Health_reporting_another_status_is_not_ok()
+    {
+        var handler = new StubHandler(Json(HttpStatusCode.OK, """{"status":"starting"}"""));
+        using ServiceProvider provider = AiClientTestHost.Build(handler);
+
+        Assert.False((await provider.Client().CheckHealthAsync()).IsOk);
+    }
+
+    [Fact]
+    public async Task Health_of_an_unreachable_service_is_an_unavailable_failure()
+    {
+        var handler = new StubHandler(Throws(new HttpRequestException("connection refused")));
+        using ServiceProvider provider = AiClientTestHost.Build(handler, NoRetries);
+
+        var ex = await Assert.ThrowsAsync<AiServiceException>(() => provider.Client().CheckHealthAsync());
+
+        Assert.Equal(AiServiceErrorKind.Unavailable, ex.Kind);
+    }
+
+    [Fact]
+    public async Task Health_is_a_single_attempt_even_when_retries_are_configured()
+    {
+        var handler = new StubHandler(Throws(new HttpRequestException("connection refused")));
+        using ServiceProvider provider = AiClientTestHost.Build(handler); // MaxRetryAttempts defaults to 2
+
+        var ex = await Assert.ThrowsAsync<AiServiceException>(() => provider.Client().CheckHealthAsync());
+
+        Assert.Equal(AiServiceErrorKind.Unavailable, ex.Kind);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public async Task Failing_health_probes_never_open_a_circuit()
+    {
+        var handler = new StubHandler(
+            Error(HttpStatusCode.BadGateway, "bad_gateway"),
+            Error(HttpStatusCode.BadGateway, "bad_gateway"),
+            Error(HttpStatusCode.BadGateway, "bad_gateway"),
+            Error(HttpStatusCode.BadGateway, "bad_gateway"),
+            Json(HttpStatusCode.OK, """{"status":"ok"}"""));
+        using ServiceProvider provider = AiClientTestHost.Build(handler, new Dictionary<string, string?>
+        {
+            ["AiService:CircuitBreakerMinimumThroughput"] = "2",
+        });
+        ISoliaAiClient client = provider.Client();
+
+        for (int i = 0; i < 4; i++)
+        {
+            var ex = await Assert.ThrowsAsync<AiServiceException>(() => client.CheckHealthAsync());
+            Assert.IsNotAssignableFrom<BrokenCircuitException>(ex.InnerException); // never "circuit is open"
+        }
+
+        Assert.True((await client.CheckHealthAsync()).IsOk); // recovery is seen on the very next probe
+        Assert.Equal(5, handler.Calls);
+    }
+
+    [Fact]
+    public async Task A_hung_health_probe_ends_at_the_attempt_timeout()
+    {
+        var handler = new StubHandler(Hangs());
+        using ServiceProvider provider = AiClientTestHost.Build(handler, new Dictionary<string, string?>
+        {
+            ["AiService:AttemptTimeout"] = "00:00:00.200",
+        });
+
+        var ex = await Assert.ThrowsAsync<AiServiceException>(() => provider.Client().CheckHealthAsync());
+
+        Assert.Equal(AiServiceErrorKind.Unavailable, ex.Kind);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
     public async Task Retrain_posts_a_manual_trigger_and_reads_the_202_training_event_id()
     {
         var handler = new StubHandler(Json(HttpStatusCode.Accepted, """{"training_event_id":17}"""));

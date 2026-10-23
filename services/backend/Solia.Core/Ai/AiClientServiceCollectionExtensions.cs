@@ -23,7 +23,9 @@ public static class AiClientServiceCollectionExtensions
     /// first: total timeout → retry (exponential backoff + jitter; availability failures of idempotent calls
     /// only — never a 4xx, a 500 or a 503 <c>no_champion</c>, never <c>/model/retrain</c>) → circuit breaker
     /// (same failures) → per-attempt timeout → response buffering. One pipeline — hence one breaker — per
-    /// route, so a failing <c>/model/retrain</c> never blocks <c>/predict</c>. Returns the client builder so
+    /// route, so a failing <c>/model/retrain</c> never blocks <c>/predict</c>. A probe (<c>/health</c>) is one
+    /// attempt the breaker ignores: a readiness check must report the service as it is now, inside the check's
+    /// own timeout, not wait out retries or a break opened by earlier probes. Returns the client builder so
     /// callers (tests) can swap the handler.
     /// </summary>
     public static IHttpClientBuilder AddSoliaAiClient(this IServiceCollection services, IConfiguration configuration)
@@ -62,7 +64,7 @@ public static class AiClientServiceCollectionExtensions
                         BackoffType = DelayBackoffType.Exponential,
                         UseJitter = true,
                         ShouldHandle = async args =>
-                            IsIdempotent(args.Context) && await IsAvailabilityFailureAsync(args.Outcome).ConfigureAwait(false),
+                            IsIdempotent(args.Context) && !IsProbe(args.Context) && await IsAvailabilityFailureAsync(args.Outcome).ConfigureAwait(false),
                     });
                 }
 
@@ -72,7 +74,9 @@ public static class AiClientServiceCollectionExtensions
                     MinimumThroughput = options.CircuitBreakerMinimumThroughput,
                     SamplingDuration = options.CircuitBreakerSamplingDuration,
                     BreakDuration = options.CircuitBreakerBreakDuration,
-                    ShouldHandle = args => IsAvailabilityFailureAsync(args.Outcome),
+                    ShouldHandle = args => IsProbe(args.Context)
+                        ? ValueTask.FromResult(false)
+                        : IsAvailabilityFailureAsync(args.Outcome),
                 });
 
                 pipeline.AddTimeout(options.AttemptTimeout);
@@ -135,6 +139,11 @@ public static class AiClientServiceCollectionExtensions
         context.GetRequestMessage() is not { } request
         || !request.Options.TryGetValue(SoliaAiClient.NonIdempotent, out bool nonIdempotent)
         || !nonIdempotent;
+
+    private static bool IsProbe(ResilienceContext context) =>
+        context.GetRequestMessage() is { } request
+        && request.Options.TryGetValue(SoliaAiClient.Probe, out bool probe)
+        && probe;
 
     private static Uri WithTrailingSlash(string baseUrl) =>
         new(baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/", UriKind.Absolute);

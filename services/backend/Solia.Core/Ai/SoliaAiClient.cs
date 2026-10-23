@@ -23,6 +23,12 @@ public interface ISoliaAiClient
 
     /// <summary><c>POST /model/retrain</c> with trigger <c>manual</c>. Not idempotent, so never retried.</summary>
     Task<AiRetrainResponse> TriggerRetrainAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// <c>GET /health</c>: the ai-service's liveness, for the backend's readiness check. A single attempt (bounded
+    /// by <c>AttemptTimeout</c>) that the circuit breaker neither counts nor blocks.
+    /// </summary>
+    Task<AiHealthResponse> CheckHealthAsync(CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -36,9 +42,13 @@ internal sealed class SoliaAiClient(HttpClient http) : ISoliaAiClient
     internal const string PredictPath = "predict";
     internal const string ModelStatusPath = "model/status";
     internal const string RetrainPath = "model/retrain";
+    internal const string HealthPath = "health";
 
     /// <summary>Set on a request the retry strategy must not repeat (the call has side effects).</summary>
     internal static readonly HttpRequestOptionsKey<bool> NonIdempotent = new("Solia.Ai.NonIdempotent");
+
+    /// <summary>Set on a probe: never retried, ignored by the circuit breaker.</summary>
+    internal static readonly HttpRequestOptionsKey<bool> Probe = new("Solia.Ai.Probe");
 
     public Task<AiPredictResponse> PredictAsync(AiPredictRequest request, CancellationToken cancellationToken = default)
     {
@@ -54,8 +64,11 @@ internal sealed class SoliaAiClient(HttpClient http) : ISoliaAiClient
         SendAsync<AiRetrainResponse>(
             HttpMethod.Post, RetrainPath, new AiRetrainRequest(AiRetrainRequest.Manual), idempotent: false, cancellationToken);
 
+    public Task<AiHealthResponse> CheckHealthAsync(CancellationToken cancellationToken = default) =>
+        SendAsync<AiHealthResponse>(HttpMethod.Get, HealthPath, body: null, idempotent: true, cancellationToken, probe: true);
+
     private async Task<T> SendAsync<T>(
-        HttpMethod method, string path, object? body, bool idempotent, CancellationToken cancellationToken)
+        HttpMethod method, string path, object? body, bool idempotent, CancellationToken cancellationToken, bool probe = false)
     {
         using var request = new HttpRequestMessage(method, path);
         if (body is not null)
@@ -66,6 +79,11 @@ internal sealed class SoliaAiClient(HttpClient http) : ISoliaAiClient
         if (!idempotent)
         {
             request.Options.Set(NonIdempotent, true);
+        }
+
+        if (probe)
+        {
+            request.Options.Set(Probe, true);
         }
 
         HttpResponseMessage response;

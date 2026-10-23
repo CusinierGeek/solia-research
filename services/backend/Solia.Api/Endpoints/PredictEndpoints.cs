@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Solia.Api.OpenApi;
 using Solia.Core.Ai;
 using Solia.Core.Configuration;
 using Solia.Core.Data;
@@ -22,7 +23,16 @@ public static class PredictEndpoints
 
     public static RouteGroupBuilder MapPredictEndpoints(this RouteGroupBuilder group)
     {
-        group.MapPost("/predict", PredictAsync);
+        group.MapPost("/predict", PredictAsync)
+            .WithName("Predict").WithTags("model")
+            .WithSummary("Score a token's latest feature window with the champion model (proxied to the ai-service).")
+            .ProducesError(
+                StatusCodes.Status400BadRequest,
+                StatusCodes.Status404NotFound,
+                StatusCodes.Status415UnsupportedMediaType,
+                StatusCodes.Status422UnprocessableEntity,
+                StatusCodes.Status502BadGateway,
+                StatusCodes.Status503ServiceUnavailable);
         return group;
     }
 

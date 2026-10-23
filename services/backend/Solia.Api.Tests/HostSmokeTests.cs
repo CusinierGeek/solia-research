@@ -31,7 +31,7 @@ public class HostSmokeTests
         using WebApplicationFactory<Program> factory = Factory("Production", ("SOLIA_DB_CONNECTION", "NotAKeyword=oops"));
         HttpClient client = factory.CreateClient();
 
-        HttpResponseMessage response = await client.GetAsync("/health");
+        HttpResponseMessage response = await client.GetAsync("/health/live");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
@@ -51,12 +51,12 @@ public class HostSmokeTests
     }
 
     [Fact]
-    public async Task Health_returns_200()
+    public async Task Liveness_returns_200_without_any_dependency()
     {
         using WebApplicationFactory<Program> factory = Factory("Production");
         HttpClient client = factory.CreateClient();
 
-        HttpResponseMessage response = await client.GetAsync("/health");
+        HttpResponseMessage response = await client.GetAsync("/health/live");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }

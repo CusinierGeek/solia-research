@@ -1,6 +1,8 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Solia.Api.OpenApi;
 using Solia.Core.Ai;
 using Solia.Core.Configuration;
 using Solia.Core.Data;
@@ -16,8 +18,14 @@ public static class ModelEndpoints
 {
     public static RouteGroupBuilder MapModelEndpoints(this RouteGroupBuilder group)
     {
-        group.MapGet("/model/status", GetStatusAsync);
-        group.MapPost("/model/retrain", RetrainAsync);
+        group.MapGet("/model/status", GetStatusAsync)
+            .WithName("GetModelStatus").WithTags("model")
+            .WithSummary("The champion model, its metrics and the retrain progress.");
+        group.MapPost("/model/retrain", RetrainAsync)
+            .WithName("TriggerRetrain").WithTags("model")
+            .WithSummary("Kick off a manual retrain on the ai-service.")
+            .ProducesError(
+                StatusCodes.Status400BadRequest, StatusCodes.Status502BadGateway, StatusCodes.Status503ServiceUnavailable);
         return group;
     }
 
@@ -90,7 +98,7 @@ public static class ModelEndpoints
     }
 
     /// <summary>Kicks off a manual retrain on the ai-service: <c>202 Accepted</c> + the run's <c>training_event_id</c>.</summary>
-    internal static async Task<IResult> RetrainAsync(ISoliaAiClient ai, CancellationToken cancellationToken)
+    internal static async Task<Accepted<RetrainResponse>> RetrainAsync(ISoliaAiClient ai, CancellationToken cancellationToken)
     {
         AiRetrainResponse response = await ai.TriggerRetrainAsync(cancellationToken);
         return TypedResults.Accepted((string?)null, new RetrainResponse(response.TrainingEventId));

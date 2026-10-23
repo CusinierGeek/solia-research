@@ -9,7 +9,7 @@ REST API for the dashboard and external callers; AI-service client; hosts the pa
 
 | Project | Role |
 |---------|------|
-| `Solia.Api` | ASP.NET Core host — composition, logging, error-shape, OpenAPI, `/health`. Endpoints land in T4/T5. |
+| `Solia.Api` | ASP.NET Core host — composition, logging, error-shape, OpenAPI, health probes, `/api/v1` endpoints, hosted bot. |
 | `Solia.Core` | Domain types, options and contracts — no ASP.NET dependency. |
 | `Solia.Secrets` | AES-256-GCM crypto core, `ISecretsProvider`, `SecretRedactor` (T7). No dependencies beyond the BCL. |
 | `Solia.Secrets.Cli` | `solia-secrets` CLI (`encrypt` / `rotate` / `get` / `keygen`) over the same crypto core. |
@@ -18,11 +18,11 @@ REST API for the dashboard and external callers; AI-service client; hosts the pa
 
 ## Host conventions (T1)
 
-- **Base path** `/api/v1` (`ApiRoutes.BasePath`); liveness at `/health` (real readiness checks in T8).
+- **Base path** `/api/v1` (`ApiRoutes.BasePath`); health probes under `/health` (see *Health & end-to-end suite* below).
 - **Error shape** — every failure returns `{ "error": { "code", "message" } }` via `ErrorShapeMiddleware`; throw an `ApiException` (e.g. `NotFoundException`) for a well-known failure.
 - **Logging** — console plus a best-effort mirror of notable entries into the `logs` table (`service = backend`), configured under the `Postgres` logger-provider alias (defaults to `Warning`).
 - **Configuration** — Options pattern with `ValidateOnStart`; flat `.env` keys (e.g. `BACKEND_URL`) map onto option sections, mirroring the data-pipeline/bot convention.
-- **OpenAPI/Swagger UI** — served in Development only (`/openapi/v1.json` + Swagger UI).
+- **OpenAPI/Swagger UI** — served in Development only (`/openapi/v1.json` + Swagger UI). Every operation has an id, a tag, a summary, its success schema and the error envelope (`ApiErrorResponse`) for each failure status it can return (`ProducesError`); `ApiSurfaceTests` enumerates the routing table so a new endpoint can't go undocumented.
 
 ## Hosted paper-trading bot (T6)
 
@@ -36,5 +36,12 @@ REST API for the dashboard and external callers; AI-service client; hosts the pa
 - **DB**: a `db_connection` secret replaces the configured connection string; otherwise `db_password` replaces its password. The secrets-aware `NpgsqlDataSource` is shared by EF, the log sink and the bot.
 - **Redaction**: the `ILoggerFactory` is wrapped (`AddSecretRedaction`) so every logger scrubs known secret values and the master key (message, structured values, exception text, scopes) before any provider sees them. The bot's `logs` rows bypass `ILogger`, so its sink (`RedactingBotLogSink`) scrubs message and context itself. The password inside a `db_connection` secret is redacted on its own.
 - CLI: `dotnet run --project Solia.Secrets.Cli -- <command>` (see [SECRETS.md](../../docs/SECRETS.md)).
+
+## Health & end-to-end suite (T8)
+
+- `GET /health/live` — liveness: runs no check (never depends on the DB or the ai-service).
+- `GET /health/ready` — readiness: `database` (a `SELECT 1` through `SoliaDbContext`, on the secrets-aware data source) and `ai_service` (`ISoliaAiClient` → ai-service `/health`), each bounded to 5 s.
+- `GET /health` — every check. Unhealthy → `503`, otherwise `200`; both carry the health JSON `{ "status", "total_duration", "entries": { "<check>": { "status", "description", "duration", "tags" } } }`. Descriptions are fixed strings — failure details are logged (redacted), never returned.
+- `Solia.Api.Tests/EndToEnd` proves the Sprint-4 DoD on the production host: Testcontainers Postgres (seeded), the bot enabled, the ai-service stubbed, the DB password only in an encrypted `secrets.enc`, and every log entry captured to check nothing secret is logged (`Category=Integration`, runs in CI).
 
 Paper trading only — no real execution, ever.

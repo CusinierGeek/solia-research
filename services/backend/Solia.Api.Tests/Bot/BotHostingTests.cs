@@ -35,7 +35,7 @@ public class BotHostingTests
         await using WebApplicationFactory<Program> factory = Factory(source);
         HttpClient client = factory.CreateClient();
 
-        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health/live")).StatusCode);
         await Gate(factory).ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.True(Gate(factory).ExecuteTask!.IsCompletedSuccessfully);
         Assert.Equal(0, source.Reads);

@@ -101,7 +101,7 @@ public sealed class SecretsWiringTests : IDisposable
         using WebApplicationFactory<Program> factory = TestApiFactory.Create(
             "Production", [(SecretsProvider.FileKey, path), (MasterKey.EnvironmentKey, _key)]);
 
-        HttpResponseMessage response = await factory.CreateClient().GetAsync("/health");
+        HttpResponseMessage response = await factory.CreateClient().GetAsync("/health/live");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         IServiceProvider services = factory.Services;

@@ -102,3 +102,11 @@ public sealed record AiRetrainRequest(string Trigger)
 
 /// <summary><c>POST /model/retrain</c> 202 response: the audit row of the run that was kicked off.</summary>
 public sealed record AiRetrainResponse([property: JsonRequired] long TrainingEventId);
+
+/// <summary><c>GET /health</c> response: the ai-service's liveness (<c>{"status":"ok"}</c>).</summary>
+public sealed record AiHealthResponse([property: JsonRequired] string Status)
+{
+    public const string Ok = "ok";
+
+    public bool IsOk => string.Equals(Status, Ok, StringComparison.OrdinalIgnoreCase);
+}

@@ -5,7 +5,8 @@ namespace Solia.Api.Tests.Endpoints;
 /// <summary>
 /// An <see cref="ISoliaAiClient"/> whose answers a test sets up front; it records every predict request so the
 /// feature window the backend built can be asserted. Callers in one test class run sequentially (xUnit), so
-/// the mutable setup is safe on a shared fixture as long as each test sets what it relies on.
+/// the mutable setup is safe on a shared fixture as long as each test sets what it relies on. Recording is
+/// thread-safe: a hosted bot scores through the same stub while a test calls the endpoints.
 /// </summary>
 public sealed class StubAiClient : ISoliaAiClient
 {
@@ -17,28 +18,39 @@ public sealed class StubAiClient : ISoliaAiClient
 
     public Func<AiRetrainResponse> Retrain { get; set; } = () => new AiRetrainResponse(42);
 
+    public Func<AiHealthResponse> Health { get; set; } = () => new AiHealthResponse(AiHealthResponse.Ok);
+
     public List<AiPredictRequest> PredictRequests { get; } = [];
 
-    public int Calls { get; private set; }
+    private int _calls;
+
+    public int Calls => Volatile.Read(ref _calls);
 
     public Task<AiPredictResponse> PredictAsync(AiPredictRequest request, CancellationToken cancellationToken = default)
     {
-        Calls++;
-        PredictRequests.Add(request);
+        Interlocked.Increment(ref _calls);
+        lock (PredictRequests)
+        {
+            PredictRequests.Add(request);
+        }
+
         return Task.FromResult(Predict(request));
     }
 
     public Task<AiModelStatus> GetModelStatusAsync(CancellationToken cancellationToken = default)
     {
-        Calls++;
+        Interlocked.Increment(ref _calls);
         return Task.FromResult(Status());
     }
 
     public Task<AiRetrainResponse> TriggerRetrainAsync(CancellationToken cancellationToken = default)
     {
-        Calls++;
+        Interlocked.Increment(ref _calls);
         return Task.FromResult(Retrain());
     }
+
+    public Task<AiHealthResponse> CheckHealthAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(Health()); // a probe, not counted in Calls: a test's own call count stays exact
 
     /// <summary>A 503 <c>no_champion</c> from the ai-service, as the real client maps it.</summary>
     public static AiServiceException NoChampion() =>

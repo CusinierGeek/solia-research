@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Solia.Api.OpenApi;
 using Solia.Core.Data;
 using Solia.Core.Data.Entities;
 
@@ -12,7 +13,10 @@ public static class TradesEndpoints
 
     public static RouteGroupBuilder MapTradesEndpoints(this RouteGroupBuilder group)
     {
-        group.MapGet("/trades/history", GetHistoryAsync);
+        group.MapGet("/trades/history", GetHistoryAsync)
+            .WithName("GetTradeHistory").WithTags("trades")
+            .WithSummary("The bot's paper trades, most recently opened first, paginated.")
+            .ProducesError(StatusCodes.Status400BadRequest);
         return group;
     }
 

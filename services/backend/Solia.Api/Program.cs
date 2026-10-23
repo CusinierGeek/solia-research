@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Solia.Api.Bot;
 using Solia.Api.Endpoints;
+using Solia.Api.Health;
 using Solia.Api.Hosting;
 using Solia.Api.Logging;
 using Solia.Api.Middleware;
@@ -46,6 +47,9 @@ builder.Logging.AddPostgresLogSink();
 // --- Redaction: every logger scrubs known secret values (and the master key) before any provider sees them ---
 builder.Logging.AddSecretRedaction();
 
+// --- Health: database + ai-service readiness checks (/health, /health/ready); /health/live checks nothing ---
+builder.Services.AddSoliaHealthChecks();
+
 // --- OpenAPI document (served in Development), with the public base URL as its server ---
 builder.Services.AddOpenApi(options => options.AddDocumentTransformer<ApiServerDocumentTransformer>());
 
@@ -60,11 +64,13 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI(options => options.SwaggerEndpoint("/openapi/v1.json", "Solia backend API v1"));
 }
 
-// Liveness only; real DB/ai-service readiness checks land in T8.
-app.MapGet(ApiRoutes.Health, () => Results.Ok(new { status = "ok" }));
+// Probes: /health (every check), /health/ready (DB + ai-service), /health/live (dependency-free).
+app.MapHealthEndpoints();
 
-// Versioned public surface: read/query endpoints and the AI-proxy endpoints (/predict, /model/*).
+// Versioned public surface: read/query endpoints and the AI-proxy endpoints (/predict, /model/*). Any of them
+// can fail with the 500 envelope; each documents its own 4xx/5xx on top.
 app.MapGroup(ApiRoutes.BasePath)
+    .ProducesError(StatusCodes.Status500InternalServerError)
     .MapReadEndpoints()
     .MapPredictEndpoints()
     .MapModelEndpoints();
