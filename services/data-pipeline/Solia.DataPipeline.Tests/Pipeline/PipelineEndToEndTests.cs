@@ -11,6 +11,7 @@ namespace Solia.DataPipeline.Tests.Pipeline;
 /// (the T1 migrations applied), and assert features land — including a post-bonding token — and
 /// that a re-run is idempotent.
 /// </summary>
+[Trait(TestCategories.Key, TestCategories.Integration)]
 public sealed class PipelineEndToEndTests(PostgresFixture db) : IClassFixture<PostgresFixture>
 {
     private static readonly string FixturePath =

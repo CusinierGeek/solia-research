@@ -1,22 +1,30 @@
 using Npgsql;
 using Testcontainers.PostgreSql;
+using Xunit;
 
-namespace Solia.Bot.Tests.Trading;
+namespace Solia.Testing;
 
-/// <summary>An ephemeral PostgreSQL 16 with the migrations applied, shared by a test class.</summary>
-public sealed class PostgresFixture : IAsyncLifetime
+/// <summary>
+/// An ephemeral PostgreSQL 16 with the <c>services/db/migrations</c> SQL applied, shared by a test class.
+/// The single Testcontainers bootstrap for every .NET test suite, so the schema they run against can't drift.
+/// Classes using it are integration tests: tag them <c>[Trait(TestCategories.Key, TestCategories.Integration)]</c>.
+/// </summary>
+public class PostgresFixture : IAsyncLifetime
 {
 #pragma warning disable CS0618 // builder ctor is obsolete; .WithImage still pins the image
     private readonly PostgreSqlContainer _postgres =
         new PostgreSqlBuilder().WithImage("postgres:16-alpine").Build();
 #pragma warning restore CS0618
 
+    public string ConnectionString { get; private set; } = null!;
+
     public NpgsqlDataSource DataSource { get; private set; } = null!;
 
     public async Task InitializeAsync()
     {
         await _postgres.StartAsync();
-        DataSource = NpgsqlDataSource.Create(_postgres.GetConnectionString());
+        ConnectionString = _postgres.GetConnectionString();
+        DataSource = NpgsqlDataSource.Create(ConnectionString);
         foreach (string file in Directory.GetFiles(FindMigrationsDir(), "*.sql").OrderBy(f => f, StringComparer.Ordinal))
         {
             await using NpgsqlCommand cmd = DataSource.CreateCommand(await File.ReadAllTextAsync(file));

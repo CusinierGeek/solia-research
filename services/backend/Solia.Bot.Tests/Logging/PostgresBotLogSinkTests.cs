@@ -1,11 +1,11 @@
 using Npgsql;
 using Solia.Bot.Logging;
-using Solia.Bot.Tests.Trading;
 using Solia.Shared.Logging;
 
 namespace Solia.Bot.Tests.Logging;
 
 /// <summary>Integration tests against a real PostgreSQL (Testcontainers) — run in CI.</summary>
+[Trait(TestCategories.Key, TestCategories.Integration)]
 public class PostgresBotLogSinkTests(PostgresFixture db) : IClassFixture<PostgresFixture>
 {
     private PostgresBotLogSink Sink => new(db.DataSource);

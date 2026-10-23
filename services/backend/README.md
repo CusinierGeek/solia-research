@@ -13,7 +13,7 @@ REST API for the dashboard and external callers; AI-service client; hosts the pa
 | `Solia.Core` | Domain types, options and contracts — no ASP.NET dependency. |
 | `Solia.Secrets` | AES secrets provider + CLI (T7). Scaffolded empty in T1. |
 | `Solia.Bot` | Paper-trading bot (Sprint 3). |
-| `*.Tests` | `Solia.Api.Tests` (integration, `WebApplicationFactory`), `Solia.Core.Tests` + `Solia.Bot.Tests` (unit). |
+| `*.Tests` | `Solia.Api.Tests` (integration, `WebApplicationFactory`), `Solia.Core.Tests` + `Solia.Bot.Tests` (unit, plus Testcontainers tests tagged `Category=Integration` — skip locally with `--filter "Category!=Integration"`). |
 
 ## Host conventions (T1)
 

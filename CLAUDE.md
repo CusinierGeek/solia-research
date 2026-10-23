@@ -90,6 +90,7 @@ Installed locally: .NET 10, Python 3.11, PostgreSQL 16 (Docker), git, gh (scopes
 ```bash
 docker compose up -d postgres          # local Postgres
 # .NET:   dotnet build ; dotnet test ; dotnet format --verify-no-changes
+#         fast local run (skip Testcontainers): dotnet test --filter "Category!=Integration"
 # Python: ruff check . ; black --check . ; pytest
 ```
 

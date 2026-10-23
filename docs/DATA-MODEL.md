@@ -8,6 +8,8 @@
 - Primary keys are `BIGSERIAL` unless a natural key fits.
 - A token is identified by its **mint address** (`mint TEXT`).
 - Monetary/price values use `NUMERIC` to avoid float drift; feature vectors may use `DOUBLE PRECISION`.
+  Precision is bounded to 28 digits (migration `0002`) so every value fits a .NET `decimal`: prices
+  `NUMERIC(28,24)`, amounts/P&L `NUMERIC(28,12)`, in quote currency (SOL / USDC).
 - Soft relationships via `mint`; hard FKs where lifecycle is coupled.
 - Enumerated `TEXT` columns (status, strategy, horizon, level, …) and probability/confidence ranges are enforced with `CHECK` constraints; the values listed below are the only accepted ones.
 
@@ -34,9 +36,9 @@ Currently tracked (hot) tokens. Small, frequently updated.
 | symbol | TEXT | |
 | name | TEXT | |
 | created_at | TIMESTAMPTZ | token creation time |
-| last_price | NUMERIC | latest observed price |
-| last_market_cap | NUMERIC | |
-| last_liquidity | NUMERIC | |
+| last_price | NUMERIC(28,24) | latest observed price |
+| last_market_cap | NUMERIC(28,12) | |
+| last_liquidity | NUMERIC(28,12) | |
 | holders | INT | latest holder count |
 | trending_score | DOUBLE PRECISION | |
 | venue | TEXT | current venue (`pumpfun` / `pumpswap` / `raydium` / ...) |
@@ -69,11 +71,11 @@ Time-series feature snapshots per token. The model's input unit.
 | venue | TEXT | `pumpfun` / `pumpswap` / `raydium` / `meteora` / ... |
 | is_migrated | BOOLEAN | token has graduated off the bonding curve |
 | pool_address | TEXT | nullable; AMM pool once migrated |
-| price | NUMERIC | |
-| volume | NUMERIC | |
-| market_cap | NUMERIC | |
+| price | NUMERIC(28,24) | |
+| volume | NUMERIC(28,12) | |
+| market_cap | NUMERIC(28,12) | |
 | holders | INT | |
-| liquidity | NUMERIC | |
+| liquidity | NUMERIC(28,12) | |
 | buy_events | INT | in window |
 | sell_events | INT | in window |
 | buy_sell_ratio | DOUBLE PRECISION | |
@@ -106,9 +108,9 @@ Model outputs. One row per inference call.
 | pump_prob | DOUBLE PRECISION | 0–1 |
 | rug_prob | DOUBLE PRECISION | 0–1 |
 | strategy | TEXT | `buy` / `sell` / `hold` |
-| position_size | NUMERIC | suggested sizing |
-| take_profit | NUMERIC | dynamic TP |
-| stop_loss | NUMERIC | dynamic SL |
+| position_size | NUMERIC(28,12) | suggested sizing |
+| take_profit | NUMERIC(28,24) | dynamic TP |
+| stop_loss | NUMERIC(28,24) | dynamic SL |
 | confidence | DOUBLE PRECISION | 0–100 |
 | feature_id | BIGINT | FK → features (input snapshot), `ON DELETE SET NULL` |
 
@@ -124,11 +126,11 @@ Paper-trading bot activity. One row per closed (or open) position.
 | prediction_id | BIGINT | FK → predictions (the triggering signal), `ON DELETE SET NULL` |
 | opened_at | TIMESTAMPTZ | |
 | closed_at | TIMESTAMPTZ | nullable while open |
-| entry_price | NUMERIC | |
-| exit_price | NUMERIC | nullable |
-| size | NUMERIC | |
+| entry_price | NUMERIC(28,24) | |
+| exit_price | NUMERIC(28,24) | nullable |
+| size | NUMERIC(28,12) | |
 | duration_sec | INT | nullable |
-| pnl | NUMERIC | realized P&L |
+| pnl | NUMERIC(28,12) | realized P&L |
 | pnl_pct | DOUBLE PRECISION | |
 | strategy | TEXT | strategy used |
 | confidence | DOUBLE PRECISION | confidence at entry |

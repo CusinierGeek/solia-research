@@ -19,5 +19,6 @@
   <Folder Name="/services/shared/">
     <Project Path="services/shared/Solia.Shared.Tests/Solia.Shared.Tests.csproj" />
     <Project Path="services/shared/Solia.Shared/Solia.Shared.csproj" />
+    <Project Path="services/shared/Solia.Testing/Solia.Testing.csproj" />
   </Folder>
 </Solution>

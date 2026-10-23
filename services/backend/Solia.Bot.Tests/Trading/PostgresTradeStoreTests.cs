@@ -7,6 +7,7 @@ using Solia.Bot.Trading;
 namespace Solia.Bot.Tests.Trading;
 
 /// <summary>Integration tests against a real PostgreSQL (Testcontainers) — run in CI.</summary>
+[Trait(TestCategories.Key, TestCategories.Integration)]
 public class PostgresTradeStoreTests(PostgresFixture db) : IClassFixture<PostgresFixture>
 {
     private static readonly DateTimeOffset T0 = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);

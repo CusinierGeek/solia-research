@@ -3,6 +3,7 @@ using Solia.DataPipeline.Pipeline;
 
 namespace Solia.DataPipeline.Tests.Pipeline;
 
+[Trait(TestCategories.Key, TestCategories.Integration)]
 public sealed class PostgresTokenSinkTests(PostgresFixture db) : IClassFixture<PostgresFixture>
 {
     private static readonly DateTimeOffset T0 = new(2026, 4, 20, 12, 0, 0, TimeSpan.Zero);

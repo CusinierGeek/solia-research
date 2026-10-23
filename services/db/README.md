@@ -13,7 +13,8 @@ schema is defined in SQL, not in any ORM model.
 ```
 services/db/
 ├── migrations/            # ordered SQL migrations (source of truth)
-│   └── 0001_init.sql
+│   ├── 0001_init.sql
+│   └── 0002_bounded_numeric.sql
 └── Solia.DbMigrator/      # applies migrations idempotently
 ```
 
