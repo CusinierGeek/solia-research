@@ -31,6 +31,27 @@ public class BotConfigurationTests
         Assert.Equal(8, bot.MaxConcurrentPositions);
     }
 
+    [Theory]
+    [InlineData("yes", "True")]
+    [InlineData("0", "False")]
+    public void Flat_bot_enabled_key_maps_onto_the_host_switch(string flat, string expected)
+    {
+        ConfigurationManager config = Config(("Bot:Enabled", "False"), ("PAPER_BOT_ENABLED", flat));
+
+        config.AddBotFlatEnvAliases();
+
+        Assert.Equal(expected, config[BotFlatEnvAliases.EnabledPath]);
+    }
+
+    [Fact]
+    public void An_invalid_flat_bot_enabled_key_fails_naming_it()
+    {
+        ConfigurationManager config = Config(("PAPER_BOT_ENABLED", "maybe"));
+
+        var error = Assert.ThrowsAny<Exception>(() => config.AddBotFlatEnvAliases());
+        Assert.Contains("PAPER_BOT_ENABLED", error.Message);
+    }
+
     [Fact]
     public void Unset_flat_keys_leave_section_values_alone()
     {

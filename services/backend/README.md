@@ -23,4 +23,10 @@ REST API for the dashboard and external callers; AI-service client; hosts the pa
 - **Configuration** — Options pattern with `ValidateOnStart`; flat `.env` keys (e.g. `BACKEND_URL`) map onto option sections, mirroring the data-pipeline/bot convention.
 - **OpenAPI/Swagger UI** — served in Development only (`/openapi/v1.json` + Swagger UI).
 
+## Hosted paper-trading bot (T6)
+
+- Off by default; `Bot:Enabled` / `PAPER_BOT_ENABLED=true` runs `PaperTradingBot` inside the API host (`GatedPaperTradingBot`).
+- **Feed** (`DbBotEventSource`): polls new `features` rows every `Bot:PollInterval` (by id; an insert that commits after a higher id is waited for up to `Bot:MaxCommitDelay`) → price ticks of active `tokens_live` tokens. Each token with a new row is queued (one entry per token, newest row, oldest-waiting first — none is dropped) and a separate loop scores it on its feature window *ending at that row* through the ai-service for `Bot:Horizon` (default `1m`), so a slow ai-service never holds ticks back. The prediction is written to `predictions` and fed to the bot. Events go through a `Bot:ReorderWindow` (default 2 s) buffer so they reach the engine in time order. Rows older than `Bot:MaxMarkAgeSeconds` are skipped. When the ai-service or the DB fails, or scoring fails unexpectedly, the token or poll is skipped; the bot keeps running.
+- **Persistence**: `trades` via `PostgresTradeStore` (also the closed-trade counter), bot milestones in `logs` with `service = bot`.
+
 Paper trading only — no real execution, ever.

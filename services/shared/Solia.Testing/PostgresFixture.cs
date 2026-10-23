@@ -49,7 +49,8 @@ public class PostgresFixture : IAsyncLifetime
         return (T)Convert.ChangeType((await cmd.ExecuteScalarAsync())!, typeof(T));
     }
 
-    private static string FindMigrationsDir()
+    /// <summary>The repo's <c>services/db/migrations</c> directory, found by walking up from the test output.</summary>
+    public static string FindMigrationsDir()
     {
         DirectoryInfo? dir = new(AppContext.BaseDirectory);
         while (dir is not null)

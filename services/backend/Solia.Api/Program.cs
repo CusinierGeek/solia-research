@@ -1,5 +1,5 @@
 using System.Text.Json;
-using Microsoft.Extensions.DependencyInjection.Extensions;
+using Solia.Api.Bot;
 using Solia.Api.Endpoints;
 using Solia.Api.Hosting;
 using Solia.Api.Logging;
@@ -16,11 +16,11 @@ var builder = WebApplication.CreateBuilder(args);
 // startup (fail fast on bad values) ---
 builder.Services.AddApiOptions(builder.Configuration);
 
-// --- Bot options (Bot:* / PAPER_*): the equity curve starts from the configured starting balance; the bot
-// host itself lands in T6 ---
+// --- Paper-trading bot (Bot:* / PAPER_*): validated options (the equity curve starts from the configured
+// starting balance), the DB/ai-service feed, the Postgres trade store and the hosted bot, run only when
+// Bot:Enabled / PAPER_BOT_ENABLED is set. Paper only. ---
 builder.Configuration.AddBotFlatEnvAliases();
-builder.Services.AddBotOptions(builder.Configuration);
-builder.Services.TryAddSingleton(TimeProvider.System);
+builder.Services.AddHostedPaperTradingBot(builder.Configuration);
 
 // --- JSON: snake_case on the wire (docs/API-CONTRACTS.md: total_pnl, page_size, ...) ---
 builder.Services.ConfigureHttpJsonOptions(options =>

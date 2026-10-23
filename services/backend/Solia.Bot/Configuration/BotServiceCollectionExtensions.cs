@@ -44,9 +44,22 @@ public static class BotServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Wires the whole paper-trading bot into the host: validated <see cref="BotOptions"/>, the Postgres
-    /// trade store, the Postgres operational log sink (service = 'bot'), the <see cref="PositionManager"/>
-    /// engine and the <see cref="PaperTradingBot"/> hosted service.
+    /// Wires the whole paper-trading bot into the host: <see cref="AddPaperTradingEngine"/> plus the
+    /// <see cref="PaperTradingBot"/> hosted service, so the bot runs for the host's whole lifetime. A host
+    /// that starts the bot itself (e.g. behind an on/off switch) calls <see cref="AddPaperTradingEngine"/>.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">No <see cref="IBotEventSource"/> is registered.</exception>
+    public static IServiceCollection AddPaperTradingBot(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.AddPaperTradingEngine(configuration);
+        services.AddHostedService<PaperTradingBot>();
+        return services;
+    }
+
+    /// <summary>
+    /// Wires everything the paper-trading bot runs on, without hosting it: validated <see cref="BotOptions"/>,
+    /// the Postgres trade store, the Postgres operational log sink (service = 'bot') and the
+    /// <see cref="PositionManager"/> engine.
     /// <para>The caller <strong>must</strong> register an <see cref="IBotEventSource"/> first (the live/DB
     /// feed in Sprint 4, an <see cref="InMemoryBotEventSource"/> for a replay) — there is deliberately no
     /// default, since an empty feed would leave the host up but trading nothing; a missing source throws
@@ -55,12 +68,12 @@ public static class BotServiceCollectionExtensions
     /// `logs`). Callers add <see cref="BotFlatEnvAliases.AddBotFlatEnvAliases"/> to the configuration first.</para>
     /// </summary>
     /// <exception cref="InvalidOperationException">No <see cref="IBotEventSource"/> is registered.</exception>
-    public static IServiceCollection AddPaperTradingBot(this IServiceCollection services, IConfiguration configuration)
+    public static IServiceCollection AddPaperTradingEngine(this IServiceCollection services, IConfiguration configuration)
     {
         if (!services.Any(d => d.ServiceType == typeof(IBotEventSource)))
         {
             throw new InvalidOperationException(
-                $"Register an {nameof(IBotEventSource)} before calling {nameof(AddPaperTradingBot)}: " +
+                $"Register an {nameof(IBotEventSource)} before wiring the paper-trading bot: " +
                 "the bot has no default feed, so it can't start trading nothing.");
         }
 
@@ -73,7 +86,6 @@ public static class BotServiceCollectionExtensions
             sp.GetRequiredService<ITradeStore>(),
             sp.GetRequiredService<IBotLogSink>(),
             sp.GetService<ILogger<PositionManager>>()));
-        services.AddHostedService<PaperTradingBot>();
         return services;
     }
 }

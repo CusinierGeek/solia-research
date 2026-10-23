@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using Solia.Core.Ai;
 using Solia.Core.Configuration;
 using Solia.Core.Data;
+using Solia.Core.Data.Entities;
 using Solia.Core.Http;
 
 namespace Solia.Api.Endpoints;
@@ -82,12 +83,18 @@ public static class PredictEndpoints
     /// <summary>
     /// The latest <paramref name="size"/> rows of <paramref name="mint"/>, oldest first, keyed by the ai-service's
     /// <c>FEATURE_COLUMNS</c> names (the <c>features</c> column names). NULLs stay null — the ai-service imputes them.
+    /// With <paramref name="upTo"/>, the window ends at that snapshot time (no row after it is read).
     /// </summary>
     internal static async Task<List<IReadOnlyDictionary<string, double?>>> LoadWindowAsync(
-        SoliaDbContext db, string mint, int size, CancellationToken cancellationToken)
+        SoliaDbContext db, string mint, int size, CancellationToken cancellationToken, DateTimeOffset? upTo = null)
     {
-        var rows = await db.Features.AsNoTracking()
-            .Where(f => f.Mint == mint)
+        IQueryable<Feature> query = db.Features.AsNoTracking().Where(f => f.Mint == mint);
+        if (upTo is DateTimeOffset end)
+        {
+            query = query.Where(f => f.Ts <= end);
+        }
+
+        var rows = await query
             .OrderByDescending(f => f.Ts)
             .Take(size)
             .Select(f => new

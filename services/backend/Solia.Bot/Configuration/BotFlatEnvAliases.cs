@@ -10,10 +10,15 @@ namespace Solia.Bot.Configuration;
 /// </summary>
 public static class BotFlatEnvAliases
 {
+    /// <summary>Config path of the switch that runs the bot inside the backend host.</summary>
+    public const string EnabledPath = $"{BotOptions.Section}:Enabled";
+
     private static readonly FlatAlias[] Aliases =
     [
         new("PAPER_STARTING_BALANCE", $"{BotOptions.Section}:{nameof(BotOptions.StartingBalance)}"),
         new("PAPER_MAX_CONCURRENT_POSITIONS", $"{BotOptions.Section}:{nameof(BotOptions.MaxConcurrentPositions)}"),
+        // The backend host's on/off switch (Solia.Api's BotHostOptions.Enabled, bound from the same section).
+        new("PAPER_BOT_ENABLED", EnabledPath, IsBool: true),
     ];
 
     /// <inheritdoc cref="FlatAliases.AddFlatAliases"/>
