@@ -32,4 +32,5 @@ public static class ApiErrorCodes
     public const string PayloadTooLarge = "payload_too_large";
     public const string UnsupportedMediaType = "unsupported_media_type";
     public const string RateLimited = "rate_limited";
+    public const string InsufficientHistory = "insufficient_history";
 }

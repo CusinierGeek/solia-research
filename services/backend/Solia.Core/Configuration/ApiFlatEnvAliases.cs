@@ -5,7 +5,7 @@ namespace Solia.Core.Configuration;
 
 /// <summary>
 /// The backend API's flat keys from .env.example (e.g. BACKEND_URL) and the options-section paths they
-/// map onto (Api:BaseUrl, AiService:BaseUrl); the mapping itself is <see cref="FlatAliases"/>. To support a new flat key,
+/// map onto (Api:BaseUrl, AiService:BaseUrl, AiService:RetrainThreshold); the mapping itself is <see cref="FlatAliases"/>. To support a new flat key,
 /// add a row to <see cref="Aliases"/>. Unlike a one-shot configuration source, <see cref="Resolve"/> is
 /// meant to run when <see cref="ApiOptions"/> is resolved, so a flat key supplied by any configuration
 /// source — including ones added after startup code ran (e.g. a test host's) — is honoured.
@@ -16,6 +16,7 @@ public static class ApiFlatEnvAliases
     [
         new("BACKEND_URL", $"{ApiOptions.Section}:{nameof(ApiOptions.BaseUrl)}"),
         new("AI_SERVICE_URL", $"{AiServiceOptions.Section}:{nameof(AiServiceOptions.BaseUrl)}"),
+        new("RETRAIN_EVERY_N_TRADES", $"{AiServiceOptions.Section}:{nameof(AiServiceOptions.RetrainThreshold)}"),
     ];
 
     /// <summary>The set flat keys in <paramref name="configuration"/>, keyed by the option path they override.</summary>

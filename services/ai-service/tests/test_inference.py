@@ -543,3 +543,23 @@ def test_from_record_stamps_the_registry_version(tmp_path):
     predictor = Predictor.from_record(SimpleNamespace(version="registry-v7", path=str(path)))
 
     assert predictor.model_version == "registry-v7"
+
+
+# --------------------------------------------------------------------------- min_seq_len
+
+
+def test_min_seq_len_comes_from_the_checkpoint_hyperparams(tmp_path):
+    _, path = saved_checkpoint(tmp_path)
+
+    assert Predictor.from_checkpoint(path).min_seq_len == small_config()["model"]["min_seq_len"]
+
+
+def test_min_seq_len_defaults_to_seq_len_when_the_model_config_omits_it():
+    metadata = {"hyperparams": {"model": {"seq_len": 6}}}
+    predictor = Predictor(tiny(seq_len=6), model_version="v", metadata=metadata)
+
+    assert predictor.min_seq_len == 6
+
+
+def test_min_seq_len_is_one_without_recorded_hyperparams():
+    assert Predictor(tiny(), model_version="v").min_seq_len == 1

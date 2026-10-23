@@ -192,6 +192,7 @@ public class SoliaAiClientTests
     [InlineData(HttpStatusCode.BadRequest, "invalid_features", AiServiceErrorKind.InvalidRequest, 400, ApiErrorCodes.InvalidRequest)]
     [InlineData(HttpStatusCode.BadRequest, "invalid_request", AiServiceErrorKind.InvalidRequest, 400, ApiErrorCodes.InvalidRequest)]
     [InlineData(HttpStatusCode.UnprocessableEntity, "invalid_request", AiServiceErrorKind.InvalidRequest, 400, ApiErrorCodes.InvalidRequest)]
+    [InlineData(HttpStatusCode.UnprocessableEntity, "window_too_short", AiServiceErrorKind.InsufficientHistory, 422, ApiErrorCodes.InsufficientHistory)]
     [InlineData(HttpStatusCode.ServiceUnavailable, "no_champion", AiServiceErrorKind.NoChampion, 503, ApiErrorCodes.Unavailable)]
     [InlineData(HttpStatusCode.ServiceUnavailable, "champion_unavailable", AiServiceErrorKind.Unavailable, 503, ApiErrorCodes.Unavailable)]
     [InlineData(HttpStatusCode.InternalServerError, "internal_error", AiServiceErrorKind.UpstreamError, 502, ApiErrorCodes.InternalError)]
@@ -216,6 +217,7 @@ public class SoliaAiClientTests
 
     [Theory]
     [InlineData(AiServiceErrorKind.InvalidRequest)]
+    [InlineData(AiServiceErrorKind.InsufficientHistory)]
     [InlineData(AiServiceErrorKind.NoChampion)]
     [InlineData(AiServiceErrorKind.Unavailable)]
     [InlineData(AiServiceErrorKind.UpstreamError)]
@@ -446,6 +448,18 @@ public class SoliaAiClientTests
     }
 
     [Fact]
+    public void Flat_RETRAIN_EVERY_N_TRADES_overrides_the_retrain_threshold()
+    {
+        using ServiceProvider provider = AiClientTestHost.Build(new StubHandler(), new Dictionary<string, string?>
+        {
+            ["AiService:RetrainThreshold"] = "100",
+            ["RETRAIN_EVERY_N_TRADES"] = "250",
+        });
+
+        Assert.Equal(250, provider.GetRequiredService<IOptions<AiServiceOptions>>().Value.RetrainThreshold);
+    }
+
+    [Fact]
     public void BACKEND_URL_never_binds_onto_the_ai_service_options()
     {
         using ServiceProvider provider = AiClientTestHost.Build(new StubHandler(), new Dictionary<string, string?>
@@ -465,6 +479,10 @@ public class SoliaAiClientTests
     [InlineData("AiService:AttemptTimeout", "00:00:10")] // = TotalTimeout: a retry could never run
     [InlineData("AiService:AttemptTimeout", "00:00:04")] // 3 attempts x 4s > 10s total
     [InlineData("AiService:MaxRetryAttempts", "5")] // 6 attempts x 2s > 10s total
+    [InlineData("AiService:MaxFeatureWindowSize", "0")]
+    [InlineData("AiService:MaxFeatureWindowSize", "4097")]
+    [InlineData("AiService:RetrainThreshold", "0")]
+    [InlineData("RETRAIN_EVERY_N_TRADES", "-5")]
     public void Invalid_options_fail_validation(string key, string value)
     {
         using ServiceProvider provider = AiClientTestHost.Build(new StubHandler(), new Dictionary<string, string?> { [key] = value });
@@ -479,6 +497,8 @@ public class SoliaAiClientTests
 
         Assert.True(options.HasValidBaseUrl());
         Assert.True(options.HasConsistentTimeouts());
+        Assert.Equal(256, options.MaxFeatureWindowSize); // a cap above the model's seq_len (64), which the ai-service applies
+        Assert.Equal(500, options.RetrainThreshold); // RETRAIN_EVERY_N_TRADES in .env.example
     }
 
     [Theory]

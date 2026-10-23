@@ -8,6 +8,12 @@ public enum AiServiceErrorKind
     /// <summary>The ai-service rejected the request (400/422 <c>invalid_*</c>). Never retried.</summary>
     InvalidRequest,
 
+    /// <summary>
+    /// The token's feature window is shorter than the champion's training <c>min_seq_len</c>
+    /// (422 <c>window_too_short</c>): too young to score yet. Never retried.
+    /// </summary>
+    InsufficientHistory,
+
     /// <summary>No champion model is registered yet (503 <c>no_champion</c>).</summary>
     NoChampion,
 
@@ -23,7 +29,8 @@ public enum AiServiceErrorKind
 
 /// <summary>
 /// A failed ai-service call, already mapped to the public error envelope: <see cref="AiServiceErrorKind.InvalidRequest"/>
-/// → 400 <c>invalid_request</c>, <see cref="AiServiceErrorKind.NoChampion"/> / <see cref="AiServiceErrorKind.Unavailable"/>
+/// → 400 <c>invalid_request</c>, <see cref="AiServiceErrorKind.InsufficientHistory"/> → 422 <c>insufficient_history</c>,
+/// <see cref="AiServiceErrorKind.NoChampion"/> / <see cref="AiServiceErrorKind.Unavailable"/>
 /// → 503 <c>unavailable</c>, <see cref="AiServiceErrorKind.UpstreamError"/> → 502 <c>internal_error</c>. The public
 /// message is fixed per kind: the upstream one can carry predictor internals (the ai-service echoes exception
 /// text), so it stays in <see cref="UpstreamMessage"/> for logging only, with the upstream status/code.
@@ -58,6 +65,7 @@ public sealed class AiServiceException : ApiException
     private static int PublicStatus(AiServiceErrorKind kind) => kind switch
     {
         AiServiceErrorKind.InvalidRequest => 400,
+        AiServiceErrorKind.InsufficientHistory => 422,
         AiServiceErrorKind.NoChampion or AiServiceErrorKind.Unavailable => 503,
         _ => 502,
     };
@@ -65,6 +73,7 @@ public sealed class AiServiceException : ApiException
     private static string PublicCode(AiServiceErrorKind kind) => kind switch
     {
         AiServiceErrorKind.InvalidRequest => ApiErrorCodes.InvalidRequest,
+        AiServiceErrorKind.InsufficientHistory => ApiErrorCodes.InsufficientHistory,
         AiServiceErrorKind.NoChampion or AiServiceErrorKind.Unavailable => ApiErrorCodes.Unavailable,
         _ => ApiErrorCodes.InternalError,
     };
@@ -72,6 +81,7 @@ public sealed class AiServiceException : ApiException
     private static string PublicMessage(AiServiceErrorKind kind, string message) => kind switch
     {
         AiServiceErrorKind.InvalidRequest => "the prediction service rejected the request",
+        AiServiceErrorKind.InsufficientHistory => "not enough feature history yet to score this token",
         AiServiceErrorKind.NoChampion => "no champion model is available yet",
         AiServiceErrorKind.Unavailable => "the prediction service is unavailable",
         _ => "the prediction service failed",

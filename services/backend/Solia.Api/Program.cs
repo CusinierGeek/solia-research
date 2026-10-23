@@ -55,8 +55,11 @@ if (app.Environment.IsDevelopment())
 // Liveness only; real DB/ai-service readiness checks land in T8.
 app.MapGet(ApiRoutes.Health, () => Results.Ok(new { status = "ok" }));
 
-// Versioned public surface: read/query endpoints (T4); the AI-proxy endpoints land in T5.
-app.MapGroup(ApiRoutes.BasePath).MapReadEndpoints();
+// Versioned public surface: read/query endpoints and the AI-proxy endpoints (/predict, /model/*).
+app.MapGroup(ApiRoutes.BasePath)
+    .MapReadEndpoints()
+    .MapPredictEndpoints()
+    .MapModelEndpoints();
 
 app.Run();
 

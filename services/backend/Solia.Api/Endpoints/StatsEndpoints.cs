@@ -8,12 +8,10 @@ namespace Solia.Api.Endpoints;
 
 /// <summary>
 /// <c>GET /stats/winrate</c> and <c>GET /stats/performance</c>, derived from closed <c>trades</c>. Both read
-/// the same set — <c>status = 'closed'</c> with a <c>closed_at</c> — so the dashboard tiles agree.
+/// the same set — <see cref="ClosedTrades"/> — so the dashboard tiles agree.
 /// </summary>
 public static class StatsEndpoints
 {
-    private const string Closed = "closed";
-
     public const int DefaultPerformanceLimit = 1000;
 
     public const int MaxPerformanceLimit = 10_000;
@@ -31,7 +29,8 @@ public static class StatsEndpoints
     };
 
     // The latest points of the curve, each with the running P&L over *every* closed trade up to it — one
-    // statement, so the points and the offset of the trades before them come from one snapshot.
+    // statement, so the points and the offset of the trades before them come from one snapshot. The WHERE is
+    // ClosedTrades.Closed in SQL — keep the two in step.
     private const string LatestEquitySql = """
         SELECT closed_at AS "ClosedAt",
                COALESCE(pnl, 0) AS "Pnl",
@@ -59,7 +58,7 @@ public static class StatsEndpoints
     {
         string key = QueryValidation.OneOf(window, "window", WindowKeys) ?? "all";
 
-        IQueryable<Trade> closed = db.Trades.AsNoTracking().Where(t => t.Status == Closed && t.ClosedAt != null);
+        IQueryable<Trade> closed = db.Trades.AsNoTracking().Closed();
         if (Windows[key] is { } span)
         {
             DateTimeOffset since = clock.GetUtcNow() - span;

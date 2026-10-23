@@ -167,6 +167,7 @@ internal sealed class SoliaAiClient(HttpClient http) : ISoliaAiClient
 
     internal static AiServiceErrorKind Classify(HttpStatusCode status, string? code) => status switch
     {
+        HttpStatusCode.UnprocessableEntity when code == "window_too_short" => AiServiceErrorKind.InsufficientHistory,
         HttpStatusCode.BadRequest or HttpStatusCode.UnprocessableEntity => AiServiceErrorKind.InvalidRequest,
         HttpStatusCode.ServiceUnavailable when code == "no_champion" => AiServiceErrorKind.NoChampion,
         HttpStatusCode.ServiceUnavailable

@@ -28,6 +28,15 @@ Request a prediction for a token (proxied to ai-service).
 }
 ```
 
+The backend loads the token's latest `features` rows — at most `AiService:MaxFeatureWindowSize` (default 256,
+a payload cap, not a copy of the model's `seq_len`) — and sends them oldest first; the ai-service owns the
+window bounds (it keeps its champion's latest `seq_len` rows). `horizons` is optional (all when omitted) and,
+when given, a non-empty list, trimmed and deduplicated; which horizon names exist is the ai-service's call (an
+unknown one is a `400`). Errors: blank or missing `mint` / malformed body → `400 invalid_request`; unknown
+mint, or a mint with no feature snapshot yet → `404 not_found`; fewer rows than the champion's `min_seq_len`
+(a token too young to score) → `422 insufficient_history`; no champion / ai-service unreachable →
+`503 unavailable`; ai-service failure → `502 internal_error` (upstream details are logged, never returned).
+
 > The model is a **signal model**: predictions only. Trade **decisions** (strategy, position
 > sizing, take-profit, stop-loss) are the paper-trading bot's **policy layer** (Sprints 3–4),
 > derived from these predictions — not returned here. See [`ML-MODEL.md`](ML-MODEL.md#policy-layer-not-the-model).
@@ -98,9 +107,17 @@ Recent bot/system logs, newest first, as a plain array. `?level=` is a **minimum
 { "champion_version": "v3", "created_at": "...", "metrics": {...},
   "trades_since_last_train": 142, "retrain_threshold": 500 }
 ```
+Champion fields come from the ai-service (`metrics` is `{}` when it reports none). When the ai-service fails
+(unreachable, no champion yet, error) the call still answers `200`, with `champion_version` / `created_at`
+`null` and `metrics` `{}`, so the retrain progress stays visible. `trades_since_last_train` and
+`retrain_threshold` are one consistent pair: the ai-service's own when it reports **both**; otherwise the
+backend's count — closed trades (same set as `/stats/*`) closed strictly after the `started_at` of the latest
+*finished* `training_events` run (any decision; an unfinished or crashed run does not reset it), or all of
+them before any run finished — against `AiService:RetrainThreshold` (`RETRAIN_EVERY_N_TRADES`).
 
 ### `POST /model/retrain`
-Manually trigger a retrain (proxied to ai-service). Returns `202 Accepted` + a `training_event_id`.
+Manually trigger a retrain (proxied to ai-service, never retried). Returns `202 Accepted` +
+`{ "training_event_id": 17 }`.
 
 ---
 
@@ -117,12 +134,15 @@ Base: `/`
 // window, oldest row first: a non-empty list of objects keyed by feature name, or of arrays in
 // FEATURE_COLUMNS order. `horizons` is optional (default: all); when present it must be non-empty.
 // response: same prediction shape as backend /predict "predictions"
+// a window keeps its latest `seq_len` rows; one shorter than the champion's training `min_seq_len`
+// is rejected.
 // errors: 400 invalid_features / invalid_request, 422 invalid_request (malformed body),
-//         503 no_champion / champion_unavailable, 500 internal_error
+//         422 window_too_short, 503 no_champion / champion_unavailable, 500 internal_error
 ```
 
 ### `GET /model/status`
-Champion version, metrics, param count, trades-since-last-train.
+Champion version, `created_at`, metrics, `param_count`, and its window bounds `seq_len` / `min_seq_len`.
+Trades-since-last-train and the retrain threshold are added by the retrain orchestrator (Sprint 7).
 
 ### `POST /model/retrain`
 Kick off the retrain orchestrator. Body: `{ "trigger": "manual" }`. Returns `202` + `training_event_id`.

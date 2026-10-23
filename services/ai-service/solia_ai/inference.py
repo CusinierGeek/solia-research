@@ -193,6 +193,16 @@ class Predictor:
     def seq_len(self) -> int:
         return self.model.seq_len
 
+    @property
+    def min_seq_len(self) -> int:
+        """The shortest window the champion was trained on: the checkpoint's recorded
+        ``hyperparams.model.min_seq_len`` (which defaults to ``seq_len``, as in ``config.py``), or 1
+        when the checkpoint records no model hyperparams."""
+        model = (self.metadata.get("hyperparams") or {}).get("model")
+        if not model:
+            return 1
+        return int(model.get("min_seq_len", model.get("seq_len", self.seq_len)))
+
     @classmethod
     def from_checkpoint(cls, path: str | Path, *, temperature: float = 1.0) -> Predictor:
         checkpoint = load_checkpoint(path)

@@ -6,8 +6,11 @@ Three endpoints, all JSON:
   (docs/ARCHITECTURE.md §5 — the REST path reads features from the request, never Postgres) and
   gets back, per requested horizon, ``pump_prob`` / ``rug_prob`` / ``expected_return`` /
   ``confidence`` plus the ``model_version``. This is the moderate-cadence path; the per-event
-  sniping path is the in-process ONNX export, not this.
-* ``GET /model/status`` — the loaded champion's identity, parameter count and training metrics.
+  sniping path is the in-process ONNX export, not this. A window shorter than the champion's
+  training ``min_seq_len`` is a ``422 window_too_short``; a longer one keeps its latest
+  ``seq_len`` rows.
+* ``GET /model/status`` — the loaded champion's identity, parameter count, training metrics and
+  window bounds (``seq_len`` / ``min_seq_len``).
 * ``GET /health`` — liveness.
 
 The champion is loaded **lazily, cached and refreshed**: importing the app and serving
@@ -184,12 +187,22 @@ def create_app(
             "created_at": loaded.created_at.isoformat() if loaded.created_at else None,
             "param_count": loaded.param_count,
             "metrics": loaded.metrics or {},
+            "seq_len": loaded.predictor.seq_len,
+            "min_seq_len": loaded.predictor.min_seq_len,
         }
 
     @app.post("/predict")
     def predict(request: PredictRequest) -> dict[str, Any]:
         window = _window_matrix(request.features)  # a bad request is a 400, champion or not
         predictor = champion().predictor
+        # The model never trained on windows shorter than min_seq_len: scoring one is noise.
+        if len(window) < predictor.min_seq_len:
+            raise ApiError(
+                422,
+                "window_too_short",
+                f"the feature window holds {len(window)} row(s); "
+                f"the champion needs at least {predictor.min_seq_len}",
+            )
         try:
             prediction = predictor.predict(window, request.horizons)
         except (ValueError, TypeError) as exc:

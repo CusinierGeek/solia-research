@@ -97,6 +97,8 @@ def test_model_status_reports_the_champion():
     assert body["param_count"] == _predictor().model.n_params
     assert "n_params" not in body  # one parameter count, from the loaded model
     assert body["metrics"] == {"val_total": 0.3}
+    assert body["seq_len"] == 8
+    assert body["min_seq_len"] == 1  # no hyperparams recorded: any non-empty window is accepted
 
 
 # --------------------------------------------------------------------------- predict
@@ -129,6 +131,37 @@ def test_predict_accepts_a_single_feature_object_as_a_one_row_window():
 
     assert response.status_code == 200
     assert [p["horizon"] for p in response.json()["predictions"]] == list(HORIZONS)
+
+
+def _champion_with_min_seq_len(min_seq_len: int) -> LoadedChampion:
+    predictor = _predictor()
+    predictor.metadata["hyperparams"] = {"model": {"seq_len": 8, "min_seq_len": min_seq_len}}
+    return LoadedChampion(predictor=predictor)
+
+
+def test_predict_rejects_a_window_shorter_than_the_champion_min_seq_len():
+    champion = _champion_with_min_seq_len(4)
+    client = _client(lambda current: current or champion)
+
+    response = client.post("/predict", json={"features": _dict_rows(3)})
+
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert error["code"] == "window_too_short"
+    assert "at least 4" in error["message"]
+
+
+def test_predict_accepts_a_window_of_exactly_min_seq_len_rows():
+    champion = _champion_with_min_seq_len(4)
+    client = _client(lambda current: current or champion)
+
+    assert client.post("/predict", json={"features": _dict_rows(4)}).status_code == 200
+
+
+def test_predict_accepts_a_window_longer_than_seq_len():
+    response = _client().post("/predict", json={"features": _dict_rows(20)})  # seq_len is 8
+
+    assert response.status_code == 200
 
 
 def test_predict_rejects_an_empty_horizon_list():

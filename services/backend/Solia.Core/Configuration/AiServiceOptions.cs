@@ -49,6 +49,22 @@ public sealed class AiServiceOptions
     public TimeSpan CircuitBreakerBreakDuration { get; set; } = TimeSpan.FromSeconds(15);
 
     /// <summary>
+    /// Upper bound on the most recent <c>features</c> rows sent to <c>/predict</c> as the token's window (oldest
+    /// first). Deliberately not a copy of the model's <c>seq_len</c>: the ai-service keeps its champion's latest
+    /// <c>seq_len</c> rows and rejects windows under its <c>min_seq_len</c>, so this only needs to stay above any
+    /// plausible <c>seq_len</c> — it just caps the payload.
+    /// </summary>
+    [Range(1, 4096)]
+    public int MaxFeatureWindowSize { get; set; } = 256;
+
+    /// <summary>
+    /// Closed trades between retrains (mirrors RETRAIN_EVERY_N_TRADES), reported by <c>GET /model/status</c>
+    /// when the ai-service does not report its own threshold.
+    /// </summary>
+    [Range(1, int.MaxValue)]
+    public int RetrainThreshold { get; set; } = 500;
+
+    /// <summary>
     /// True when every attempt fits in <see cref="TotalTimeout"/>: (<see cref="MaxRetryAttempts"/> + 1) ×
     /// <see cref="AttemptTimeout"/> plus the nominal exponential backoff (<see cref="RetryBaseDelay"/> × (2^retries − 1)).
     /// Otherwise later retries would be cut short — or, with AttemptTimeout ≥ TotalTimeout, never happen. The
