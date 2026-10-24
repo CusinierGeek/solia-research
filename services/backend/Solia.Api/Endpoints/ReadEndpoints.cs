@@ -5,6 +5,7 @@ public static class ReadEndpoints
 {
     public static RouteGroupBuilder MapReadEndpoints(this RouteGroupBuilder group) =>
         group.MapTokensEndpoints()
+            .MapPredictionsEndpoints()
             .MapTradesEndpoints()
             .MapStatsEndpoints()
             .MapLogsEndpoints();

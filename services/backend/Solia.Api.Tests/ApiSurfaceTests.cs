@@ -25,7 +25,8 @@ public class ApiSurfaceTests : IClassFixture<ApiSurfaceTests.DevelopmentHost>
     {
         string[] expected =
         [
-            "GET /api/v1/logs/bot", "GET /api/v1/model/status", "GET /api/v1/stats/performance", "GET /api/v1/stats/winrate",
+            "GET /api/v1/logs/bot", "GET /api/v1/model/status", "GET /api/v1/predictions/history",
+            "GET /api/v1/predictions/live", "GET /api/v1/stats/performance", "GET /api/v1/stats/winrate",
             "GET /api/v1/tokens/history", "GET /api/v1/tokens/live", "GET /api/v1/trades/history", "GET /health",
             "GET /health/live", "GET /health/ready", "POST /api/v1/model/retrain", "POST /api/v1/predict",
         ];
@@ -80,6 +81,8 @@ public class ApiSurfaceTests : IClassFixture<ApiSurfaceTests.DevelopmentHost>
     [InlineData("GET", "/api/v1/tokens/live", new[] { "400" })]
     [InlineData("GET", "/api/v1/tokens/history", new[] { "400" })]
     [InlineData("GET", "/api/v1/trades/history", new[] { "400" })]
+    [InlineData("GET", "/api/v1/predictions/live", new[] { "400" })]
+    [InlineData("GET", "/api/v1/predictions/history", new[] { "400" })]
     [InlineData("GET", "/api/v1/stats/winrate", new[] { "400" })]
     [InlineData("GET", "/api/v1/stats/performance", new[] { "400" })]
     [InlineData("GET", "/api/v1/logs/bot", new[] { "400" })]
@@ -103,6 +106,23 @@ public class ApiSurfaceTests : IClassFixture<ApiSurfaceTests.DevelopmentHost>
         JsonElement response = _host.SuccessSchema("POST", "/api/v1/predict", "200");
         string[] fields = response.GetProperty("properties").EnumerateObject().Select(p => p.Name).Order(StringComparer.Ordinal).ToArray();
         Assert.Equal(["mint", "model_version", "predictions"], fields);
+    }
+
+    [Theory]
+    [InlineData("/api/v1/predictions/live")]
+    [InlineData("/api/v1/predictions/history")]
+    public void Prediction_reads_document_the_item_fields(string path)
+    {
+        JsonElement success = _host.SuccessSchema("GET", path, "200");
+        JsonElement array = path.EndsWith("/live", StringComparison.Ordinal)
+            ? success
+            : _host.Resolve(success.GetProperty("properties").GetProperty("items"));
+        JsonElement item = _host.Resolve(array.GetProperty("items"));
+        string[] fields = item.GetProperty("properties").EnumerateObject().Select(p => p.Name).Order(StringComparer.Ordinal).ToArray();
+        Assert.Equal(
+            ["confidence", "horizon", "id", "mint", "model_version", "position_size", "pump_prob", "rug_prob", "stop_loss",
+             "strategy", "symbol", "take_profit", "ts"],
+            fields);
     }
 
     [Fact]

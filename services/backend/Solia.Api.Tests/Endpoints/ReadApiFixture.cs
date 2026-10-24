@@ -57,14 +57,39 @@ public sealed class ReadApiFixture : PostgresFixture, IAsyncLifetime
                 ("o", (object?)outcome ?? DBNull.Value));
         }
 
-        // Live set: m1..m3 active (m2 has no market cap), m4 no longer tracked.
+        // Live set: m1..m3 active (m2 has no market cap), m4 no longer tracked. m1's live symbol differs from the
+        // registry's.
         await ExecAsync(
             "INSERT INTO tokens_live (mint, symbol, last_price, last_market_cap, holders, venue, is_migrated, is_active, updated_at) VALUES " +
-            "('m1', 'M1', @tiny, 1000, 10, 'pumpfun', FALSE, TRUE, @t0), " +
+            "('m1', 'M1-LIVE', @tiny, 1000, 10, 'pumpfun', FALSE, TRUE, @t0), " +
             "('m2', 'M2', 0.5, NULL, 20, 'pumpswap', TRUE, TRUE, @t0p1h), " +
             "('m3', 'M3', 0.25, 5000, NULL, 'pumpfun', FALSE, TRUE, @t0m1h), " +
             "('m4', 'M4', 1, 9999, 99, 'pumpfun', FALSE, FALSE, @t0p2h)",
             ("tiny", TinyPrice), ("t0", T0), ("t0p1h", T0.AddHours(1)), ("t0m1h", T0.AddHours(-1)), ("t0p2h", T0.AddHours(2)));
+
+        // Predictions (minutes after T0): m1 has an older and a newer 1m row plus a model-less 5m one; m2 a 1m and
+        // a 30s one at the same instant (inserted in that order); m3 one 1m; m4 (no longer tracked) and m5 (never live) are the newest but never "live".
+        await ExecAsync("INSERT INTO models (version, path, is_champion) VALUES ('v1', 'models/v1.pt', TRUE)");
+        const string predictionSql =
+            "INSERT INTO predictions (mint, model_id, ts, horizon, pump_prob, rug_prob, strategy, position_size, take_profit, stop_loss, confidence) " +
+            "VALUES (@m, (SELECT id FROM models WHERE version = @v), @ts, @h, @pump, @rug, @s, @size, @tp, @sl, @conf)";
+        (string Mint, int Minutes, string Horizon, string? Model, double? Pump, double? Rug, string Strategy, double? Confidence)[] predictions =
+        [
+            ("m1", 0, "1m", "v1", 0.2, 0.3, "buy", 50),
+            ("m1", 10, "1m", "v1", 0.9, 0.05, "buy", 80),
+            ("m1", 5, "5m", null, 0.4, null, "hold", null),
+            ("m2", 20, "1m", "v1", null, 0.7, "sell", 60),
+            ("m2", 20, "30s", "v1", 0.6, 0.2, "buy", 70),
+            ("m3", 15, "1m", "v1", 0.5, 0.1, "buy", 90),
+            ("m4", 30, "1m", "v1", 0.99, 0.01, "buy", 99),
+            ("m5", 40, "1m", "v1", 0.99, 0.01, "buy", 99),
+        ];
+        foreach ((string mint, int minutes, string horizon, string? model, double? pump, double? rug, string strategy, double? confidence) in predictions)
+        {
+            await ExecAsync(predictionSql, ("m", mint), ("v", (object?)model ?? DBNull.Value), ("ts", T0.AddMinutes(minutes)),
+                ("h", horizon), ("pump", (object?)pump ?? DBNull.Value), ("rug", (object?)rug ?? DBNull.Value), ("s", strategy),
+                ("size", 2.5m), ("tp", TinyPrice), ("sl", 0.0001m), ("conf", (object?)confidence ?? DBNull.Value));
+        }
 
         // Trades: a win, a loss, a break-even (all long ago), a recent win closed exactly 24h before Now, and
         // one open position.

@@ -44,7 +44,7 @@ mint, or a mint with no feature snapshot yet → `404 not_found`; fewer rows tha
 ### Read endpoints — shared conventions
 - Response properties are **snake_case**; money/prices are exact decimals, probabilities/ratios doubles.
 - `from`/`to` are ISO-8601 timestamps, inclusive; either may be omitted, `from > to` is a `400`.
-- Enum-like params (`outcome`, `status`, `level`, `service`, `sort`, `window`) are case-insensitive; an
+- Enum-like params (`outcome`, `status`, `horizon`, `strategy`, `level`, `service`, `sort`, `window`) are case-insensitive; an
   unknown value is a `400 invalid_request` naming the parameter and its allowed values. An empty or blank
   value (`?status=`) is the same as omitting it.
 - **Paginated** endpoints take `page` (1-based, default 1) and `pageSize` (1–200, default 50) and return:
@@ -69,6 +69,27 @@ Currently tracked tokens (`is_active`) with their latest snapshot, as a plain ar
 Paginated token registry, newest `first_seen_at` first. `?from=&to=` bound `first_seen_at`;
 `?outcome=` `pump` | `rug` | `neutral`; `?page=&pageSize=`.
 Items: `{ mint, symbol, name, created_at, first_seen_at, last_seen_at, final_outcome }`.
+
+### `GET /predictions/live`
+The latest prediction of every currently tracked token (`tokens_live.is_active`), **one row per
+(mint, horizon)** — flat, same item shape as the history, so a token predicted at three horizons appears three
+times. A horizon the token was never predicted at has no row. `?limit=` (1–1000, default 100)
+`&horizon=` `30s` | `1m` | `5m` | `15m` | `1h` (only that horizon) `&sort=` `ts` (default) | `pump_prob` |
+`rug_prob` | `confidence` — always descending, missing values last.
+```jsonc
+[ { "id": 42, "mint": "So1...", "symbol": "ABC", "ts": "...", "horizon": "1m", "pump_prob": 0.81,
+    "rug_prob": 0.07, "strategy": "buy", "confidence": 74.0, "position_size": 0.5,
+    "take_profit": 0.0000001500, "stop_loss": 0.0000001100, "model_version": "v3" } ]
+```
+`symbol` comes from the token registry; `model_version` from `models`, `null` when the row has no model.
+Probabilities are `0–1`, `confidence` `0–100` (doubles); `position_size` / `take_profit` / `stop_loss` are
+exact decimals. There is no `expected_return` (the table doesn't store it; see `POST /predict`).
+
+### `GET /predictions/history`
+Paginated predictions, newest `ts` first. `?mint=` (exact, case-sensitive) `&horizon=` `&strategy=` `buy` |
+`sell` | `hold` `&from=&to=` (bound `ts`) `&page=&pageSize=`.
+Items: the `/predictions/live` item, `{ id, mint, symbol, ts, horizon, pump_prob, rug_prob, strategy,
+confidence, position_size, take_profit, stop_loss, model_version }`.
 
 ### `GET /trades/history`
 Paginated paper trades, most recently opened first. `?status=` `open` | `closed`; `?from=&to=` bound

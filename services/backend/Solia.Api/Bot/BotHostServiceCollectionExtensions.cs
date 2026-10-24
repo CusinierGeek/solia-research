@@ -1,6 +1,7 @@
 using Solia.Bot;
 using Solia.Bot.Configuration;
 using Solia.Bot.Intake;
+using Solia.Core.Data;
 
 namespace Solia.Api.Bot;
 
@@ -20,7 +21,7 @@ public static class BotHostServiceCollectionExtensions
             .Bind(configuration.GetSection(BotHostOptions.Section))
             .ValidateDataAnnotations()
             .Validate(o => o.HasKnownHorizon(),
-                $"Bot:Horizon must be one of {string.Join(", ", BotHostOptions.Horizons)} (the predictions table's horizons).")
+                $"Bot:Horizon must be one of {string.Join(", ", PredictionHorizons.All)} (the predictions table's horizons).")
             .ValidateOnStart();
 
         services.AddSingleton<PostgresPredictionStore>();

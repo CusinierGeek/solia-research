@@ -1,6 +1,8 @@
 using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Solia.Api.Endpoints;
+using Solia.Bot.Policy;
 
 namespace Solia.Api.Tests.Endpoints;
 
@@ -34,6 +36,18 @@ public class ReadEndpointsValidationTests
         { "Production", "/api/v1/logs/bot?level=loud" },
         { "Production", "/api/v1/logs/bot?service=nope" },
         { "Production", "/api/v1/logs/bot?limit=1001" },
+        { "Production", "/api/v1/predictions/live?horizon=2m" },
+        { "Production", "/api/v1/predictions/live?sort=symbol" },
+        { "Production", "/api/v1/predictions/live?limit=0" },
+        { "Production", "/api/v1/predictions/live?limit=1001" },
+        { "Production", "/api/v1/predictions/live?limit=abc" },
+        { "Production", "/api/v1/predictions/history?horizon=1d" },
+        { "Production", "/api/v1/predictions/history?strategy=short" },
+        { "Production", "/api/v1/predictions/history?from=2026-01-02T00:00:00Z&to=2026-01-01T00:00:00Z" },
+        { "Production", "/api/v1/predictions/history?page=0" },
+        { "Production", "/api/v1/predictions/history?pageSize=201" },
+        { "Production", "/api/v1/predictions/history?page=51&pageSize=200" },
+        { "Development", "/api/v1/predictions/history?to=not-a-date" },
     };
 
     [Theory]
@@ -63,6 +77,31 @@ public class ReadEndpointsValidationTests
         using JsonDocument doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         Assert.Equal("status must be one of: open, closed.",
             doc.RootElement.GetProperty("error").GetProperty("message").GetString());
+    }
+
+    [Theory]
+    [InlineData("/api/v1/predictions/live?horizon=2m", "horizon must be one of: 30s, 1m, 5m, 15m, 1h.")]
+    [InlineData("/api/v1/predictions/live?sort=symbol", "sort must be one of: ts, pump_prob, rug_prob, confidence.")]
+    [InlineData("/api/v1/predictions/history?strategy=short", "strategy must be one of: buy, sell, hold.")]
+    [InlineData("/api/v1/predictions/history?horizon=1d", "horizon must be one of: 30s, 1m, 5m, 15m, 1h.")]
+    public async Task Prediction_validation_names_the_parameter_and_its_allowed_values(string url, string message)
+    {
+        using WebApplicationFactory<Program> factory = TestApiFactory.Create("Production", []);
+        HttpClient client = factory.CreateClient();
+
+        HttpResponseMessage response = await client.GetAsync(url);
+
+        using JsonDocument doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(message, doc.RootElement.GetProperty("error").GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public void Prediction_strategies_are_the_bot_codes_and_the_predictions_table_check()
+    {
+        Assert.Equal(MigrationChecks.InList("strategy").Order(StringComparer.Ordinal),
+            PredictionsEndpoints.Strategies.Order(StringComparer.Ordinal));
+        Assert.Equal(Enum.GetValues<TradeSignal>().Select(s => s.ToCode()).Order(StringComparer.Ordinal),
+            PredictionsEndpoints.Strategies.Order(StringComparer.Ordinal));
     }
 
     [Fact]

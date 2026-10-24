@@ -1,5 +1,4 @@
 using System.Net;
-using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
@@ -9,6 +8,7 @@ using Solia.Api.Bot;
 using Solia.Bot;
 using Solia.Bot.Intake;
 using Solia.Bot.Logging;
+using Solia.Core.Data;
 
 namespace Solia.Api.Tests.Bot;
 
@@ -77,18 +77,9 @@ public class BotHostingTests
     public void The_accepted_horizons_are_exactly_the_predictions_table_check()
     {
         // The migrations are the source of truth: the last one constraining predictions.horizon wins.
-        string? check = null;
-        foreach (string file in Directory.GetFiles(PostgresFixture.FindMigrationsDir(), "*.sql").Order(StringComparer.Ordinal))
-        {
-            foreach (Match match in Regex.Matches(File.ReadAllText(file), @"horizon\s+IN\s*\(([^)]*)\)", RegexOptions.IgnoreCase))
-            {
-                check = match.Groups[1].Value;
-            }
-        }
+        string[] horizons = MigrationChecks.InList("horizon");
 
-        Assert.NotNull(check);
-        string[] horizons = [.. Regex.Matches(check, "'([^']*)'").Select(m => m.Groups[1].Value)];
-        Assert.Equal(horizons.Order(StringComparer.Ordinal), BotHostOptions.Horizons.Order(StringComparer.Ordinal));
+        Assert.Equal(horizons, PredictionHorizons.All);
         Assert.All(horizons, h => Assert.True(new BotHostOptions { Horizon = h }.HasKnownHorizon(), h));
         Assert.False(new BotHostOptions { Horizon = "1M" }.HasKnownHorizon());
     }

@@ -10,7 +10,7 @@ namespace Solia.Api.Tests.Endpoints;
 /// win-rate/equity math and decimal precision. Run in CI.
 /// </summary>
 [Trait(TestCategories.Key, TestCategories.Integration)]
-public class ReadEndpointsIntegrationTests(ReadApiFixture api) : IClassFixture<ReadApiFixture>
+public partial class ReadEndpointsIntegrationTests(ReadApiFixture api) : IClassFixture<ReadApiFixture>
 {
     private async Task<JsonDocument> GetJsonAsync(string url)
     {

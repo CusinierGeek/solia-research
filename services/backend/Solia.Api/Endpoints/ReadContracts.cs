@@ -32,6 +32,25 @@ public sealed record TokenHistoryDto(
     DateTimeOffset? LastSeenAt,
     string? FinalOutcome);
 
+/// <summary>
+/// A recorded prediction (<c>GET /predictions/live</c>, <c>GET /predictions/history</c>);
+/// <paramref name="ModelVersion"/> is null when the row has no model.
+/// </summary>
+public sealed record PredictionRecordDto(
+    long Id,
+    string Mint,
+    string? Symbol,
+    DateTimeOffset Ts,
+    string Horizon,
+    double? PumpProb,
+    double? RugProb,
+    string? Strategy,
+    double? Confidence,
+    decimal? PositionSize,
+    decimal? TakeProfit,
+    decimal? StopLoss,
+    string? ModelVersion);
+
 /// <summary>A paper trade (<c>GET /trades/history</c>); the entry features snapshot is not exposed.</summary>
 public sealed record TradeDto(
     long Id,

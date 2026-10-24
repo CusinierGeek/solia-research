@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using Solia.Bot.Configuration;
+using Solia.Core.Data;
 
 namespace Solia.Api.Bot;
 
@@ -11,15 +12,6 @@ namespace Solia.Api.Bot;
 public sealed class BotHostOptions
 {
     public const string Section = BotOptions.Section;
-
-    /// <summary>
-    /// The horizons the <c>predictions</c> table accepts (its CHECK constraint in services/db/migrations, the
-    /// source of truth; a test fails when the two drift).
-    /// </summary>
-    public static readonly IReadOnlySet<string> Horizons = new HashSet<string>(StringComparer.Ordinal)
-    {
-        "30s", "1m", "5m", "15m", "1h",
-    };
 
     /// <summary>Runs the bot inside the API host. Off by default: the bot needs a live feed and an ai-service.</summary>
     public bool Enabled { get; set; }
@@ -54,5 +46,5 @@ public sealed class BotHostOptions
         ParseLimitsInInvariantCulture = true, ConvertValueInInvariantCulture = true)]
     public TimeSpan MaxCommitDelay { get; set; } = TimeSpan.FromSeconds(30);
 
-    public bool HasKnownHorizon() => Horizon is not null && Horizons.Contains(Horizon);
+    public bool HasKnownHorizon() => PredictionHorizons.IsKnown(Horizon);
 }
