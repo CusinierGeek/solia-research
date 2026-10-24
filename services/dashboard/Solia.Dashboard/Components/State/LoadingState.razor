@@ -1,0 +1,30 @@
+@* Placeholder while data loads: skeleton rows (default, for lists/tables) or a centred spinner (small widgets). *@
+@if (Variant == LoadingVariant.Spinner)
+{
+    <div class="solia-loading solia-loading--spinner d-flex flex-column align-center pa-6" role="status" aria-busy="true">
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" />
+        @if (!string.IsNullOrWhiteSpace(Message))
+        {
+            <MudText Typo="Typo.body2" Class="mt-3 mud-text-secondary">@Message</MudText>
+        }
+    </div>
+}
+else
+{
+    <div class="solia-loading solia-loading--skeleton" role="status" aria-busy="true" aria-label="@(string.IsNullOrWhiteSpace(Message) ? "Loading" : Message)">
+        @for (int i = 0; i < Math.Max(1, Lines); i++)
+        {
+            <MudSkeleton SkeletonType="SkeletonType.Text" Height="32px" />
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public LoadingVariant Variant { get; set; } = LoadingVariant.Skeleton;
+
+    /// <summary>Number of skeleton rows (skeleton variant; at least one is drawn).</summary>
+    [Parameter] public int Lines { get; set; } = 3;
+
+    /// <summary>Optional caption (shown under the spinner; the skeleton's accessible label).</summary>
+    [Parameter] public string? Message { get; set; }
+}

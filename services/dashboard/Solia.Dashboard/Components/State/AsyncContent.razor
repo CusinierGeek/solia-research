@@ -1,0 +1,154 @@
+@*
+    The "load async → loading / empty / error / content" pattern every view adopts:
+
+        <AsyncContent TItem="IReadOnlyList<Trade>" Load="Api.GetTradesAsync" IsEmpty="t => t.Count == 0"
+                      EmptyMessage="No trades yet.">
+            @foreach (var trade in context) { ... }
+        </AsyncContent>
+
+    Load runs once the component is interactive (never during prerendering, so a slow backend can't hold up the
+    first paint), again when ReloadKey or the Load method changes, and on Retry or ReloadAsync(). A refresh keeps
+    already-loaded content on screen until the new data arrives (no skeleton flicker on live updates). A reload
+    cancels the previous attempt, and a stale attempt's outcome is discarded. Failures are logged and shown as
+    ErrorState (never the exception text).
+
+    Pass whatever the data depends on as ReloadKey: a lambda capturing a field compares equal across renders, so
+    changing the field alone would not trigger a reload.
+
+        <AsyncContent TItem="..." Load="ct => Api.GetHistoryAsync(_range, ct)" ReloadKey="_range" ...>
+*@
+@typeparam TItem
+@implements IDisposable
+@inject ILogger<AsyncContent<TItem>> Logger
+
+@switch (State)
+{
+    case AsyncLoadState.Loading:
+        @if (Loading is not null)
+        {
+            @Loading
+        }
+        else
+        {
+            <LoadingState Variant="LoadingVariant" />
+        }
+        break;
+    case AsyncLoadState.Empty:
+        <EmptyState Message="@EmptyMessage" />
+        break;
+    case AsyncLoadState.Error:
+        <ErrorState Message="@ErrorMessage" OnRetry="ReloadAsync" />
+        break;
+    default:
+        @ChildContent(_value!)
+        break;
+}
+
+@code {
+    /// <summary>Fetches the data; receives a token cancelled on reload or when the component goes away.</summary>
+    [Parameter, EditorRequired] public Func<CancellationToken, Task<TItem>> Load { get; set; } = default!;
+
+    /// <summary>Renders the loaded value (available as <c>context</c>).</summary>
+    [Parameter, EditorRequired] public RenderFragment<TItem> ChildContent { get; set; } = default!;
+
+    /// <summary>Whether a loaded value counts as empty. A null value is always empty.</summary>
+    [Parameter] public Func<TItem, bool>? IsEmpty { get; set; }
+
+    [Parameter] public string EmptyMessage { get; set; } = "Nothing to show yet.";
+
+    [Parameter] public string ErrorMessage { get; set; } = "Could not load data from the backend.";
+
+    [Parameter] public LoadingVariant LoadingVariant { get; set; } = LoadingVariant.Skeleton;
+
+    /// <summary>Replaces the default <see cref="LoadingState"/>.</summary>
+    [Parameter] public RenderFragment? Loading { get; set; }
+
+    /// <summary>What the data depends on (a filter, a range…); a change reloads it.</summary>
+    [Parameter] public object? ReloadKey { get; set; }
+
+    /// <summary>Where the component currently is in the load cycle.</summary>
+    public AsyncLoadState State { get; private set; } = AsyncLoadState.Loading;
+
+    private TItem? _value;
+    private CancellationTokenSource? _cts;
+    private bool _started;
+    private Func<CancellationToken, Task<TItem>>? _loadedWith;
+    private object? _loadedKey;
+
+    protected override Task OnParametersSetAsync()
+    {
+        // Before the first load the latest parameters are simply picked up by it.
+        if (!_started || (Equals(Load, _loadedWith) && Equals(ReloadKey, _loadedKey)))
+        {
+            return Task.CompletedTask;
+        }
+        return ReloadAsync();
+    }
+
+    // Prerendering never runs OnAfterRender, so the backend is only called once, by the interactive circuit.
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return Task.CompletedTask;
+        }
+        _started = true;
+        return ReloadAsync();
+    }
+
+    /// <summary>
+    /// (Re)runs <see cref="Load"/>. The loading state is only shown when there is no content yet; a refresh of
+    /// loaded content keeps it on screen until the new data arrives. Call it on the renderer's dispatcher — from an
+    /// event handler, or wrapped in <c>InvokeAsync</c> from elsewhere (e.g. a hub callback).
+    /// </summary>
+    public async Task ReloadAsync()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _cts = cts;
+        _loadedWith = Load;
+        _loadedKey = ReloadKey;
+
+        if (State is AsyncLoadState.Error)
+        {
+            State = AsyncLoadState.Loading;
+            StateHasChanged();
+        }
+
+        try
+        {
+            TItem value = await Load(cts.Token);
+            if (cts.IsCancellationRequested)
+            {
+                return;
+            }
+            _value = value;
+            State = value is null || (IsEmpty?.Invoke(value) ?? false) ? AsyncLoadState.Empty : AsyncLoadState.Content;
+        }
+        catch (Exception) when (cts.IsCancellationRequested)
+        {
+            // Superseded by a reload, or the component went away: not a failure.
+            return;
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancelled by something else, typically the HttpClient timeout: the backend didn't answer in time.
+            Logger.LogWarning("Loading {Type} for the dashboard timed out.", typeof(TItem).Name);
+            State = AsyncLoadState.Error;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Loading {Type} for the dashboard failed.", typeof(TItem).Name);
+            State = AsyncLoadState.Error;
+        }
+        StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = null;
+    }
+}

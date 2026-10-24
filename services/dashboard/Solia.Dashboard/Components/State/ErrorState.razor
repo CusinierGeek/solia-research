@@ -1,0 +1,22 @@
+@* Shown when a load failed; offers a retry when the host passes OnRetry. *@
+<MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="solia-error">
+    <div class="d-flex align-center flex-wrap gap-4">
+        <span>@Message</span>
+        @if (OnRetry.HasDelegate)
+        {
+            <MudButton Variant="Variant.Text" Color="Color.Error" Size="Size.Small"
+                       StartIcon="@Icons.Material.Filled.Refresh" Class="solia-error__retry" OnClick="OnRetry">
+                @RetryLabel
+            </MudButton>
+        }
+    </div>
+</MudAlert>
+
+@code {
+    [Parameter] public string Message { get; set; } = "Something went wrong.";
+
+    /// <summary>Invoked by the retry button; no button is drawn without it.</summary>
+    [Parameter] public EventCallback OnRetry { get; set; }
+
+    [Parameter] public string RetryLabel { get; set; } = "Retry";
+}

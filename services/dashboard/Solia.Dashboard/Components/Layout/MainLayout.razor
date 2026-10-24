@@ -1,0 +1,81 @@
+@inherits LayoutComponentBase
+@inject IJSRuntime JS
+
+<MudThemeProvider Theme="SoliaTheme.Theme" @bind-IsDarkMode="_darkMode" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="1" Dense="true">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start"
+                       aria-label="Toggle navigation" OnClick="ToggleDrawer" />
+        <MudText Typo="Typo.h6" Class="ml-2">Solia</MudText>
+        <PaperTradingBadge Class="ml-4" />
+        <MudSpacer />
+        <MudIconButton Icon="@(_darkMode ? Icons.Material.Outlined.LightMode : Icons.Material.Outlined.DarkMode)"
+                       Color="Color.Inherit" aria-label="Toggle dark mode" OnClick="ToggleDarkMode" />
+    </MudAppBar>
+    <MudDrawer @bind-Open="_drawerOpen" ClipMode="DrawerClipMode.Always" Elevation="1">
+        <NavMenu />
+    </MudDrawer>
+    <MudMainContent>
+        <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="py-6">
+            @Body
+        </MudContainer>
+    </MudMainContent>
+</MudLayout>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>
+
+@code {
+    private bool _drawerOpen = true;
+    private bool _darkMode = true;
+
+    internal bool IsDarkMode => _darkMode;
+
+    // The theme choice survives reloads and reconnects in the browser's localStorage (dark by default).
+    internal const string DarkModeStorageKey = "solia-dark-mode";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+        string? stored = null;
+        try
+        {
+            stored = await JS.InvokeAsync<string?>("localStorage.getItem", DarkModeStorageKey);
+        }
+        catch (Exception ex) when (IsStorageUnavailable(ex))
+        {
+        }
+        if (bool.TryParse(stored, out bool darkMode) && darkMode != _darkMode)
+        {
+            _darkMode = darkMode;
+            StateHasChanged();
+        }
+    }
+
+    private void ToggleDrawer() => _drawerOpen = !_drawerOpen;
+
+    private async Task ToggleDarkMode()
+    {
+        _darkMode = !_darkMode;
+        try
+        {
+            await JS.InvokeVoidAsync("localStorage.setItem", DarkModeStorageKey, _darkMode ? "true" : "false");
+        }
+        catch (Exception ex) when (IsStorageUnavailable(ex))
+        {
+        }
+    }
+
+    // Storage is a nicety: blocked storage or a dropped circuit must not break the layout.
+    private static bool IsStorageUnavailable(Exception ex) => ex is JSException or JSDisconnectedException;
+}

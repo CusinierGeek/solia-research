@@ -1,0 +1,9 @@
+<MudNavMenu>
+    @foreach (NavItem item in DashboardNav.Items)
+    {
+        <MudNavLink Href="@item.Href" Icon="@item.Icon"
+                    Match="@(item.Href == DashboardNav.Overview ? NavLinkMatch.All : NavLinkMatch.Prefix)">
+            @item.Title
+        </MudNavLink>
+    }
+</MudNavMenu>

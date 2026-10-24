@@ -1,5 +1,9 @@
 <Solution>
   <Folder Name="/services/" />
+  <Folder Name="/services/dashboard/">
+    <Project Path="services/dashboard/Solia.Dashboard.Tests/Solia.Dashboard.Tests.csproj" />
+    <Project Path="services/dashboard/Solia.Dashboard/Solia.Dashboard.csproj" />
+  </Folder>
   <Folder Name="/services/data-pipeline/">
     <Project Path="services/data-pipeline/Solia.DataPipeline.Tests/Solia.DataPipeline.Tests.csproj" />
     <Project Path="services/data-pipeline/Solia.DataPipeline/Solia.DataPipeline.csproj" />

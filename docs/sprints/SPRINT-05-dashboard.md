@@ -15,7 +15,9 @@ Views:
 - Performance curve (equity chart).
 - Bot logs.
 
-Real-time via SignalR; charts via a Blazor charting lib.
+Real-time via SignalR. UI components: **MudBlazor** (decided in T3). Charts: MudBlazor's built-in charts
+first; if they fall short (e.g. a zoomable/time-scaled equity curve), a small Blazor wrapper over
+[TradingView lightweight-charts](https://github.com/tradingview/lightweight-charts) via JS interop (T10).
 
 ## Out of scope
 - Auth (reserved; add if the repo ever goes multi-user). Container wiring (Sprint 6).

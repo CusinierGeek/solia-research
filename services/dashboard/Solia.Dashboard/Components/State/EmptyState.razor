@@ -1,0 +1,11 @@
+@* Shown when a load succeeded but returned nothing (no predictions yet, no trades in range, ...). *@
+<div class="solia-empty d-flex flex-column align-center pa-6">
+    <MudIcon Icon="@Icon" Size="Size.Large" Color="Color.Default" />
+    <MudText Typo="Typo.body1" Class="mt-2 mud-text-secondary">@Message</MudText>
+</div>
+
+@code {
+    [Parameter] public string Message { get; set; } = "Nothing to show yet.";
+
+    [Parameter] public string Icon { get; set; } = Icons.Material.Outlined.Inbox;
+}

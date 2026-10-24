@@ -1,0 +1,13 @@
+@* Page title (browser tab + the h1 FocusOnNavigate targets) and an optional one-line description. *@
+<PageTitle>@Title · Solia</PageTitle>
+<MudText Typo="Typo.h4" HtmlTag="h1" GutterBottom="true">@Title</MudText>
+@if (!string.IsNullOrWhiteSpace(Description))
+{
+    <MudText Typo="Typo.body2" Class="mb-6 mud-text-secondary">@Description</MudText>
+}
+
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = string.Empty;
+
+    [Parameter] public string? Description { get; set; }
+}

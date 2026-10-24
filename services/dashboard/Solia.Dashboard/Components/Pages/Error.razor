@@ -1,0 +1,26 @@
+@page "/Error"
+@using System.Diagnostics
+@* Statically rendered (no circuit): it must work when the circuit is what failed, and it needs the HttpContext. *@
+@attribute [ExcludeFromInteractiveRouting]
+
+<PageTitle>Error · Solia</PageTitle>
+
+<h1>Error.</h1>
+<p>An error occurred while processing your request.</p>
+
+@if (!string.IsNullOrEmpty(RequestId))
+{
+    <p>
+        <strong>Request ID:</strong> <code>@RequestId</code>
+    </p>
+}
+
+@code {
+    [CascadingParameter]
+    private HttpContext? HttpContext { get; set; }
+
+    private string? RequestId { get; set; }
+
+    protected override void OnInitialized() =>
+        RequestId = Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
+}

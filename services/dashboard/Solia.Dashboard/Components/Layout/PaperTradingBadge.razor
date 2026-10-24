@@ -1,0 +1,14 @@
+@* Always visible in the app bar: Solia only simulates trades — it never places real orders or touches real funds. *@
+<MudTooltip Text="Simulated trades only — Solia never places real orders or uses real funds.">
+    <MudChip T="string" Color="Color.Warning" Variant="Variant.Filled" Size="Size.Small"
+             Icon="@Icons.Material.Filled.Science" Class="@CssClass">
+        PAPER TRADING
+    </MudChip>
+</MudTooltip>
+
+@code {
+    /// <summary>Extra CSS classes (spacing) from the host.</summary>
+    [Parameter] public string? Class { get; set; }
+
+    private string CssClass => string.IsNullOrWhiteSpace(Class) ? "solia-paper-badge" : $"solia-paper-badge {Class}";
+}
