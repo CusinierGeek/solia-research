@@ -132,8 +132,8 @@ public static class PredictionsEndpoints
     }
 
     // An expression (not a method) so EF translates it: symbol (the registry's) and model version come from LEFT
-    // JOINs in the same statement.
-    private static readonly System.Linq.Expressions.Expression<Func<Prediction, PredictionRecordDto>> ToDto = p =>
+    // JOINs in the same statement. Shared with the live hub's prediction_created, so the two shapes can't drift.
+    internal static readonly System.Linq.Expressions.Expression<Func<Prediction, PredictionRecordDto>> ToDto = p =>
         new PredictionRecordDto(p.Id, p.Mint, p.Token!.Symbol, p.Ts, p.Horizon, p.PumpProb, p.RugProb, p.Strategy,
             p.Confidence, p.PositionSize, p.TakeProfit, p.StopLoss, p.Model == null ? null : p.Model.Version);
 }

@@ -47,8 +47,12 @@ public static class TradesEndpoints
 
         return await query
             .OrderByDescending(t => t.OpenedAt).ThenByDescending(t => t.Id)
-            .Select(t => new TradeDto(t.Id, t.Mint, t.PredictionId, t.OpenedAt, t.ClosedAt, t.EntryPrice, t.ExitPrice,
-                t.Size, t.DurationSec, t.Pnl, t.PnlPct, t.Strategy, t.Confidence, t.ExitReason, t.Status))
+            .Select(ToDto)
             .ToPageAsync(db, paging, cancellationToken);
     }
+
+    // An expression so EF translates it; shared with the live hub's trade_opened/trade_closed.
+    internal static readonly System.Linq.Expressions.Expression<Func<Trade, TradeDto>> ToDto = t =>
+        new TradeDto(t.Id, t.Mint, t.PredictionId, t.OpenedAt, t.ClosedAt, t.EntryPrice, t.ExitPrice, t.Size,
+            t.DurationSec, t.Pnl, t.PnlPct, t.Strategy, t.Confidence, t.ExitReason, t.Status);
 }

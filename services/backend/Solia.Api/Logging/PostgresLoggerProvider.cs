@@ -17,6 +17,8 @@ namespace Solia.Api.Logging;
 [ProviderAlias("Postgres")]
 public sealed class PostgresLoggerProvider : ILoggerProvider
 {
+    private static readonly AsyncLocal<bool> Suppressed = new();
+
     private readonly ILogSink _sink;
     private readonly TimeSpan _writeTimeout;
     private readonly TimeSpan _drainTimeout;
@@ -41,6 +43,21 @@ public sealed class PostgresLoggerProvider : ILoggerProvider
     }
 
     public ILogger CreateLogger(string categoryName) => new PostgresLogger(categoryName, this);
+
+    /// <summary>Whether the current async flow is inside a <see cref="Suppress"/> scope.</summary>
+    internal static bool IsSuppressed => Suppressed.Value;
+
+    /// <summary>
+    /// Keeps every entry logged on the current async flow (and the flows it starts) out of the `logs` table until
+    /// the returned scope is disposed, whatever its category — other providers (console) still get them. For
+    /// work that is itself triggered by `logs` rows (the live feed), where a mirrored failure would feed back.
+    /// </summary>
+    public static IDisposable Suppress()
+    {
+        bool previous = Suppressed.Value;
+        Suppressed.Value = true;
+        return new SuppressionScope(previous);
+    }
 
     /// <summary>Queues one entry; returns at once, dropping it if the queue is saturated.</summary>
     internal void Enqueue(LogLevel level, string category, EventId eventId, string message, Exception? exception) =>
@@ -124,4 +141,9 @@ public sealed class PostgresLoggerProvider : ILoggerProvider
     };
 
     private readonly record struct PendingLog(LogSeverity Level, string Message, object? Context);
+
+    private sealed class SuppressionScope(bool previous) : IDisposable
+    {
+        public void Dispose() => Suppressed.Value = previous;
+    }
 }

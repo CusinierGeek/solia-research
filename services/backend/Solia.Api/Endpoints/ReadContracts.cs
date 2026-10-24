@@ -78,6 +78,12 @@ public sealed record EquityPoint(DateTimeOffset Ts, decimal Equity, decimal Pnl)
 /// <summary><c>GET /stats/performance</c>: <c>{ points: [{ ts, equity, pnl }], total_pnl }</c>.</summary>
 public sealed record PerformanceResponse(IReadOnlyList<EquityPoint> Points, decimal TotalPnl);
 
+/// <summary>
+/// The live hub's <c>stats_changed</c>: a signal, not the figures — the trade whose close moved
+/// <c>/stats/winrate</c> and <c>/stats/performance</c>, which clients re-fetch.
+/// </summary>
+public sealed record StatsChangedDto(long TradeId, DateTimeOffset? ClosedAt);
+
 /// <summary>An operational log entry (<c>GET /logs/bot</c>); <paramref name="Context"/> is the structured JSON as-is.</summary>
 public sealed record LogDto(long Id, DateTimeOffset Ts, string Service, string Level, string Message, RawJson? Context);
 

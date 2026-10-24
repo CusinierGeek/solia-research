@@ -140,6 +140,42 @@ them before any run finished — against `AiService:RetrainThreshold` (`RETRAIN_
 Manually trigger a retrain (proxied to ai-service, never retried). Returns `202 Accepted` +
 `{ "training_event_id": 17 }`.
 
+### Live hub (SignalR) — `/hubs/live`
+Server → client push so the dashboard updates without a reload. Mapped at **`/hubs/live`** on the backend host,
+outside `/api/v1` (not versioned with the REST surface). Standard SignalR negotiate/transports, JSON protocol,
+payloads **snake_case** like REST. The hub has no client → server methods: connect and handle the events.
+
+| Event | When | Payload |
+|-------|------|---------|
+| `prediction_created` | a `predictions` row is inserted | one `/predictions/history` item |
+| `trade_opened` | a `trades` row is inserted open | one `/trades/history` item |
+| `trade_closed` | a trade is closed (or inserted already closed) | one `/trades/history` item |
+| `log_written` | a non-`debug` `logs` row is inserted, by **any** service | one `/logs/bot` item |
+| `stats_changed` | right after every `trade_closed` (sent even if that broadcast failed) | `{ "trade_id": 7, "closed_at": "..." }` — a signal: re-fetch `/stats/winrate` and `/stats/performance` |
+
+```jsonc
+// prediction_created
+{ "id": 812, "mint": "...", "symbol": "ABC", "ts": "...", "horizon": "1m", "pump_prob": 0.82, "rug_prob": 0.07,
+  "strategy": null, "confidence": 81.0, "position_size": null, "take_profit": null, "stop_loss": null,
+  "model_version": "v3" }
+```
+
+- **Source:** the database, not the writer. Triggers (migration `0004_live_notify.sql`) `NOTIFY solia_live,
+  '<event>:<id>'` on commit; the backend `LISTEN`s, re-reads the row by id and pushes it. Rows from the in-process
+  bot, the data-pipeline and the ai-service are all covered. A payload is the row **as of that re-read** (a trade
+  that closed within milliseconds of opening may already show `closed` in its `trade_opened`).
+- **Delivery: at-most-once, best-effort.** Nothing is replayed: events committed while a client is disconnected,
+  while the backend's listen connection is down (re-opened with backoff, 1 s → 30 s), or dropped under load are lost.
+  Load shedding: two bounded queues, oldest dropped — prediction/trade events (always served first) and log rows
+  (re-read in batches of 100), so a log flood never pushes a trade event out; a send stalled > 5 s is cancelled and
+  abandoned, and while 16 abandoned sends are still running new events are dropped instead of piling up. Clients **re-fetch over REST after every
+  (re)connect** and treat events as increments on top of that snapshot, de-duplicating by `id`.
+- **Never slows the writers:** `NOTIFY` doesn't wait for listeners, the push runs on its own queue — a slow or
+  disconnected client can't hold up the bot — and the listen connection is unpooled, so it never takes a slot of the
+  pool the writers use. Nothing logged while pushing is mirrored into `logs` (it would announce itself).
+- **Security:** none beyond the internal network — single-user, no auth, no CORS policy (same-origin / server-side
+  clients only). No scale-out backplane: one backend instance.
+
 ---
 
 ## ai-service (internal REST, FastAPI)

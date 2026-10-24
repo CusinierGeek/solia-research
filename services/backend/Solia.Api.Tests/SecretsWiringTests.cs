@@ -107,6 +107,10 @@ public sealed class SecretsWiringTests : IDisposable
         IServiceProvider services = factory.Services;
         Assert.Equal(_rpcValue, services.GetRequiredService<ISecretsProvider>().Get("rpc_key"));
         Assert.Contains("secret-host", services.GetRequiredService<NpgsqlDataSource>().ConnectionString, StringComparison.Ordinal);
+        var unpooled = new NpgsqlConnectionStringBuilder(services.GetRequiredKeyedService<NpgsqlDataSource>(
+            SecretsServiceCollectionExtensions.UnpooledDataSourceKey).ConnectionString);
+        Assert.Equal("secret-host", unpooled.Host);
+        Assert.False(unpooled.Pooling);
         Assert.IsType<RedactingLoggerFactory>(services.GetRequiredService<ILoggerFactory>());
         Assert.IsType<RedactingBotLogSink>(services.GetRequiredService<IBotLogSink>());
         Assert.Equal("*** / ***", services.GetRequiredService<SecretRedactor>().Redact($"{_rpcValue} / {_key}"));

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -37,12 +38,37 @@ def strip_sql_comments(sql: str) -> str:
     return "\n".join(lines)
 
 
+_DOLLAR_QUOTE = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$")
+
+
+def split_sql_statements(sql: str) -> list[str]:
+    """Split on ``;`` except inside dollar-quoted bodies (``$$ ... $$``, ``$tag$ ... $tag$``).
+
+    Empty statements are dropped. An unterminated dollar quote raises ``ValueError``.
+    """
+    statements, start, pos = [], 0, 0
+    while True:
+        quote = _DOLLAR_QUOTE.search(sql, pos)
+        semicolon = sql.find(";", pos)
+        if semicolon >= 0 and (quote is None or semicolon < quote.start()):
+            statements.append(sql[start:semicolon])
+            start = pos = semicolon + 1
+        elif quote is not None:
+            close = sql.find(quote.group(), quote.end())
+            if close < 0:
+                raise ValueError(f"unterminated dollar quote {quote.group()}")
+            pos = close + len(quote.group())
+        else:
+            statements.append(sql[start:])
+            break
+    return [s.strip() for s in statements if s.strip()]
+
+
 def _apply_migrations(engine: Engine, files: list[Path]) -> None:
     for sql_file in files:
-        for raw in strip_sql_comments(sql_file.read_text("utf-8")).split(";"):
-            if statement := raw.strip():
-                with engine.begin() as conn:
-                    conn.exec_driver_sql(statement)
+        for statement in split_sql_statements(strip_sql_comments(sql_file.read_text("utf-8"))):
+            with engine.begin() as conn:
+                conn.exec_driver_sql(statement)
 
 
 def _postgres_container_class():

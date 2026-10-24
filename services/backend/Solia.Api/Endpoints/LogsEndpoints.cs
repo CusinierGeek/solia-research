@@ -55,7 +55,10 @@ public static class LogsEndpoints
             .Take(take)
             .ToListAsync(cancellationToken);
 
-        return rows.Select(l => new LogDto(l.Id, l.Ts, l.Service, l.Level, l.Message,
-            l.Context is null ? null : new RawJson(l.Context))).ToList();
+        return rows.Select(ToDto).ToList();
     }
+
+    /// <summary>The wire shape of a <c>logs</c> row; shared with the live hub's <c>log_written</c>.</summary>
+    internal static LogDto ToDto(LogEntry l) =>
+        new(l.Id, l.Ts, l.Service, l.Level, l.Message, l.Context is null ? null : new RawJson(l.Context));
 }

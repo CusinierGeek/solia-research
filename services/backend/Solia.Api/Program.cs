@@ -3,6 +3,7 @@ using Solia.Api.Bot;
 using Solia.Api.Endpoints;
 using Solia.Api.Health;
 using Solia.Api.Hosting;
+using Solia.Api.Live;
 using Solia.Api.Logging;
 using Solia.Api.Middleware;
 using Solia.Api.OpenApi;
@@ -50,6 +51,10 @@ builder.Logging.AddSecretRedaction();
 // --- Health: database + ai-service readiness checks (/health, /health/ready); /health/live checks nothing ---
 builder.Services.AddSoliaHealthChecks();
 
+// --- Live hub (/hubs/live): SignalR push of new predictions, trades, logs and stats changes to the dashboard,
+// fed by Postgres LISTEN/NOTIFY so rows from every process count (docs/API-CONTRACTS.md, "Live hub") ---
+builder.Services.AddLiveHub();
+
 // --- OpenAPI document (served in Development), with the public base URL as its server ---
 builder.Services.AddOpenApi(options => options.AddDocumentTransformer<ApiServerDocumentTransformer>());
 
@@ -66,6 +71,9 @@ if (app.Environment.IsDevelopment())
 
 // Probes: /health (every check), /health/ready (DB + ai-service), /health/live (dependency-free).
 app.MapHealthEndpoints();
+
+// Live push: outside the versioned REST surface.
+app.MapLiveHub();
 
 // Versioned public surface: read/query endpoints and the AI-proxy endpoints (/predict, /model/*). Any of them
 // can fail with the 500 envelope; each documents its own 4xx/5xx on top.

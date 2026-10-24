@@ -27,6 +27,24 @@ public class PostgresLoggerProviderTests
         Assert.Equal("Solia.Api.Test", ctx["category"]);
     }
 
+    [Fact]
+    public async Task Entries_logged_inside_a_suppression_scope_never_reach_the_sink_whatever_their_category()
+    {
+        var sink = new CapturingSink();
+        using PostgresLoggerProvider provider = Provider(sink);
+
+        using (PostgresLoggerProvider.Suppress())
+        {
+            provider.CreateLogger("Microsoft.EntityFrameworkCore.Query").LogError("read failed");
+            await Task.Run(() => provider.CreateLogger("Npgsql").LogError("flowed into a child task"));
+        }
+
+        provider.CreateLogger("cat").LogWarning("after the scope");
+
+        Assert.Equal("after the scope", (await sink.NextAsync()).Message);
+        Assert.False(PostgresLoggerProvider.IsSuppressed);
+    }
+
     [Theory]
     [InlineData(LogLevel.Trace, LogSeverity.Debug)]
     [InlineData(LogLevel.Debug, LogSeverity.Debug)]

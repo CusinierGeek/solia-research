@@ -16,6 +16,13 @@ namespace Solia.Api.Hosting;
 public static class SecretsServiceCollectionExtensions
 {
     /// <summary>
+    /// Key of a second, <em>unpooled</em> <see cref="NpgsqlDataSource"/> over the same database, for connections
+    /// held for the life of the process (the live hub's LISTEN): they never take a slot from the shared pool the
+    /// bot, EF and the log sink write through, and closing one really closes it (its LISTEN goes with it).
+    /// </summary>
+    public const string UnpooledDataSourceKey = "unpooled";
+
+    /// <summary>
     /// Registers the secrets provider (decrypted once, on first resolve — the logging pipeline resolves it while
     /// the host is built, so a missing key, wrong key or tampered file fails startup) and the secrets-aware data
     /// source. Call it before anything else registers the data source or the bot's log sink
@@ -31,12 +38,16 @@ public static class SecretsServiceCollectionExtensions
             ISecretsProvider secrets = sp.GetRequiredService<ISecretsProvider>();
             return SecretRedactor.For(secrets, [configuration[MasterKey.EnvironmentKey], .. DerivedValues(secrets)]);
         });
-        services.TryAddSingleton(sp => NpgsqlDataSource.Create(ResolveConnectionString(
-            DbConnectionSettings.Resolve(key => configuration[key]), sp.GetRequiredService<ISecretsProvider>())));
+        services.TryAddSingleton(sp => NpgsqlDataSource.Create(ConnectionString(sp, configuration)));
+        services.TryAddKeyedSingleton(UnpooledDataSourceKey, (sp, _) => NpgsqlDataSource.Create(
+            new NpgsqlConnectionStringBuilder(ConnectionString(sp, configuration)) { Pooling = false }.ConnectionString));
         services.TryAddSingleton<IBotLogSink>(sp => new RedactingBotLogSink(
             new PostgresBotLogSink(sp.GetRequiredService<NpgsqlDataSource>()), sp.GetRequiredService<SecretRedactor>()));
         return services;
     }
+
+    private static string ConnectionString(IServiceProvider services, IConfiguration configuration) =>
+        ResolveConnectionString(DbConnectionSettings.Resolve(key => configuration[key]), services.GetRequiredService<ISecretsProvider>());
 
     /// <summary>
     /// The sensitive parts of composite secrets, redacted on their own: the password inside a
