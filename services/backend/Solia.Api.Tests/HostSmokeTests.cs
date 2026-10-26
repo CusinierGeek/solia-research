@@ -100,6 +100,31 @@ public class HostSmokeTests
     }
 
     [Fact]
+    public async Task Root_redirects_to_the_swagger_ui_in_development()
+    {
+        using WebApplicationFactory<Program> factory = Factory("Development");
+        HttpClient client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        HttpResponseMessage response = await client.GetAsync("/");
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.Equal("/swagger", response.Headers.Location?.OriginalString);
+    }
+
+    [Fact]
+    public async Task Root_is_the_not_found_envelope_outside_development()
+    {
+        using WebApplicationFactory<Program> factory = Factory("Production");
+        HttpClient client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        HttpResponseMessage response = await client.GetAsync("/");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        using JsonDocument doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("not_found", doc.RootElement.GetProperty("error").GetProperty("code").GetString());
+    }
+
+    [Fact]
     public void Invalid_base_url_fails_at_startup()
     {
         using WebApplicationFactory<Program> factory = Factory("Production", ("Api:BaseUrl", "not-a-url"));

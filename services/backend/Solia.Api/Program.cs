@@ -67,6 +67,8 @@ if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
     app.UseSwaggerUI(options => options.SwaggerEndpoint("/openapi/v1.json", "Solia backend API v1"));
+    // Whatever launches the host (IDE multi-startup, browser) lands on the Swagger UI instead of a 404.
+    app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription();
 }
 
 // Probes: /health (every check), /health/ready (DB + ai-service), /health/live (dependency-free).
