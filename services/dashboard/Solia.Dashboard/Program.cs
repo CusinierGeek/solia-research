@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using MudBlazor.Services;
+using Solia.Dashboard.Api;
 using Solia.Dashboard.Components;
 using Solia.Dashboard.Configuration;
 
@@ -7,6 +8,9 @@ var builder = WebApplication.CreateBuilder(args);
 
 // --- Options: Backend:BaseUrl (+ flat BACKEND_URL), validated at startup — a missing/invalid URL fails fast ---
 builder.Services.AddDashboardOptions(builder.Configuration);
+
+// --- Backend REST client: typed ISoliaApiClient, bounded by timeouts, one retry on transient failures ---
+builder.Services.AddSoliaApiClient();
 
 // --- UI: Blazor Server (interactive server render mode) + MudBlazor component library ---
 builder.Services.AddRazorComponents()

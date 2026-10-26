@@ -14,8 +14,36 @@ public sealed class BackendOptions
     /// <summary>Absolute http(s) URL of the backend, e.g. <c>http://localhost:8080</c> or <c>http://backend:8080</c>.</summary>
     public string BaseUrl { get; set; } = string.Empty;
 
+    /// <summary>Bound on one HTTP attempt (connection + full response body).</summary>
+    public TimeSpan AttemptTimeout { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>Bound on a whole call, the retry included; must leave room for two attempts and the retry delay.</summary>
+    public TimeSpan TotalTimeout { get; set; } = TimeSpan.FromSeconds(12);
+
     /// <summary>True when <see cref="BaseUrl"/> is an absolute http(s) URL.</summary>
     public bool HasValidBaseUrl() =>
         Uri.TryCreate(BaseUrl, UriKind.Absolute, out Uri? uri)
         && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
+    /// <summary>The nominal delay before the one retry.</summary>
+    public static readonly TimeSpan RetryDelay = TimeSpan.FromMilliseconds(200);
+
+    /// <summary>The longest the retry waits: <see cref="RetryDelay"/> plus Polly's ±25 % constant-backoff jitter.</summary>
+    public static readonly TimeSpan MaxRetryDelay = RetryDelay * 1.25;
+
+    /// <summary>The range Polly's timeout strategy accepts; anything outside it fails when the pipeline is built.</summary>
+    public static readonly TimeSpan MinTimeout = TimeSpan.FromMilliseconds(10);
+
+    /// <inheritdoc cref="MinTimeout"/>
+    public static readonly TimeSpan MaxTimeout = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// True when both timeouts are within [<see cref="MinTimeout"/>, <see cref="MaxTimeout"/>] and
+    /// <see cref="TotalTimeout"/> fits two full attempts plus the jittered retry delay between them.
+    /// </summary>
+    public bool HasConsistentTimeouts() =>
+        IsInPollyRange(AttemptTimeout) && IsInPollyRange(TotalTimeout)
+        && TotalTimeout >= 2 * AttemptTimeout + MaxRetryDelay;
+
+    private static bool IsInPollyRange(TimeSpan timeout) => timeout >= MinTimeout && timeout <= MaxTimeout;
 }

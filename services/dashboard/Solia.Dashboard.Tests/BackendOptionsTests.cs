@@ -58,4 +58,36 @@ public class BackendOptionsTests
     public void Bad_flat_backend_url_is_rejected_even_with_a_valid_section() =>
         Assert.Throws<OptionsValidationException>(() =>
             Resolve(("Backend:BaseUrl", "http://localhost:8080"), ("BACKEND_URL", "backend")));
+
+    [Fact]
+    public void Default_timeouts_are_consistent()
+    {
+        BackendOptions options = Resolve(("Backend:BaseUrl", "http://localhost:8080"));
+
+        Assert.Equal((TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(12)), (options.AttemptTimeout, options.TotalTimeout));
+    }
+
+    [Theory]
+    [InlineData("00:00:00", "00:00:10")]
+    [InlineData("-00:00:01", "00:00:10")]
+    [InlineData("00:00:05", "00:00:09")]
+    [InlineData("00:00:05", "00:00:10")] // two attempts fit, the jittered retry delay between them does not
+    [InlineData("00:00:00.005", "00:00:10")] // below Polly's 10 ms minimum
+    [InlineData("00:00:05", "2.00:00:00")] // above Polly's 24 h maximum
+    public void Rejects_inconsistent_timeouts(string attempt, string total)
+    {
+        OptionsValidationException ex = Assert.Throws<OptionsValidationException>(() => Resolve(
+            ("Backend:BaseUrl", "http://localhost:8080"), ("Backend:AttemptTimeout", attempt), ("Backend:TotalTimeout", total)));
+
+        Assert.Contains(DashboardServiceCollectionExtensions.InvalidTimeoutsMessage, ex.Failures);
+    }
+
+    [Fact]
+    public void Accepts_two_attempts_plus_the_maximum_retry_delay()
+    {
+        BackendOptions options = Resolve(
+            ("Backend:BaseUrl", "http://localhost:8080"), ("Backend:AttemptTimeout", "00:00:05"), ("Backend:TotalTimeout", "00:00:10.250"));
+
+        Assert.Equal(TimeSpan.FromSeconds(10.25), options.TotalTimeout);
+    }
 }

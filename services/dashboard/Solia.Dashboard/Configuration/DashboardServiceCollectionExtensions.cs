@@ -8,6 +8,11 @@ public static class DashboardServiceCollectionExtensions
     /// <summary>The validation failure message for a missing or malformed backend URL.</summary>
     public const string InvalidBaseUrlMessage = "Backend:BaseUrl (BACKEND_URL) must be an absolute http(s) URL.";
 
+    /// <summary>The validation failure message for inconsistent backend timeouts.</summary>
+    public const string InvalidTimeoutsMessage =
+        "Backend:AttemptTimeout and Backend:TotalTimeout must be between 10 ms and 24 h, and TotalTimeout at least "
+        + "2 × AttemptTimeout + 250 ms (two attempts and the jittered retry delay).";
+
     // The dashboard's flat keys from .env.example and the option paths they override. Add a row to support a new one.
     private static readonly FlatAlias[] Aliases =
     [
@@ -25,6 +30,7 @@ public static class DashboardServiceCollectionExtensions
             .Bind(configuration.GetSection(BackendOptions.Section))
             .Configure(options => ApplyFlatAliases(configuration, options))
             .Validate(o => o.HasValidBaseUrl(), InvalidBaseUrlMessage)
+            .Validate(o => o.HasConsistentTimeouts(), InvalidTimeoutsMessage)
             .ValidateOnStart();
         return services;
     }
