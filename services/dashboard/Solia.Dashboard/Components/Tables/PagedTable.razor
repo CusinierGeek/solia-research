@@ -4,7 +4,7 @@
     on screen. The host owns the page state (typically in the URL): it passes Page / PageSize, reloads through
     ReloadKey, and is told of a pager click through PageChanged / PageSizeChanged. The pager describes the page on
     screen (until the next one arrives, under a progress bar), and a request the backend rejects offers a way back
-    to the first page.
+    to the first page. A live host can lay pushed rows over the page through View and re-fetch it with ReloadAsync.
 
         <PagedTable TItem="TradeDto" Load="LoadAsync" ReloadKey="_query" Page="_page" PageSize="_pageSize"
                     PageChanged="GoToPage" PageSizeChanged="SetPageSize" EmptyMessage="No trades match.">
@@ -16,7 +16,7 @@
 @using Solia.Dashboard.Api
 @using Solia.Dashboard.Formatting
 
-<AsyncContent TItem="PagedResult<TItem>" Load="Load" ReloadKey="ReloadKey" IsEmpty="r => r.Total == 0"
+<AsyncContent @ref="_content" TItem="PagedResult<TItem>" Load="Load" ReloadKey="ReloadKey" IsEmpty="r => Shown(r).Total == 0"
               EmptyMessage="@EmptyMessage" ErrorMessage="@ErrorMessage" InvalidMessage="Paging.InvalidRequestMessage"
               LoadingVariant="LoadingVariant.Skeleton" ShowRefreshing="true">
     <InvalidActions>
@@ -27,7 +27,10 @@
         }
     </InvalidActions>
     <ChildContent>
-        @if (context.Items.Count == 0)
+        @{
+            PagedResult<TItem> result = Shown(context);
+        }
+        @if (result.Items.Count == 0)
         {
             <MudText Typo="Typo.body2" Class="solia-past-end pa-4 mud-text-secondary">
                 This page is past the end of the results.
@@ -40,18 +43,20 @@
                     <tr>@Header</tr>
                 </thead>
                 <tbody>
-                    @foreach (TItem item in context.Items)
+                    @foreach (TItem item in result.Items)
                     {
                         @Row(item)
                     }
                 </tbody>
             </MudSimpleTable>
         }
-        @Pager(context)
+        @Pager(result)
     </ChildContent>
 </AsyncContent>
 
 @code {
+    private AsyncContent<PagedResult<TItem>>? _content;
+
     /// <summary>Fetches the current page; receives a token cancelled on reload or when the table goes away.</summary>
     [Parameter, EditorRequired] public Func<CancellationToken, Task<PagedResult<TItem>>> Load { get; set; } = default!;
 
@@ -80,6 +85,17 @@
 
     /// <summary>Extra CSS classes for the table.</summary>
     [Parameter] public string? Class { get; set; }
+
+    /// <summary>
+    /// What to show of the fetched page, applied on every render (e.g. rows pushed live laid over it); the fetched
+    /// page as-is when null. The empty state goes by what it shows, so rows laid over an empty page replace it.
+    /// </summary>
+    [Parameter] public Func<PagedResult<TItem>, PagedResult<TItem>>? View { get; set; }
+
+    /// <summary>Re-fetches the current page, keeping it on screen until the new one arrives. Call it on the dispatcher.</summary>
+    public Task ReloadAsync() => _content?.ReloadAsync() ?? Task.CompletedTask;
+
+    private PagedResult<TItem> Shown(PagedResult<TItem> page) => View?.Invoke(page) ?? page;
 
     private RenderFragment Pager(PagedResult<TItem> result) => __builder =>
     {

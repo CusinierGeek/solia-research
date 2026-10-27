@@ -1,11 +1,9 @@
 @page "/predictions/history"
-@using System.Globalization
 @using Solia.Dashboard.Api
 @using Solia.Dashboard.Formatting
 @using Solia.Dashboard.Predictions
-@implements IDisposable
+@inherits UrlStatePage
 @inject ISoliaApiClient Api
-@inject NavigationManager Navigation
 
 <PageHeader Title="Prediction history" Description="Every prediction the model made, newest first." />
 
@@ -74,43 +72,12 @@
 </PagedTable>
 
 @code {
-    private const string Path = "predictions/history";
-
-    private const string InputFormat = "yyyy-MM-dd'T'HH:mm:ss";
-
     private PredictionHistoryState _state = PredictionHistoryState.Default;
     private PredictionHistoryQuery _query = new();
 
-    // The URL is the source of truth: the filter bar and the pager only navigate, and every navigation (theirs, the
-    // browser's back/forward, a shared link) is read back from it. Navigating away to another page's URL is not:
-    // its query string means nothing here, and the page is about to go away.
-    protected override void OnInitialized()
-    {
-        ReadUrl();
-        Navigation.LocationChanged += OnLocationChanged;
-    }
+    protected override string Path => "predictions/history";
 
-    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
-    {
-        if (!IsThisPage(e.Location))
-        {
-            return;
-        }
-        _ = InvokeAsync(() =>
-        {
-            ReadUrl();
-            StateHasChanged();
-        });
-    }
-
-    private bool IsThisPage(string uri)
-    {
-        string relative = Navigation.ToBaseRelativePath(uri);
-        int end = relative.IndexOfAny(['?', '#']);
-        return string.Equals((end < 0 ? relative : relative[..end]).TrimEnd('/'), Path, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private void ReadUrl()
+    protected override void ReadUrl()
     {
         _state = PredictionHistoryState.FromUri(Navigation.Uri);
         _query = _state.ToQuery(); // a record: equal across navigations to the same view, so the table only reloads on a change
@@ -125,16 +92,5 @@
 
     private void SetPageSize(int pageSize) => Navigate(_state with { PageSize = pageSize, Page = 1 });
 
-    private void Navigate(PredictionHistoryState state) =>
-        Navigation.NavigateTo(Navigation.GetUriWithQueryParameters(state.ToQueryParameters()));
-
-    private static string Wire<T>(T? value) where T : struct, Enum => value is { } v ? QueryValues.Format(v) : "All";
-
-    private static string? ToInput(DateTimeOffset? ts) =>
-        ts?.UtcDateTime.ToString(InputFormat, CultureInfo.InvariantCulture);
-
-    // A datetime-local value has no zone: it is read as UTC, like the column it filters.
-    private static DateTimeOffset? FromInput(string? value) => QueryValues.ParseTimestamp(value);
-
-    public void Dispose() => Navigation.LocationChanged -= OnLocationChanged;
+    private void Navigate(PredictionHistoryState state) => Navigate(state.ToQueryParameters());
 }

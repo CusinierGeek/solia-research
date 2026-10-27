@@ -1,3 +1,4 @@
+using System.Globalization;
 using Solia.Dashboard.Api;
 
 namespace Solia.Dashboard.Components.Tables;
@@ -44,9 +45,19 @@ public static class Paging
         return (first, first + result.Items.Count - 1);
     }
 
+    /// <summary>
+    /// The page and page size a URL's <c>page</c> / <c>pageSize</c> values ask for: a value that isn't a positive
+    /// integer is ignored (page 1, the default size), and a page size over <see cref="MaxPageSize"/> is capped to it.
+    /// </summary>
+    public static (int Page, int PageSize) FromQuery(string? page, string? pageSize) =>
+        (PositiveInt(page) ?? 1, Math.Min(PositiveInt(pageSize) ?? DefaultPageSize, MaxPageSize));
+
     /// <summary>The message for a request the backend rejected as invalid (bad filter, page too deep), else null.</summary>
     public static string? InvalidRequestMessage(Exception exception) =>
         exception is BackendErrorException { Code: "invalid_request" } invalid
             ? $"Check the filters: {invalid.Message}"
             : null;
+
+    private static int? PositiveInt(string? value) =>
+        int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out int n) && n > 0 ? n : null;
 }

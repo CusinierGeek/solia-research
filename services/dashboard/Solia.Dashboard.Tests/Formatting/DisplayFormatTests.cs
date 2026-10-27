@@ -42,6 +42,36 @@ public class DisplayFormatTests
     }
 
     [Fact]
+    public void Gains_and_losses_are_signed()
+    {
+        Assert.Equal("+0.0123", DisplayFormat.SignedAmount(0.012300m));
+        Assert.Equal("-0.0000000045", DisplayFormat.SignedAmount(-0.0000000045m));
+        Assert.Equal("0", DisplayFormat.SignedAmount(0m));
+        Assert.Equal("—", DisplayFormat.SignedAmount(null));
+    }
+
+    [Theory]
+    [InlineData(0.25, "+25.0%")]
+    [InlineData(-0.034, "-3.4%")]
+    [InlineData(0.0, "0.0%")]
+    [InlineData(null, "—")]
+    [InlineData(double.NaN, "—")]
+    public void SignedPercent(double? ratio, string expected) => Assert.Equal(expected, DisplayFormat.SignedPercent(ratio));
+
+    [Theory]
+    [InlineData(0, "0s")]
+    [InlineData(45, "45s")]
+    [InlineData(187, "3m 07s")]
+    [InlineData(3900, "1h 05m")]
+    [InlineData(2 * 86400 + 3 * 3600 + 59, "2d 03h")]
+    [InlineData(null, "—")]
+    [InlineData(-1, "—")]
+    public void Duration(int? seconds, string expected) => Assert.Equal(expected, DisplayFormat.Duration(seconds));
+
+    [Fact]
+    public void A_missing_timestamp_is_the_placeholder() => Assert.Equal("—", DisplayFormat.Timestamp((DateTimeOffset?)null));
+
+    [Fact]
     public void Formats_are_culture_invariant()
     {
         CultureInfo previous = CultureInfo.CurrentCulture;
@@ -49,6 +79,8 @@ public class DisplayFormatTests
         {
             CultureInfo.CurrentCulture = new CultureInfo("fr-CA");
             Assert.Equal("81.2%", DisplayFormat.Percent(0.8123));
+            Assert.Equal("-3.4%", DisplayFormat.SignedPercent(-0.034));
+            Assert.Equal("+1.5", DisplayFormat.SignedAmount(1.5m));
         }
         finally
         {

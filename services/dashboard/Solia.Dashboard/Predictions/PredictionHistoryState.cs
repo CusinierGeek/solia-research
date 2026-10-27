@@ -1,4 +1,3 @@
-using System.Globalization;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Primitives;
 using Solia.Dashboard.Api;
@@ -45,8 +44,8 @@ public sealed record PredictionHistoryState(PredictionHistoryFilter Filter, int 
             QueryValues.Parse<TradeStrategy>(Get("strategy")),
             QueryValues.ParseTimestamp(Get("from")),
             QueryValues.ParseTimestamp(Get("to")));
-        int pageSize = Math.Min(PositiveInt(Get("pageSize")) ?? Paging.DefaultPageSize, Paging.MaxPageSize);
-        return new(filter, PositiveInt(Get("page")) ?? 1, pageSize);
+        (int page, int pageSize) = Paging.FromQuery(Get("page"), Get("pageSize"));
+        return new(filter, page, pageSize);
     }
 
     /// <summary>
@@ -72,6 +71,4 @@ public sealed record PredictionHistoryState(PredictionHistoryFilter Filter, int 
         Page = Page,
         PageSize = PageSize,
     };
-
-    private static int? PositiveInt(string? value) => int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out int n) && n > 0 ? n : null;
 }

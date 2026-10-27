@@ -88,8 +88,14 @@
     /// <summary>What the data depends on (a filter, a range…); a change reloads it.</summary>
     [Parameter] public object? ReloadKey { get; set; }
 
-    /// <summary>Where the component currently is in the load cycle.</summary>
-    public AsyncLoadState State { get; private set; } = AsyncLoadState.Loading;
+    /// <summary>
+    /// Where the component currently is in the load cycle. Whether loaded content is empty is checked on every
+    /// render, so content that changes after its load (e.g. live rows laid over it) can leave or enter the empty state.
+    /// </summary>
+    public AsyncLoadState State =>
+        _state == AsyncLoadState.Content && (_value is null || (IsEmpty?.Invoke(_value) ?? false)) ? AsyncLoadState.Empty : _state;
+
+    private AsyncLoadState _state = AsyncLoadState.Loading;
 
     private TItem? _value;
     private string? _invalidMessage;
@@ -136,7 +142,7 @@
 
         if (State is AsyncLoadState.Error or AsyncLoadState.Invalid)
         {
-            State = AsyncLoadState.Loading;
+            _state = AsyncLoadState.Loading;
             StateHasChanged();
         }
         else if (ShowRefreshing && !_refreshing && State is AsyncLoadState.Content or AsyncLoadState.Empty)
@@ -153,7 +159,7 @@
                 return;
             }
             _value = value;
-            State = value is null || (IsEmpty?.Invoke(value) ?? false) ? AsyncLoadState.Empty : AsyncLoadState.Content;
+            _state = AsyncLoadState.Content;
         }
         catch (Exception) when (cts.IsCancellationRequested)
         {
@@ -164,18 +170,18 @@
         {
             // Cancelled by something else, typically the HttpClient timeout: the backend didn't answer in time.
             Logger.LogWarning("Loading {Type} for the dashboard timed out.", typeof(TItem).Name);
-            State = AsyncLoadState.Error;
+            _state = AsyncLoadState.Error;
         }
         catch (Exception ex) when (InvalidMessage?.Invoke(ex) is { } message)
         {
             Logger.LogInformation("The backend rejected the {Type} request: {Message}", typeof(TItem).Name, message);
             _invalidMessage = message;
-            State = AsyncLoadState.Invalid;
+            _state = AsyncLoadState.Invalid;
         }
         catch (Exception ex)
         {
             Logger.LogWarning(ex, "Loading {Type} for the dashboard failed.", typeof(TItem).Name);
-            State = AsyncLoadState.Error;
+            _state = AsyncLoadState.Error;
         }
         _refreshing = false;
         StateHasChanged();

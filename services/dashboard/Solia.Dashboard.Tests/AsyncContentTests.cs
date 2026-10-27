@@ -44,6 +44,24 @@ public class AsyncContentTests : MudTestContext
     }
 
     [Fact]
+    public void Emptiness_is_rechecked_on_every_render()
+    {
+        bool overlaid = false;
+        IRenderedComponent<AsyncContent<string[]>> cut = Render<AsyncContent<string[]>>(p => p
+            .Add(c => c.Load, _ => Task.FromResult(Array.Empty<string>()))
+            .Add(c => c.IsEmpty, items => items.Length == 0 && !overlaid)
+            .Add(c => c.EmptyMessage, "Nothing here.")
+            .Add(c => c.ChildContent, (RenderFragment<string[]>)(_ => b => b.AddMarkupContent(0, "<p id=\"shown\">shown</p>"))));
+        cut.WaitForAssertion(() => Assert.Equal(AsyncLoadState.Empty, cut.Instance.State));
+
+        overlaid = true; // e.g. a row pushed live on top of an empty page
+        cut.Render();
+
+        Assert.Equal(AsyncLoadState.Content, cut.Instance.State);
+        Assert.NotNull(cut.Find("#shown"));
+    }
+
+    [Fact]
     public void Null_result_shows_the_empty_state()
     {
         IRenderedComponent<AsyncContent<string[]>> cut = RenderWith(_ => Task.FromResult<string[]>(null!));

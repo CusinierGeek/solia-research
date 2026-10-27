@@ -38,9 +38,17 @@ internal sealed class FakeSoliaApiClient : ISoliaApiClient
     public Task<PagedResult<TokenHistoryDto>> GetTokenHistoryAsync(TokenHistoryQuery? query = null, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
+    public Func<TradeHistoryQuery, CancellationToken, Task<PagedResult<TradeDto>>> TradeHistory { get; set; } =
+        (q, _) => Task.FromResult(new PagedResult<TradeDto>([], q.Page ?? 1, q.PageSize ?? 50, 0));
 
-    public Task<PagedResult<TradeDto>> GetTradeHistoryAsync(TradeHistoryQuery? query = null, CancellationToken cancellationToken = default) =>
-        throw new NotSupportedException();
+    public List<TradeHistoryQuery> TradeHistoryCalls { get; } = [];
+
+    public Task<PagedResult<TradeDto>> GetTradeHistoryAsync(TradeHistoryQuery? query = null, CancellationToken cancellationToken = default)
+    {
+        query ??= new();
+        TradeHistoryCalls.Add(query);
+        return TradeHistory(query, cancellationToken);
+    }
 
     public Task<WinRateResponse> GetWinRateAsync(StatsWindow? window = null, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();

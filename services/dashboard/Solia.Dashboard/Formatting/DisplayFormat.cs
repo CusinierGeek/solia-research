@@ -31,9 +31,37 @@ public static class DisplayFormat
     public static string Amount(decimal? value) =>
         value is { } v ? v.ToString("0.############################", CultureInfo.InvariantCulture) : Missing;
 
+    /// <summary>An exact gain or loss, signed: <c>+0.0123</c>, <c>-0.0045</c>, <c>0</c>.</summary>
+    public static string SignedAmount(decimal? value) =>
+        value is { } v ? (v > 0 ? "+" : "") + Amount(v) : Missing;
+
+    /// <summary>A ratio as a signed percentage with one decimal: <c>0.25</c> → <c>+25.0%</c>, <c>-0.034</c> → <c>-3.4%</c>.</summary>
+    public static string SignedPercent(double? ratio) =>
+        ratio is { } r && double.IsFinite(r) ? r.ToString("+0.0%;-0.0%;0.0%", CultureInfo.InvariantCulture) : Missing;
+
+    /// <summary>A duration in seconds, in its two largest units: <c>45s</c>, <c>3m 07s</c>, <c>1h 05m</c>, <c>2d 03h</c>.</summary>
+    public static string Duration(int? seconds)
+    {
+        if (seconds is not { } s || s < 0)
+        {
+            return Missing;
+        }
+        var d = TimeSpan.FromSeconds(s);
+        return s switch
+        {
+            < 60 => $"{s}s",
+            < 3600 => $"{d.Minutes}m {d.Seconds:00}s",
+            < 86400 => $"{d.Hours}h {d.Minutes:00}m",
+            _ => $"{(int)d.TotalDays}d {d.Hours:00}h",
+        };
+    }
+
     /// <summary>A UTC timestamp to the second: <c>2026-10-27 11:58:00</c>.</summary>
     public static string Timestamp(DateTimeOffset ts) =>
         ts.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+
+    /// <summary><see cref="Timestamp(DateTimeOffset)"/>, or <see cref="Missing"/> when there is none.</summary>
+    public static string Timestamp(DateTimeOffset? ts) => ts is { } t ? Timestamp(t) : Missing;
 
     /// <summary>How long ago <paramref name="ts"/> was, in its largest unit: <c>now</c>, <c>12s</c>, <c>3m</c>, <c>2h</c>, <c>5d</c>.</summary>
     public static string Age(DateTimeOffset ts, DateTimeOffset now)

@@ -1,5 +1,252 @@
 @page "/trades"
+@using System.Numerics
+@using Solia.Dashboard.Api
+@using Solia.Dashboard.Formatting
+@using Solia.Dashboard.Trades
+@inherits UrlStatePage
+@inject ISoliaApiClient Api
+@inject ILiveFeed LiveFeed
 
-<PageHeader Title="Trade history" Description="Simulated trades opened and closed by the paper-trading bot." />
+<PageHeader Title="Trade history" Description="Simulated trades opened and closed by the paper-trading bot, newest first." />
 
-<EmptyState Message="This view lands in a later Sprint-5 task." Icon="@Icons.Material.Outlined.Construction" />
+<FilterBar TFilter="TradeHistoryFilter" Value="_state.Filter" Empty="TradeHistoryFilter.None" OnApply="ApplyFilter">
+    <MudSelect T="TradeStatus?" Label="Status" Value="context.Draft.Status" Variant="Variant.Outlined"
+               Margin="Margin.Dense" Clearable="true" Class="solia-filter-status" ToStringFunc="Wire"
+               ValueChanged="v => context.Edit(f => f with { Status = v })">
+        @foreach (TradeStatus status in Enum.GetValues<TradeStatus>())
+        {
+            <MudSelectItem T="TradeStatus?" Value="status">@QueryValues.Format(status)</MudSelectItem>
+        }
+    </MudSelect>
+    <MudTextField T="string" Label="Opened from (UTC)" InputType="InputType.DateTimeLocal" ShrinkLabel="true"
+                  Variant="Variant.Outlined" Margin="Margin.Dense" Class="solia-filter-from" Immediate="true"
+                  Value="ToInput(context.Draft.From)" ValueChanged="v => context.Edit(f => f with { From = FromInput(v) })" />
+    <MudTextField T="string" Label="Opened to (UTC)" InputType="InputType.DateTimeLocal" ShrinkLabel="true"
+                  Variant="Variant.Outlined" Margin="Margin.Dense" Class="solia-filter-to" Immediate="true"
+                  Value="ToInput(context.Draft.To)" ValueChanged="v => context.Edit(f => f with { To = FromInput(v) })" />
+</FilterBar>
+
+@if (_hasNewActivity)
+{
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true" Class="solia-new-trades mb-3">
+        New trades since this page loaded.
+        <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Primary" Class="solia-new-trades__refresh ml-2"
+                   OnClick="RefreshAsync">Refresh</MudButton>
+    </MudAlert>
+}
+
+<PagedTable @ref="_table" TItem="TradeDto" Load="LoadAsync" ReloadKey="_query" Page="_state.Page" PageSize="_state.PageSize"
+            PageChanged="GoToPage" PageSizeChanged="SetPageSize" View="View" Class="solia-trade-history"
+            EmptyMessage="No trades match these filters." ErrorMessage="Could not load the trade history from the backend.">
+    <Header>
+        <th>Id</th>
+        <th>Token</th>
+        <th>Opened (UTC)</th>
+        <th>Closed (UTC)</th>
+        <th>Entry</th>
+        <th>Exit</th>
+        <th>Size</th>
+        <th>Duration</th>
+        <th>P&amp;L</th>
+        <th>P&amp;L %</th>
+        <th>Strategy</th>
+        <th>Confidence</th>
+        <th>Exit reason</th>
+        <th>Status</th>
+        <th>Prediction</th>
+    </Header>
+    <Row>
+        <tr @key="context.Id" data-id="@context.Id" data-status="@context.Status">
+            <td data-col="id">@context.Id</td>
+            <td class="solia-token" data-col="token" title="@context.Mint">
+                <span class="solia-mint">@DisplayFormat.ShortMint(context.Mint)</span>
+            </td>
+            <td data-col="opened">@DisplayFormat.Timestamp(context.OpenedAt)</td>
+            <td data-col="closed">@DisplayFormat.Timestamp(context.ClosedAt)</td>
+            <td data-col="entry">@DisplayFormat.Amount(context.EntryPrice)</td>
+            <td data-col="exit">@DisplayFormat.Amount(context.ExitPrice)</td>
+            <td data-col="size">@DisplayFormat.Amount(context.Size)</td>
+            <td data-col="duration">@DisplayFormat.Duration(context.DurationSec)</td>
+            <td data-col="pnl" class="@PnlClass(context.Pnl)">@DisplayFormat.SignedAmount(context.Pnl)</td>
+            <td data-col="pnl-pct" class="@PnlClass(context.PnlPct)">@DisplayFormat.SignedPercent(context.PnlPct)</td>
+            <td data-col="strategy"><StrategyChip Strategy="@context.Strategy" /></td>
+            <td data-col="confidence">@DisplayFormat.Score(context.Confidence)</td>
+            <td data-col="exit-reason">@ExitReasonLabel(context.ExitReason)</td>
+            <td data-col="status">
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                         Color="@(context.Status == "open" ? Color.Info : Color.Default)">@context.Status</MudChip>
+            </td>
+            <td data-col="prediction">
+                @if (context.PredictionId is { } predictionId)
+                {
+                    <MudLink Href="@PredictionContext(context.Mint)" Typo="Typo.body2" Class="solia-prediction-link"
+                             title="Predictions for this token">#@predictionId</MudLink>
+                }
+                else
+                {
+                    @DisplayFormat.Missing
+                }
+            </td>
+        </tr>
+    </Row>
+</PagedTable>
+
+@code {
+    private readonly LiveTradeOverlay _overlay = new();
+    private readonly List<IDisposable> _subscriptions = [];
+    private PagedTable<TradeDto>? _table;
+    private TradeHistoryState _state = TradeHistoryState.Default;
+    private TradeHistoryQuery _query = new();
+    private (PagedResult<TradeDto> Page, long Mark, bool Live)? _fetched;
+    private bool _shownLive;
+    private bool _catchingUp;
+    private bool _hasNewActivity;
+    private bool _disposed;
+
+    protected override string Path => "trades";
+
+    protected override void ReadUrl()
+    {
+        _state = TradeHistoryState.FromUri(Navigation.Uri);
+        _query = _state.ToQuery(); // a record: equal across navigations to the same view, so the table only reloads on a change
+        _hasNewActivity = false;
+        if (!_state.IsLive)
+        {
+            _overlay.Clear();
+        }
+    }
+
+    // Fetches only run in the interactive circuit (never while prerendering), so the first one is where the feed is
+    // subscribed to — before it starts, so a trade pushed while it runs still goes on top of its page.
+    private void Subscribe()
+    {
+        if (_subscriptions.Count > 0 || _disposed)
+        {
+            return;
+        }
+        _subscriptions.Add(LiveFeed.Subscribe(LiveFeedEvents.TradeOpened, t => InvokeAsync(() => OnTradeAsync(t, opened: true))));
+        _subscriptions.Add(LiveFeed.Subscribe(LiveFeedEvents.TradeClosed, t => InvokeAsync(() => OnTradeAsync(t, opened: false))));
+        _subscriptions.Add(LiveFeed.SubscribeResynced(() => InvokeAsync(OnResyncedAsync)));
+    }
+
+    private async Task<PagedResult<TradeDto>> LoadAsync(CancellationToken cancellationToken)
+    {
+        Subscribe();
+        // Pushes up to here are in the page about to be fetched; later ones still go on top of it.
+        long mark = _overlay.Mark;
+        bool live = _state.IsLive;
+        PagedResult<TradeDto> page = await Api.GetTradeHistoryAsync(_query, cancellationToken);
+        if (!cancellationToken.IsCancellationRequested) // a superseded fetch's page is discarded
+        {
+            _fetched = (page, mark, live);
+        }
+        return page;
+    }
+
+    // A fetched page only takes effect once it is on screen: until then the previous page (and the pushes laid over
+    // it, if it was the live one) stays as it was, whatever the URL already says.
+    private PagedResult<TradeDto> View(PagedResult<TradeDto> page)
+    {
+        if (_fetched is { } fetched && ReferenceEquals(fetched.Page, page))
+        {
+            _overlay.Forget(fetched.Mark);
+            _shownLive = fetched.Live;
+            _fetched = null;
+        }
+        return _shownLive ? _overlay.Apply(page) : page;
+    }
+
+    // The newest unfiltered page follows the bot as it trades. Any other page would need the filters re-checked
+    // (and its rows would shift under the reader), so it only says something changed.
+    private async Task OnTradeAsync(TradeDto trade, bool opened)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+        if (!_state.IsLive)
+        {
+            _hasNewActivity = true;
+            StateHasChanged();
+            return;
+        }
+
+        if (opened)
+        {
+            _overlay.Opened(trade);
+        }
+        else
+        {
+            _overlay.Closed(trade);
+        }
+        StateHasChanged();
+
+        // A page left open long enough piles up pushes: re-fetch it, which forgets the ones it reflects.
+        if (_overlay.IsFull && !_catchingUp && _table is not null)
+        {
+            _catchingUp = true;
+            try
+            {
+                await _table.ReloadAsync();
+            }
+            finally
+            {
+                _catchingUp = false;
+            }
+        }
+    }
+
+    // Events sent while the feed was down are lost: the live page re-fetches, any other may be out of date.
+    private Task OnResyncedAsync()
+    {
+        if (_disposed)
+        {
+            return Task.CompletedTask;
+        }
+        if (_state.IsLive)
+        {
+            return _table?.ReloadAsync() ?? Task.CompletedTask;
+        }
+        _hasNewActivity = true;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private Task RefreshAsync()
+    {
+        _hasNewActivity = false;
+        return _table?.ReloadAsync() ?? Task.CompletedTask;
+    }
+
+    private void ApplyFilter(TradeHistoryFilter filter) => Navigate(_state with { Filter = filter, Page = 1 });
+
+    private void GoToPage(int page) => Navigate(_state with { Page = page });
+
+    private void SetPageSize(int pageSize) => Navigate(_state with { PageSize = pageSize, Page = 1 });
+
+    private void Navigate(TradeHistoryState state) => Navigate(state.ToQueryParameters());
+
+    // The prediction history has no id filter: the token's predictions around the trade are its context.
+    private static string PredictionContext(string mint) =>
+        QueryValues.Build("predictions/history", new PredictionHistoryQuery { Mint = mint }.ToParameters());
+
+    private static string? PnlClass<T>(T? value) where T : struct, INumber<T> =>
+        value is not { } v ? null : v > T.Zero ? "solia-pnl--gain" : v < T.Zero ? "solia-pnl--loss" : null;
+
+    private static string ExitReasonLabel(string? reason) => reason switch
+    {
+        null or "" => DisplayFormat.Missing,
+        "tp" => "Take profit",
+        "sl" => "Stop loss",
+        "signal" => "Sell signal",
+        "timeout" => "Timeout",
+        _ => reason,
+    };
+
+    public override void Dispose()
+    {
+        _disposed = true;
+        _subscriptions.ForEach(s => s.Dispose());
+        base.Dispose();
+    }
+}

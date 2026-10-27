@@ -57,4 +57,13 @@ public class PagingTests
         Assert.Null(Paging.InvalidRequestMessage(new BackendUnavailableException()));
         Assert.Null(Paging.InvalidRequestMessage(new InvalidOperationException()));
     }
+
+    [Theory]
+    [InlineData(null, null, 1, Paging.DefaultPageSize)]
+    [InlineData("3", "25", 3, 25)]
+    [InlineData("0", "-5", 1, Paging.DefaultPageSize)]
+    [InlineData("two", "1e3", 1, Paging.DefaultPageSize)]
+    [InlineData("2", "5000", 2, Paging.MaxPageSize)]
+    public void Url_paging_ignores_junk_and_caps_the_page_size(string? page, string? pageSize, int expectedPage, int expectedSize) =>
+        Assert.Equal((expectedPage, expectedSize), Paging.FromQuery(page, pageSize));
 }
