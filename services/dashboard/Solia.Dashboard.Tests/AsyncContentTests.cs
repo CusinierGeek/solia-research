@@ -241,4 +241,30 @@ public class AsyncContentTests : MudTestContext
 
         Assert.True(token.IsCancellationRequested);
     }
+
+    [Fact]
+    public void A_failure_recognised_as_invalid_shows_its_message_as_a_warning_without_retry()
+    {
+        IRenderedComponent<AsyncContent<string[]>> cut = Render<AsyncContent<string[]>>(p => p
+            .Add(c => c.Load, _ => Task.FromException<string[]>(new ArgumentException("bad")))
+            .Add(c => c.InvalidMessage, ex => ex is ArgumentException ? $"Fix it: {ex.Message}" : null)
+            .Add(c => c.ChildContent, (RenderFragment<string[]>)(_ => _ => { })));
+
+        cut.WaitForAssertion(() => Assert.Equal(AsyncLoadState.Invalid, cut.Instance.State));
+        Assert.Contains("Fix it: bad", cut.Find(".solia-invalid").TextContent);
+        Assert.Empty(cut.FindAll(".solia-error"));
+        Assert.Empty(cut.FindAll("button"));
+    }
+
+    [Fact]
+    public void A_failure_not_recognised_as_invalid_is_still_an_error()
+    {
+        IRenderedComponent<AsyncContent<string[]>> cut = Render<AsyncContent<string[]>>(p => p
+            .Add(c => c.Load, _ => Task.FromException<string[]>(new HttpRequestException("down")))
+            .Add(c => c.InvalidMessage, _ => null)
+            .Add(c => c.ChildContent, (RenderFragment<string[]>)(_ => _ => { })));
+
+        cut.WaitForAssertion(() => Assert.Equal(AsyncLoadState.Error, cut.Instance.State));
+        Assert.Empty(cut.FindAll(".solia-invalid"));
+    }
 }

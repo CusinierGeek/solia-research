@@ -20,14 +20,24 @@ internal sealed class FakeSoliaApiClient : ISoliaApiClient
         return LivePredictions(query, cancellationToken);
     }
 
+    public Func<PredictionHistoryQuery, CancellationToken, Task<PagedResult<PredictionRecordDto>>> PredictionHistory { get; set; } =
+        (q, _) => Task.FromResult(new PagedResult<PredictionRecordDto>([], q.Page ?? 1, q.PageSize ?? 50, 0));
+
+    public List<PredictionHistoryQuery> PredictionHistoryCalls { get; } = [];
+
+    public Task<PagedResult<PredictionRecordDto>> GetPredictionHistoryAsync(PredictionHistoryQuery? query = null, CancellationToken cancellationToken = default)
+    {
+        query ??= new();
+        PredictionHistoryCalls.Add(query);
+        return PredictionHistory(query, cancellationToken);
+    }
+
     public Task<IReadOnlyList<LiveTokenDto>> GetLiveTokensAsync(LiveTokensQuery? query = null, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
     public Task<PagedResult<TokenHistoryDto>> GetTokenHistoryAsync(TokenHistoryQuery? query = null, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
-    public Task<PagedResult<PredictionRecordDto>> GetPredictionHistoryAsync(PredictionHistoryQuery? query = null, CancellationToken cancellationToken = default) =>
-        throw new NotSupportedException();
 
     public Task<PagedResult<TradeDto>> GetTradeHistoryAsync(TradeHistoryQuery? query = null, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();

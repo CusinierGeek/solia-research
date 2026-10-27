@@ -24,6 +24,17 @@ public static class DisplayFormat
     public static string ShortMint(string? mint) =>
         string.IsNullOrEmpty(mint) ? Missing : mint.Length <= 11 ? mint : $"{mint[..4]}…{mint[^4..]}";
 
+    /// <summary>A count with thousands separators: <c>1234</c> → <c>1,234</c>.</summary>
+    public static string Count(long count) => count.ToString("N0", CultureInfo.InvariantCulture);
+
+    /// <summary>An exact amount or price with its trailing zeros dropped: <c>0.000000123400</c> → <c>0.0000001234</c>.</summary>
+    public static string Amount(decimal? value) =>
+        value is { } v ? v.ToString("0.############################", CultureInfo.InvariantCulture) : Missing;
+
+    /// <summary>A UTC timestamp to the second: <c>2026-10-27 11:58:00</c>.</summary>
+    public static string Timestamp(DateTimeOffset ts) =>
+        ts.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+
     /// <summary>How long ago <paramref name="ts"/> was, in its largest unit: <c>now</c>, <c>12s</c>, <c>3m</c>, <c>2h</c>, <c>5d</c>.</summary>
     public static string Age(DateTimeOffset ts, DateTimeOffset now)
     {

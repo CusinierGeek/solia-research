@@ -10,7 +10,7 @@
     first paint), again when ReloadKey or the Load method changes, and on Retry or ReloadAsync(). A refresh keeps
     already-loaded content on screen until the new data arrives (no skeleton flicker on live updates). A reload
     cancels the previous attempt, and a stale attempt's outcome is discarded. Failures are logged and shown as
-    ErrorState (never the exception text).
+    ErrorState (never the exception text). With ShowRefreshing, a thin progress bar marks such a refresh.
 
     Pass whatever the data depends on as ReloadKey: a lambda capturing a field compares equal across renders, so
     changing the field alone would not trigger a reload.
@@ -21,6 +21,10 @@
 @implements IDisposable
 @inject ILogger<AsyncContent<TItem>> Logger
 
+@if (_refreshing)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Size="Size.Small" Class="solia-refreshing" />
+}
 @switch (State)
 {
     case AsyncLoadState.Loading:
@@ -38,6 +42,12 @@
         break;
     case AsyncLoadState.Error:
         <ErrorState Message="@ErrorMessage" OnRetry="ReloadAsync" />
+        break;
+    case AsyncLoadState.Invalid:
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="solia-invalid">
+            <span class="solia-invalid__message">@_invalidMessage</span>
+            @InvalidActions
+        </MudAlert>
         break;
     default:
         @ChildContent(_value!)
@@ -60,6 +70,18 @@
 
     [Parameter] public LoadingVariant LoadingVariant { get; set; } = LoadingVariant.Skeleton;
 
+    /// <summary>
+    /// Recognises a failure caused by the request itself (e.g. a 400 <c>invalid_request</c>) and returns the message
+    /// to show for it — inline, as a warning without a retry — or null for an ordinary error.
+    /// </summary>
+    [Parameter] public Func<Exception, string?>? InvalidMessage { get; set; }
+
+    /// <summary>A way out of the invalid state (e.g. back to the first page), shown after its message.</summary>
+    [Parameter] public RenderFragment? InvalidActions { get; set; }
+
+    /// <summary>Marks a refresh of already-loaded content with a progress bar (off for live views refreshed in the background).</summary>
+    [Parameter] public bool ShowRefreshing { get; set; }
+
     /// <summary>Replaces the default <see cref="LoadingState"/>.</summary>
     [Parameter] public RenderFragment? Loading { get; set; }
 
@@ -70,6 +92,8 @@
     public AsyncLoadState State { get; private set; } = AsyncLoadState.Loading;
 
     private TItem? _value;
+    private string? _invalidMessage;
+    private bool _refreshing;
     private CancellationTokenSource? _cts;
     private bool _started;
     private Func<CancellationToken, Task<TItem>>? _loadedWith;
@@ -110,9 +134,14 @@
         _loadedWith = Load;
         _loadedKey = ReloadKey;
 
-        if (State is AsyncLoadState.Error)
+        if (State is AsyncLoadState.Error or AsyncLoadState.Invalid)
         {
             State = AsyncLoadState.Loading;
+            StateHasChanged();
+        }
+        else if (ShowRefreshing && !_refreshing && State is AsyncLoadState.Content or AsyncLoadState.Empty)
+        {
+            _refreshing = true;
             StateHasChanged();
         }
 
@@ -137,11 +166,18 @@
             Logger.LogWarning("Loading {Type} for the dashboard timed out.", typeof(TItem).Name);
             State = AsyncLoadState.Error;
         }
+        catch (Exception ex) when (InvalidMessage?.Invoke(ex) is { } message)
+        {
+            Logger.LogInformation("The backend rejected the {Type} request: {Message}", typeof(TItem).Name, message);
+            _invalidMessage = message;
+            State = AsyncLoadState.Invalid;
+        }
         catch (Exception ex)
         {
             Logger.LogWarning(ex, "Loading {Type} for the dashboard failed.", typeof(TItem).Name);
             State = AsyncLoadState.Error;
         }
+        _refreshing = false;
         StateHasChanged();
     }
 

@@ -1,0 +1,16 @@
+@* A pump or rug probability as a table cell (data-col "pump" / "rug"), emphasised at or above its PredictionThresholds. *@
+@using Solia.Dashboard.Formatting
+@using Solia.Dashboard.Predictions
+
+<td class="@(IsHigh ? $"solia-high-{Column}" : null)" data-col="@Column">@DisplayFormat.Percent(Value)</td>
+
+@code {
+    /// <summary>True for the rug probability, false for the pump probability.</summary>
+    [Parameter] public bool Rug { get; set; }
+
+    [Parameter] public double? Value { get; set; }
+
+    private string Column => Rug ? "rug" : "pump";
+
+    private bool IsHigh => Rug ? PredictionThresholds.IsHighRug(Value) : PredictionThresholds.IsHighPump(Value);
+}

@@ -13,12 +13,14 @@ h1:focus {
     }
 
 /* Live predictions: emphasis for the calls that matter (high pump / high rug), sortable headers. */
-.solia-live-predictions .solia-high-pump {
+.solia-live-predictions .solia-high-pump,
+.solia-prediction-history .solia-high-pump {
     color: var(--mud-palette-success);
     font-weight: 600;
 }
 
-.solia-live-predictions .solia-high-rug {
+.solia-live-predictions .solia-high-rug,
+.solia-prediction-history .solia-high-rug {
     color: var(--mud-palette-error);
     font-weight: 600;
 }
@@ -31,7 +33,8 @@ h1:focus {
     box-shadow: inset 3px 0 0 var(--mud-palette-error);
 }
 
-.solia-live-predictions .solia-mint {
+.solia-live-predictions .solia-mint,
+.solia-prediction-history .solia-mint {
     font-family: monospace;
     font-size: 0.85em;
 }
@@ -47,4 +50,9 @@ h1:focus {
 
 .solia-sort:focus-visible {
     outline: 2px solid var(--mud-palette-primary);
+}
+
+/* Paged tables: a compact pager under the table. */
+.solia-pager__size {
+    max-width: 9rem;
 }

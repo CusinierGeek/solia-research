@@ -44,4 +44,40 @@ public class QueryValuesTests
     [Fact]
     public void A_query_without_values_leaves_the_path_bare() =>
         Assert.Equal("tokens/live", QueryValues.Build("tokens/live", new LiveTokensQuery().ToParameters()));
+
+    [Theory]
+    [InlineData("5m", PredictionHorizon.Minutes5)]
+    [InlineData(" 1H ", PredictionHorizon.Hour1)]
+    [InlineData("2d", null)]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void Wire_spellings_parse_back_case_insensitively(string? value, PredictionHorizon? expected) =>
+        Assert.Equal(expected, QueryValues.Parse<PredictionHorizon>(value));
+
+    [Fact]
+    public void Timestamps_parse_back_as_utc()
+    {
+        var expected = new DateTimeOffset(2026, 10, 26, 18, 30, 5, TimeSpan.Zero);
+
+        Assert.Equal(expected, QueryValues.ParseTimestamp("2026-10-26T18:30:05Z"));
+        Assert.Equal(expected, QueryValues.ParseTimestamp("2026-10-26T14:30:05-04:00"));
+        Assert.Equal(expected, QueryValues.ParseTimestamp("2026-10-26T18:30:05")); // no zone: UTC
+        Assert.Equal(TimeSpan.Zero, QueryValues.ParseTimestamp("2026-10-26T14:30:05-04:00")!.Value.Offset);
+        Assert.Equal(expected, QueryValues.ParseTimestamp("2026-10-26T18:30:05.000Z"));
+        Assert.Equal(expected.AddSeconds(-5), QueryValues.ParseTimestamp("2026-10-26T18:30")); // datetime-local, no seconds
+        Assert.Equal(new DateTimeOffset(2026, 10, 26, 0, 0, 0, TimeSpan.Zero), QueryValues.ParseTimestamp("2026-10-26"));
+        Assert.Null(QueryValues.ParseTimestamp("yesterday"));
+        Assert.Null(QueryValues.ParseTimestamp(null));
+    }
+
+    [Theory]
+    [InlineData("1/2/2026")]
+    [InlineData("Jan 2026")]
+    [InlineData("26 Oct 2026 18:30")]
+    [InlineData("2026-10-26 18:30:05")]
+    [InlineData("20261026T183005Z")]
+    [InlineData("2026-10")]
+    [InlineData("")]
+    public void Non_iso_timestamps_are_rejected(string value) =>
+        Assert.Null(QueryValues.ParseTimestamp(value));
 }

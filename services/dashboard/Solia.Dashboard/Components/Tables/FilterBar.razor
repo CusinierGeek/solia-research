@@ -1,0 +1,72 @@
+@*
+    A filter bar over an immutable filter model (a record): the fields edit a draft, and Apply (or Enter) hands it
+    to the host, Reset hands back Empty. The draft follows Value whenever the host changes it (e.g. on navigation),
+    so the bar always shows the filters actually applied. Give text fields Immediate="true", so the draft is up to
+    date when Enter submits. The bar itself is the fields' context:
+
+        <FilterBar TFilter="TradeFilter" Value="_filter" Empty="TradeFilter.None" OnApply="ApplyFilter">
+            <MudTextField T="string" Label="Mint" Value="context.Draft.Mint" Immediate="true"
+                          ValueChanged="v => context.Edit(f => f with { Mint = v })" />
+        </FilterBar>
+*@
+@typeparam TFilter where TFilter : notnull
+
+<form class="solia-filter-bar d-flex flex-wrap align-center gap-3 mb-4" @onsubmit="ApplyAsync">
+    @ChildContent(this)
+    <div class="d-flex gap-2">
+        <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary" Class="solia-filter-apply">
+            Apply
+        </MudButton>
+        <MudButton Variant="Variant.Text" Class="solia-filter-reset" OnClick="ResetAsync">Reset</MudButton>
+    </div>
+</form>
+
+@code {
+    /// <summary>The filters currently applied.</summary>
+    [Parameter, EditorRequired] public TFilter Value { get; set; } = default!;
+
+    /// <summary>The "no filters" value Reset applies.</summary>
+    [Parameter, EditorRequired] public TFilter Empty { get; set; } = default!;
+
+    /// <summary>Receives the draft on Apply, or <see cref="Empty"/> on Reset.</summary>
+    [Parameter] public EventCallback<TFilter> OnApply { get; set; }
+
+    /// <summary>The filter fields; their context is this bar (<see cref="Draft"/>, <see cref="Edit"/>).</summary>
+    [Parameter, EditorRequired] public RenderFragment<FilterBar<TFilter>> ChildContent { get; set; } = default!;
+
+    /// <summary>The filters as edited, not applied yet.</summary>
+    public TFilter Draft { get; private set; } = default!;
+
+    private TFilter? _value;
+    private bool _hasValue;
+
+    protected override void OnParametersSet()
+    {
+        if (!_hasValue || !EqualityComparer<TFilter>.Default.Equals(Value, _value))
+        {
+            Draft = Value;
+            _value = Value;
+            _hasValue = true;
+        }
+    }
+
+    /// <summary>Changes the draft (e.g. <c>f =&gt; f with { Mint = v }</c>).</summary>
+    public void Edit(Func<TFilter, TFilter> change)
+    {
+        Draft = change(Draft);
+        StateHasChanged();
+    }
+
+    private async Task ApplyAsync()
+    {
+        // Let a field's value change still in flight (an async ValueChanged from the same keystroke) reach the draft first.
+        await Task.Yield();
+        await OnApply.InvokeAsync(Draft);
+    }
+
+    private Task ResetAsync()
+    {
+        Draft = Empty;
+        return OnApply.InvokeAsync(Empty);
+    }
+}

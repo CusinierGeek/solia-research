@@ -70,19 +70,9 @@
                             <span class="mud-text-secondary ml-1 solia-mint">@DisplayFormat.ShortMint(p.Mint)</span>
                         </td>
                         <td>@p.Horizon</td>
-                        <td class="@ProbClass(p.PumpProb >= HighPumpProb, "solia-high-pump")" data-col="pump">@DisplayFormat.Percent(p.PumpProb)</td>
-                        <td class="@ProbClass(p.RugProb >= HighRugProb, "solia-high-rug")" data-col="rug">@DisplayFormat.Percent(p.RugProb)</td>
-                        <td data-col="strategy">
-                            @if (p.Strategy is { Length: > 0 } strategy)
-                            {
-                                <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="@StrategyColor(strategy)"
-                                         Class="solia-strategy">@strategy.ToUpperInvariant()</MudChip>
-                            }
-                            else
-                            {
-                                @DisplayFormat.Missing
-                            }
-                        </td>
+                        <ProbabilityCell Value="p.PumpProb" />
+                        <ProbabilityCell Value="p.RugProb" Rug="true" />
+                        <td data-col="strategy"><StrategyChip Strategy="@p.Strategy" /></td>
                         <td data-col="confidence">@DisplayFormat.Score(p.Confidence)</td>
                         <td data-col="model">@(p.ModelVersion ?? DisplayFormat.Missing)</td>
                         <td data-col="age" title="@p.Ts.UtcDateTime.ToString("u")">@DisplayFormat.Age(p.Ts, now)</td>
@@ -96,12 +86,6 @@
 @code {
     /// <summary>Rows kept (and asked of <c>/predictions/live</c>): one per (token, horizon).</summary>
     internal const int Capacity = 500;
-
-    /// <summary>A pump probability at or above this is emphasised.</summary>
-    internal const double HighPumpProb = 0.7;
-
-    /// <summary>A rug probability at or above this is emphasised.</summary>
-    internal const double HighRugProb = 0.5;
 
     private static readonly PredictionHorizon?[] Horizons = [null, .. Enum.GetValues<PredictionHorizon>().Cast<PredictionHorizon?>()];
 
@@ -276,16 +260,9 @@
     private static string RowKey(PredictionRecordDto p) => $"{p.Mint}|{p.Horizon}";
 
     private static string? RowClass(PredictionRecordDto p) =>
-        p.RugProb >= HighRugProb ? "solia-row--rug" : p.PumpProb >= HighPumpProb ? "solia-row--pump" : null;
-
-    private static string? ProbClass(bool high, string cssClass) => high ? cssClass : null;
-
-    private static Color StrategyColor(string strategy) => strategy switch
-    {
-        "buy" => Color.Success,
-        "sell" => Color.Error,
-        _ => Color.Default,
-    };
+        PredictionThresholds.IsHighRug(p.RugProb) ? "solia-row--rug"
+        : PredictionThresholds.IsHighPump(p.PumpProb) ? "solia-row--pump"
+        : null;
 
     private RenderFragment SortHeader(PredictionSort sort, string label) => __builder =>
     {

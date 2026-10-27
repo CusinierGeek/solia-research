@@ -1,0 +1,23 @@
+@* A prediction's recommended strategy as a coloured chip (buy green, sell red), or the missing-value placeholder. *@
+@using Solia.Dashboard.Formatting
+
+@if (Strategy is { Length: > 0 } strategy)
+{
+    <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="@ColorOf(strategy)"
+             Class="solia-strategy">@strategy.ToUpperInvariant()</MudChip>
+}
+else
+{
+    @DisplayFormat.Missing
+}
+
+@code {
+    [Parameter] public string? Strategy { get; set; }
+
+    private static Color ColorOf(string strategy) => strategy switch
+    {
+        "buy" => Color.Success,
+        "sell" => Color.Error,
+        _ => Color.Default,
+    };
+}

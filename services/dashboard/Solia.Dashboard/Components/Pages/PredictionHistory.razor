@@ -1,5 +1,140 @@
 @page "/predictions/history"
+@using System.Globalization
+@using Solia.Dashboard.Api
+@using Solia.Dashboard.Formatting
+@using Solia.Dashboard.Predictions
+@implements IDisposable
+@inject ISoliaApiClient Api
+@inject NavigationManager Navigation
 
-<PageHeader Title="Prediction history" Description="Past predictions with their outcomes." />
+<PageHeader Title="Prediction history" Description="Every prediction the model made, newest first." />
 
-<EmptyState Message="This view lands in a later Sprint-5 task." Icon="@Icons.Material.Outlined.Construction" />
+<FilterBar TFilter="PredictionHistoryFilter" Value="_state.Filter" Empty="PredictionHistoryFilter.None" OnApply="ApplyFilter">
+    <MudTextField T="string" Label="Mint" Value="context.Draft.Mint" Variant="Variant.Outlined" Margin="Margin.Dense"
+                  Placeholder="Exact mint address" Class="solia-filter-mint" Immediate="true"
+                  ValueChanged="v => context.Edit(f => f with { Mint = v })" />
+    <MudSelect T="PredictionHorizon?" Label="Horizon" Value="context.Draft.Horizon" Variant="Variant.Outlined"
+               Margin="Margin.Dense" Clearable="true" Class="solia-filter-horizon" ToStringFunc="Wire"
+               ValueChanged="v => context.Edit(f => f with { Horizon = v })">
+        @foreach (PredictionHorizon horizon in Enum.GetValues<PredictionHorizon>())
+        {
+            <MudSelectItem T="PredictionHorizon?" Value="horizon">@QueryValues.Format(horizon)</MudSelectItem>
+        }
+    </MudSelect>
+    <MudSelect T="TradeStrategy?" Label="Strategy" Value="context.Draft.Strategy" Variant="Variant.Outlined"
+               Margin="Margin.Dense" Clearable="true" Class="solia-filter-strategy" ToStringFunc="Wire"
+               ValueChanged="v => context.Edit(f => f with { Strategy = v })">
+        @foreach (TradeStrategy strategy in Enum.GetValues<TradeStrategy>())
+        {
+            <MudSelectItem T="TradeStrategy?" Value="strategy">@QueryValues.Format(strategy)</MudSelectItem>
+        }
+    </MudSelect>
+    <MudTextField T="string" Label="From (UTC)" InputType="InputType.DateTimeLocal" ShrinkLabel="true"
+                  Variant="Variant.Outlined" Margin="Margin.Dense" Class="solia-filter-from" Immediate="true"
+                  Value="ToInput(context.Draft.From)" ValueChanged="v => context.Edit(f => f with { From = FromInput(v) })" />
+    <MudTextField T="string" Label="To (UTC)" InputType="InputType.DateTimeLocal" ShrinkLabel="true"
+                  Variant="Variant.Outlined" Margin="Margin.Dense" Class="solia-filter-to" Immediate="true"
+                  Value="ToInput(context.Draft.To)" ValueChanged="v => context.Edit(f => f with { To = FromInput(v) })" />
+</FilterBar>
+
+<PagedTable TItem="PredictionRecordDto" Load="LoadAsync" ReloadKey="_query" Page="_state.Page" PageSize="_state.PageSize"
+            PageChanged="GoToPage" PageSizeChanged="SetPageSize" Class="solia-prediction-history"
+            EmptyMessage="No predictions match these filters." ErrorMessage="Could not load the prediction history from the backend.">
+    <Header>
+        <th>Time (UTC)</th>
+        <th>Token</th>
+        <th>Horizon</th>
+        <th>Pump</th>
+        <th>Rug</th>
+        <th>Strategy</th>
+        <th>Confidence</th>
+        <th>Size</th>
+        <th>TP</th>
+        <th>SL</th>
+        <th>Model</th>
+    </Header>
+    <Row>
+        <tr @key="context.Id" data-id="@context.Id">
+            <td data-col="ts">@DisplayFormat.Timestamp(context.Ts)</td>
+            <td class="solia-token" title="@context.Mint">
+                <strong>@(context.Symbol ?? "?")</strong>
+                <span class="mud-text-secondary ml-1 solia-mint">@DisplayFormat.ShortMint(context.Mint)</span>
+            </td>
+            <td data-col="horizon">@context.Horizon</td>
+            <ProbabilityCell Value="context.PumpProb" />
+            <ProbabilityCell Value="context.RugProb" Rug="true" />
+            <td data-col="strategy"><StrategyChip Strategy="@context.Strategy" /></td>
+            <td data-col="confidence">@DisplayFormat.Score(context.Confidence)</td>
+            <td data-col="size">@DisplayFormat.Amount(context.PositionSize)</td>
+            <td data-col="tp">@DisplayFormat.Amount(context.TakeProfit)</td>
+            <td data-col="sl">@DisplayFormat.Amount(context.StopLoss)</td>
+            <td data-col="model">@(context.ModelVersion ?? DisplayFormat.Missing)</td>
+        </tr>
+    </Row>
+</PagedTable>
+
+@code {
+    private const string Path = "predictions/history";
+
+    private const string InputFormat = "yyyy-MM-dd'T'HH:mm:ss";
+
+    private PredictionHistoryState _state = PredictionHistoryState.Default;
+    private PredictionHistoryQuery _query = new();
+
+    // The URL is the source of truth: the filter bar and the pager only navigate, and every navigation (theirs, the
+    // browser's back/forward, a shared link) is read back from it. Navigating away to another page's URL is not:
+    // its query string means nothing here, and the page is about to go away.
+    protected override void OnInitialized()
+    {
+        ReadUrl();
+        Navigation.LocationChanged += OnLocationChanged;
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        if (!IsThisPage(e.Location))
+        {
+            return;
+        }
+        _ = InvokeAsync(() =>
+        {
+            ReadUrl();
+            StateHasChanged();
+        });
+    }
+
+    private bool IsThisPage(string uri)
+    {
+        string relative = Navigation.ToBaseRelativePath(uri);
+        int end = relative.IndexOfAny(['?', '#']);
+        return string.Equals((end < 0 ? relative : relative[..end]).TrimEnd('/'), Path, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void ReadUrl()
+    {
+        _state = PredictionHistoryState.FromUri(Navigation.Uri);
+        _query = _state.ToQuery(); // a record: equal across navigations to the same view, so the table only reloads on a change
+    }
+
+    private Task<PagedResult<PredictionRecordDto>> LoadAsync(CancellationToken cancellationToken) =>
+        Api.GetPredictionHistoryAsync(_query, cancellationToken);
+
+    private void ApplyFilter(PredictionHistoryFilter filter) => Navigate(_state with { Filter = filter, Page = 1 });
+
+    private void GoToPage(int page) => Navigate(_state with { Page = page });
+
+    private void SetPageSize(int pageSize) => Navigate(_state with { PageSize = pageSize, Page = 1 });
+
+    private void Navigate(PredictionHistoryState state) =>
+        Navigation.NavigateTo(Navigation.GetUriWithQueryParameters(state.ToQueryParameters()));
+
+    private static string Wire<T>(T? value) where T : struct, Enum => value is { } v ? QueryValues.Format(v) : "All";
+
+    private static string? ToInput(DateTimeOffset? ts) =>
+        ts?.UtcDateTime.ToString(InputFormat, CultureInfo.InvariantCulture);
+
+    // A datetime-local value has no zone: it is read as UTC, like the column it filters.
+    private static DateTimeOffset? FromInput(string? value) => QueryValues.ParseTimestamp(value);
+
+    public void Dispose() => Navigation.LocationChanged -= OnLocationChanged;
+}

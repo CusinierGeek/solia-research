@@ -224,6 +224,33 @@ internal static class QueryValues
     public static string Format<T>(T value) where T : struct, Enum =>
         WireNames<T>.ByValue.TryGetValue(value, out string? name) ? name : throw Unknown(value);
 
+    /// <summary>
+    /// An ISO-8601 timestamp — a date, or a date and time to the minute or finer, with an optional <c>Z</c> or
+    /// offset (none is UTC) — in UTC; null when blank or in any other format (no culture-style <c>1/2/2026</c>).
+    /// </summary>
+    public static DateTimeOffset? ParseTimestamp(string? value) =>
+        DateTimeOffset.TryParseExact(value?.Trim(), IsoTimestampFormats, CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out DateTimeOffset ts)
+            ? ts
+            : null;
+
+    // K is "Z", an offset or nothing; ".FFFFFFF" also matches no fraction at all.
+    private static readonly string[] IsoTimestampFormats =
+        ["yyyy-MM-dd'T'HH:mm:ss.FFFFFFFK", "yyyy-MM-dd'T'HH:mmK", "yyyy-MM-dd"];
+
+    /// <summary>The member whose wire spelling is <paramref name="value"/> (case-insensitive, like the backend); null when none is.</summary>
+    public static T? Parse<T>(string? value) where T : struct, Enum
+    {
+        foreach ((T member, string name) in WireNames<T>.ByValue)
+        {
+            if (string.Equals(name, value?.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                return member;
+            }
+        }
+        return null;
+    }
+
     /// <summary><paramref name="path"/> plus the non-blank parameters, escaped, in the given order.</summary>
     public static string Build(string path, IEnumerable<(string Name, string? Value)> parameters)
     {

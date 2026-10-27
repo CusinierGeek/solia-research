@@ -55,4 +55,31 @@ public class DisplayFormatTests
             CultureInfo.CurrentCulture = previous;
         }
     }
+
+    [Fact]
+    public void Amounts_drop_trailing_zeros()
+    {
+        Assert.Equal("0.0000001234", DisplayFormat.Amount(0.000000123400m));
+        Assert.Equal("1.5", DisplayFormat.Amount(1.50m));
+        Assert.Equal("12", DisplayFormat.Amount(12.000m));
+        Assert.Equal("—", DisplayFormat.Amount(null));
+    }
+
+    [Fact]
+    public void Counts_and_timestamps_are_invariant()
+    {
+        CultureInfo previous = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = new CultureInfo("fr-CA");
+            Assert.Equal("1,234,567", DisplayFormat.Count(1_234_567));
+            Assert.Equal("1.5", DisplayFormat.Amount(1.5m));
+            Assert.Equal("2026-10-27 11:58:00",
+                DisplayFormat.Timestamp(new DateTimeOffset(2026, 10, 27, 7, 58, 0, TimeSpan.FromHours(-4))));
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+        }
+    }
 }

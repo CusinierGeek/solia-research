@@ -1,0 +1,129 @@
+@*
+    A server-paged table over a backend page (PagedResult): the loading / empty / error / invalid-request states
+    (via AsyncContent), the rows, and a pager honouring the backend's depth cap. It never holds more than the page
+    on screen. The host owns the page state (typically in the URL): it passes Page / PageSize, reloads through
+    ReloadKey, and is told of a pager click through PageChanged / PageSizeChanged. The pager describes the page on
+    screen (until the next one arrives, under a progress bar), and a request the backend rejects offers a way back
+    to the first page.
+
+        <PagedTable TItem="TradeDto" Load="LoadAsync" ReloadKey="_query" Page="_page" PageSize="_pageSize"
+                    PageChanged="GoToPage" PageSizeChanged="SetPageSize" EmptyMessage="No trades match.">
+            <Header><th>Mint</th>...</Header>
+            <Row><tr @key="context.Id"><td>@context.Mint</td>...</tr></Row>
+        </PagedTable>
+*@
+@typeparam TItem
+@using Solia.Dashboard.Api
+@using Solia.Dashboard.Formatting
+
+<AsyncContent TItem="PagedResult<TItem>" Load="Load" ReloadKey="ReloadKey" IsEmpty="r => r.Total == 0"
+              EmptyMessage="@EmptyMessage" ErrorMessage="@ErrorMessage" InvalidMessage="Paging.InvalidRequestMessage"
+              LoadingVariant="LoadingVariant.Skeleton" ShowRefreshing="true">
+    <InvalidActions>
+        @if (Page > 1 || PageSize != Paging.DefaultPageSize)
+        {
+            <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Primary" Class="solia-invalid__first-page ml-2"
+                       OnClick="BackToFirstPageAsync">Back to the first page</MudButton>
+        }
+    </InvalidActions>
+    <ChildContent>
+        @if (context.Items.Count == 0)
+        {
+            <MudText Typo="Typo.body2" Class="solia-past-end pa-4 mud-text-secondary">
+                This page is past the end of the results.
+            </MudText>
+        }
+        else
+        {
+            <MudSimpleTable Dense="true" Hover="true" Class="@($"solia-paged-table {Class}")">
+                <thead>
+                    <tr>@Header</tr>
+                </thead>
+                <tbody>
+                    @foreach (TItem item in context.Items)
+                    {
+                        @Row(item)
+                    }
+                </tbody>
+            </MudSimpleTable>
+        }
+        @Pager(context)
+    </ChildContent>
+</AsyncContent>
+
+@code {
+    /// <summary>Fetches the current page; receives a token cancelled on reload or when the table goes away.</summary>
+    [Parameter, EditorRequired] public Func<CancellationToken, Task<PagedResult<TItem>>> Load { get; set; } = default!;
+
+    /// <summary>What the page depends on (filters, page, page size); a change reloads it.</summary>
+    [Parameter, EditorRequired] public object? ReloadKey { get; set; }
+
+    [Parameter, EditorRequired] public RenderFragment Header { get; set; } = default!;
+
+    /// <summary>Renders one item as a whole <c>&lt;tr&gt;</c> (the item is <c>context</c>).</summary>
+    [Parameter, EditorRequired] public RenderFragment<TItem> Row { get; set; } = default!;
+
+    /// <summary>The 1-based page shown.</summary>
+    [Parameter] public int Page { get; set; } = 1;
+
+    [Parameter] public int PageSize { get; set; } = Paging.DefaultPageSize;
+
+    /// <summary>Asks the host for another page.</summary>
+    [Parameter] public EventCallback<int> PageChanged { get; set; }
+
+    /// <summary>Asks the host for another page size (it should go back to page 1).</summary>
+    [Parameter] public EventCallback<int> PageSizeChanged { get; set; }
+
+    [Parameter] public string EmptyMessage { get; set; } = "Nothing matches these filters.";
+
+    [Parameter] public string ErrorMessage { get; set; } = "Could not load data from the backend.";
+
+    /// <summary>Extra CSS classes for the table.</summary>
+    [Parameter] public string? Class { get; set; }
+
+    private RenderFragment Pager(PagedResult<TItem> result) => __builder =>
+    {
+        // The page on screen, not the one requested: while the next page loads, the pager still matches the rows.
+        int page = result.Page;
+        int last = Paging.LastPage(result.Total, result.PageSize);
+        (long first, long end) = Paging.Range(result);
+        <div class="solia-pager d-flex flex-wrap align-center justify-end gap-2 mt-2">
+            <MudText Typo="Typo.body2" Class="solia-pager__range mud-text-secondary">
+                @(first == 0
+                    ? $"0 of {DisplayFormat.Count(result.Total)}"
+                    : $"{DisplayFormat.Count(first)}–{DisplayFormat.Count(end)} of {DisplayFormat.Count(result.Total)}")
+            </MudText>
+            <MudSelect T="int" Value="PageSize" ValueChanged="SetPageSizeAsync" Dense="true" Label="Rows per page"
+                       Variant="Variant.Outlined" Margin="Margin.Dense" FullWidth="false" Class="solia-pager__size">
+                @foreach (int size in Paging.PageSizes)
+                {
+                    <MudSelectItem T="int" Value="size">@size</MudSelectItem>
+                }
+            </MudSelect>
+            <MudIconButton Icon="@Icons.Material.Filled.FirstPage" Size="Size.Small" Disabled="page <= 1"
+                           aria-label="First page" data-pager="first" OnClick="() => GoToAsync(1)" />
+            <MudIconButton Icon="@Icons.Material.Filled.ChevronLeft" Size="Size.Small" Disabled="page <= 1"
+                           aria-label="Previous page" data-pager="previous" OnClick="() => GoToAsync(page - 1)" />
+            <MudText Typo="Typo.body2" Class="solia-pager__page">Page @DisplayFormat.Count(page) of @DisplayFormat.Count(last)</MudText>
+            <MudIconButton Icon="@Icons.Material.Filled.ChevronRight" Size="Size.Small" Disabled="page >= last"
+                           aria-label="Next page" data-pager="next" OnClick="() => GoToAsync(page + 1)" />
+            <MudIconButton Icon="@Icons.Material.Filled.LastPage" Size="Size.Small" Disabled="page >= last"
+                           aria-label="Last page" data-pager="last" OnClick="() => GoToAsync(last)" />
+        </div>
+        @if (Paging.IsCapped(result.Total, result.PageSize))
+        {
+            <MudText Typo="Typo.caption" Class="solia-pager__cap d-block text-right mud-text-secondary">
+                Only the newest @DisplayFormat.Count(Paging.MaxDepth) rows can be paged through — narrow From / To to reach older ones.
+            </MudText>
+        }
+    };
+
+    private Task GoToAsync(int page) => page == Page ? Task.CompletedTask : PageChanged.InvokeAsync(Math.Max(1, page));
+
+    private Task SetPageSizeAsync(int pageSize) =>
+        pageSize == PageSize ? Task.CompletedTask : PageSizeChanged.InvokeAsync(pageSize);
+
+    // The default page size starts again at page 1 too, so this undoes both a page and a page size out of range.
+    private Task BackToFirstPageAsync() =>
+        PageSize != Paging.DefaultPageSize ? PageSizeChanged.InvokeAsync(Paging.DefaultPageSize) : PageChanged.InvokeAsync(1);
+}
