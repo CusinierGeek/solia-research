@@ -144,6 +144,8 @@ Manually trigger a retrain (proxied to ai-service, never retried). Returns `202 
 Server → client push so the dashboard updates without a reload. Mapped at **`/hubs/live`** on the backend host,
 outside `/api/v1` (not versioned with the REST surface). Standard SignalR negotiate/transports, JSON protocol,
 payloads **snake_case** like REST. The hub has no client → server methods: connect and handle the events.
+Consumer: the dashboard, through one app-wide connection (not one per browser tab) that re-fetches over REST after
+every (re)connect.
 
 | Event | When | Payload |
 |-------|------|---------|

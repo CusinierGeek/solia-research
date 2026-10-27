@@ -27,9 +27,7 @@
 
 @if (_refreshFailed && _state is AsyncLoadState.Content)
 {
-    <div class="solia-stale mb-4">
-        <ErrorState Message="Could not refresh live predictions; showing the last rows received." OnRetry="LoadAsync" />
-    </div>
+    <StaleState Class="mb-4" Message="Could not refresh live predictions; showing the last rows received." OnRetry="LoadAsync" />
 }
 
 @switch (_state)

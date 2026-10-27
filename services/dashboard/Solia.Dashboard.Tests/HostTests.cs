@@ -87,6 +87,19 @@ public class HostTests
     }
 
     [Fact]
+    public async Task An_unknown_route_answers_404_with_the_not_found_page()
+    {
+        using WebApplicationFactory<Program> factory = Factory("Production", ("BACKEND_URL", "http://127.0.0.1:1"));
+
+        HttpResponseMessage response = await factory.CreateClient().GetAsync("/no-such-view");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        string html = await response.Content.ReadAsStringAsync();
+        Assert.Contains("the page you are looking for does not exist", html);
+        Assert.Contains("PAPER TRADING", html);
+    }
+
+    [Fact]
     public void Startup_fails_fast_without_a_backend_url()
     {
         using WebApplicationFactory<Program> factory = Factory("Production");

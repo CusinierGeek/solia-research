@@ -67,6 +67,26 @@ public class TradeHistoryTests : MudTestContext
     private string Query => new Uri(Navigation.Uri).Query;
 
     [Fact]
+    public async Task A_resync_while_the_backend_is_down_keeps_the_live_page_marked_stale()
+    {
+        Returns(total: 1, Closed(7, pnl: 0.0123m, pnlPct: 0.2156));
+        IRenderedComponent<TradeHistory> page = RenderLoaded();
+        page.WaitForAssertion(() => Assert.Equal([7L], Ids(page)));
+        _api.TradeHistory = (_, _) => Task.FromException<PagedResult<TradeDto>>(new BackendUnavailableException());
+
+        await _feed.ResyncAsync();
+
+        page.WaitForAssertion(() => Assert.NotNull(page.Find(".solia-stale")));
+        Assert.Equal([7L], Ids(page));
+
+        Returns(total: 2, Opened(8), Closed(7, pnl: 0.0123m, pnlPct: 0.2156));
+        page.Find(".solia-stale button.solia-stale__retry").Click();
+
+        page.WaitForAssertion(() => Assert.Equal([8L, 7L], Ids(page)));
+        Assert.Empty(page.FindAll(".solia-stale"));
+    }
+
+    [Fact]
     public void Renders_a_closed_trade_with_exact_prices_and_signed_pnl()
     {
         Returns(total: 1, Closed(7, pnl: 0.0123m, pnlPct: 0.2156));
@@ -396,6 +416,33 @@ public class TradeHistoryTests : MudTestContext
 
         page.WaitForAssertion(() => Assert.Equal(2, _api.TradeHistoryCalls.Count));
         Assert.Equal([1], Ids(page));
+    }
+
+    [Fact]
+    public async Task A_failed_catch_up_is_not_retried_on_every_push()
+    {
+        Returns(total: 1, Opened(1));
+        IRenderedComponent<TradeHistory> page = RenderLoaded();
+        page.WaitForAssertion(() => Assert.Single(Rows(page)));
+        _api.TradeHistory = (_, _) => Task.FromException<PagedResult<TradeDto>>(new BackendUnavailableException());
+
+        for (long id = 1000; id < 1000 + LiveTradeOverlay.DefaultCapacity + 10; id++)
+        {
+            await _feed.PushAsync(LiveFeedEvents.TradeClosed, Closed(id, pnl: 0m, pnlPct: 0));
+        }
+
+        page.WaitForAssertion(() => Assert.NotNull(page.Find(".solia-stale")));
+        Assert.Equal(2, _api.TradeHistoryCalls.Count); // the first load and one catch-up, not one per push
+
+        // Once a fetch succeeds again, a page that piles up pushes catches up again.
+        Returns(total: 1, Opened(1));
+        page.Find(".solia-stale button.solia-stale__retry").Click();
+        page.WaitForAssertion(() => Assert.Empty(page.FindAll(".solia-stale")));
+        for (long id = 2000; id < 2000 + LiveTradeOverlay.DefaultCapacity; id++)
+        {
+            await _feed.PushAsync(LiveFeedEvents.TradeClosed, Closed(id, pnl: 0m, pnlPct: 0));
+        }
+        page.WaitForAssertion(() => Assert.Equal(4, _api.TradeHistoryCalls.Count));
     }
 
     [Fact]

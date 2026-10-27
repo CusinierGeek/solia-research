@@ -175,6 +175,25 @@ public class OverviewTests : MudTestContext
     }
 
     [Fact]
+    public async Task A_background_refresh_while_the_backend_is_down_keeps_the_figures_marked_stale()
+    {
+        IRenderedComponent<Overview> page = RenderLoaded();
+        _api.Performance = (_, _) => Task.FromException<PerformanceResponse>(new BackendUnavailableException());
+
+        await _feed.ResyncAsync();
+
+        page.WaitForAssertion(() => Assert.NotNull(Card(page, "pnl").QuerySelector(".solia-stale")));
+        Assert.Equal("+3.2", Text(Card(page, "pnl"), ".solia-stat-card__value"));
+        Assert.Null(Card(page, "winrate").QuerySelector(".solia-stale"));
+
+        _api.Performance = (_, _) => Task.FromResult(new PerformanceResponse([], 4.5m));
+        page.Find("[data-card=pnl] .solia-stale button.solia-stale__retry").Click();
+
+        page.WaitForAssertion(() => Assert.Equal("+4.5", Text(Card(page, "pnl"), ".solia-stat-card__value")));
+        Assert.Null(Card(page, "pnl").QuerySelector(".solia-stale"));
+    }
+
+    [Fact]
     public void A_failing_card_shows_its_own_error_and_leaves_the_others()
     {
         _api.WinRate = (_, _) => Task.FromException<WinRateResponse>(new BackendUnavailableException());

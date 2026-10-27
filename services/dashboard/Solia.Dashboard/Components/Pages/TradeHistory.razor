@@ -98,6 +98,8 @@
     private TradeHistoryQuery _query = new();
     private (PagedResult<TradeDto> Page, long Mark, bool Live)? _fetched;
     private bool _shownLive;
+    // Set by a catch-up re-fetch, cleared once a fetched page is on screen: a failed one (the page then shows stale,
+    // with a retry) isn't retried on every push for as long as the backend is down.
     private bool _catchingUp;
     private bool _hasNewActivity;
     private bool _disposed;
@@ -151,6 +153,7 @@
             _overlay.Forget(fetched.Mark);
             _shownLive = fetched.Live;
             _fetched = null;
+            _catchingUp = false;
         }
         return _shownLive ? _overlay.Apply(page) : page;
     }
@@ -184,14 +187,7 @@
         if (_overlay.IsFull && !_catchingUp && _table is not null)
         {
             _catchingUp = true;
-            try
-            {
-                await _table.ReloadAsync();
-            }
-            finally
-            {
-                _catchingUp = false;
-            }
+            await _table.ReloadAsync();
         }
     }
 

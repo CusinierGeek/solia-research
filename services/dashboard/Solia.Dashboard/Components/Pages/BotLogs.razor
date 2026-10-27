@@ -54,9 +54,7 @@
 
 @if (_refreshFailed && _state is AsyncLoadState.Content)
 {
-    <div class="solia-stale mb-4">
-        <ErrorState Message="Could not refresh the logs; showing the last entries received." OnRetry="LoadAsync" />
-    </div>
+    <StaleState Class="mb-4" Message="Could not refresh the logs; showing the last entries received." OnRetry="LoadAsync" />
 }
 
 @switch (_state)

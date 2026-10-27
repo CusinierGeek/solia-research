@@ -10,10 +10,16 @@
     first paint), again when ReloadKey or the Load method changes, and on Retry or ReloadAsync(). A refresh keeps
     already-loaded content on screen until the new data arrives (no skeleton flicker on live updates). A reload
     cancels the previous attempt, and a stale attempt's outcome is discarded. Failures are logged and shown as
-    ErrorState (never the exception text). With ShowRefreshing, a thin progress bar marks such a refresh.
+    ErrorState (never the exception text). With ShowRefreshing, a thin progress bar marks such a refresh. A failed
+    refresh of the same data (same Load and ReloadKey: a live update, a resync, a reconcile tick, a retry) keeps the
+    last content on screen under a StaleMessage warning (StaleState) with a retry, like the live views do; a failed
+    load of different data (a new filter or page) is an ErrorState, since the old content would not answer it. While
+    different data loads, the old content shows without that warning, which only ever describes the data asked for.
 
     Pass whatever the data depends on as ReloadKey: a lambda capturing a field compares equal across renders, so
-    changing the field alone would not trigger a reload.
+    changing the field alone would not trigger a reload. The key must compare by value and never be mutated in place
+    (a record of scalars, a tuple, a string…): a key changed in place still equals itself, so it neither reloads nor
+    tells a failed load of the new data from a failed refresh of the old.
 
         <AsyncContent TItem="..." Load="ct => Api.GetHistoryAsync(_range, ct)" ReloadKey="_range" ...>
 *@
@@ -24,6 +30,10 @@
 @if (_refreshing)
 {
     <MudProgressLinear Indeterminate="true" Color="Color.Primary" Size="Size.Small" Class="solia-refreshing" />
+}
+@if (IsStale)
+{
+    <StaleState Class="mb-2" Message="@StaleMessage" OnRetry="ReloadAsync" />
 }
 @switch (State)
 {
@@ -68,6 +78,9 @@
 
     [Parameter] public string ErrorMessage { get; set; } = "Could not load data from the backend.";
 
+    /// <summary>Shown above the last content when a refresh of the same data failed.</summary>
+    [Parameter] public string StaleMessage { get; set; } = "Could not refresh from the backend; showing the last data received.";
+
     [Parameter] public LoadingVariant LoadingVariant { get; set; } = LoadingVariant.Skeleton;
 
     /// <summary>
@@ -85,7 +98,10 @@
     /// <summary>Replaces the default <see cref="LoadingState"/>.</summary>
     [Parameter] public RenderFragment? Loading { get; set; }
 
-    /// <summary>What the data depends on (a filter, a range…); a change reloads it.</summary>
+    /// <summary>
+    /// What the data depends on (a filter, a range…); a change reloads it. Compared by value: pass an immutable value
+    /// (a record of scalars, a tuple…), never an object mutated in place.
+    /// </summary>
     [Parameter] public object? ReloadKey { get; set; }
 
     /// <summary>
@@ -95,6 +111,9 @@
     public AsyncLoadState State =>
         _state == AsyncLoadState.Content && (_value is null || (IsEmpty?.Invoke(_value) ?? false)) ? AsyncLoadState.Empty : _state;
 
+    /// <summary>Whether the content on screen is what is asked for, but from before a failed refresh.</summary>
+    public bool IsStale => _stale && State is AsyncLoadState.Content or AsyncLoadState.Empty && Equals(Requested, _shown);
+
     private AsyncLoadState _state = AsyncLoadState.Loading;
 
     private TItem? _value;
@@ -102,13 +121,20 @@
     private bool _refreshing;
     private CancellationTokenSource? _cts;
     private bool _started;
-    private Func<CancellationToken, Task<TItem>>? _loadedWith;
-    private object? _loadedKey;
+    private bool _stale;
+    // What the last load was started with (a parameter change reloads), and what the content on screen was loaded
+    // with (a failed refresh of the same data keeps it).
+    private LoadInput? _requested;
+    private LoadInput? _shown;
+
+    private LoadInput Requested => new(Load, ReloadKey);
+
+    private sealed record LoadInput(Func<CancellationToken, Task<TItem>> Load, object? Key);
 
     protected override Task OnParametersSetAsync()
     {
         // Before the first load the latest parameters are simply picked up by it.
-        if (!_started || (Equals(Load, _loadedWith) && Equals(ReloadKey, _loadedKey)))
+        if (!_started || Equals(Requested, _requested))
         {
             return Task.CompletedTask;
         }
@@ -137,8 +163,7 @@
         _cts?.Dispose();
         var cts = new CancellationTokenSource();
         _cts = cts;
-        _loadedWith = Load;
-        _loadedKey = ReloadKey;
+        _requested = Requested;
 
         if (State is AsyncLoadState.Error or AsyncLoadState.Invalid)
         {
@@ -159,7 +184,9 @@
                 return;
             }
             _value = value;
+            _shown = _requested;
             _state = AsyncLoadState.Content;
+            _stale = false;
         }
         catch (Exception) when (cts.IsCancellationRequested)
         {
@@ -170,21 +197,34 @@
         {
             // Cancelled by something else, typically the HttpClient timeout: the backend didn't answer in time.
             Logger.LogWarning("Loading {Type} for the dashboard timed out.", typeof(TItem).Name);
-            _state = AsyncLoadState.Error;
+            Fail();
         }
         catch (Exception ex) when (InvalidMessage?.Invoke(ex) is { } message)
         {
             Logger.LogInformation("The backend rejected the {Type} request: {Message}", typeof(TItem).Name, message);
             _invalidMessage = message;
             _state = AsyncLoadState.Invalid;
+            _stale = false;
         }
         catch (Exception ex)
         {
             Logger.LogWarning(ex, "Loading {Type} for the dashboard failed.", typeof(TItem).Name);
-            _state = AsyncLoadState.Error;
+            Fail();
         }
         _refreshing = false;
         StateHasChanged();
+    }
+
+    // Content of the same data stays (marked stale) rather than being blanked by an error.
+    private void Fail()
+    {
+        if (_state is AsyncLoadState.Content && Equals(_requested, _shown))
+        {
+            _stale = true;
+            return;
+        }
+        _state = AsyncLoadState.Error;
+        _stale = false;
     }
 
     public void Dispose()

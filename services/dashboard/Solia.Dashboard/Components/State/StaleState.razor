@@ -1,0 +1,28 @@
+@*
+    Shown above content kept on screen after a failed refresh: a warning, not an error (the view still answers what
+    was asked, only maybe out of date), so it never matches .solia-error. Offers a retry when the host passes OnRetry.
+*@
+<MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="@($"solia-stale {Class}".TrimEnd())">
+    <div class="d-flex align-center flex-wrap gap-4">
+        <span class="solia-stale__message">@Message</span>
+        @if (OnRetry.HasDelegate)
+        {
+            <MudButton Variant="Variant.Text" Color="Color.Warning" Size="Size.Small"
+                       StartIcon="@Icons.Material.Filled.Refresh" Class="solia-stale__retry" OnClick="OnRetry">
+                @RetryLabel
+            </MudButton>
+        }
+    </div>
+</MudAlert>
+
+@code {
+    [Parameter] public string Message { get; set; } = "Could not refresh; showing the last data received.";
+
+    /// <summary>Invoked by the retry button; no button is drawn without it.</summary>
+    [Parameter] public EventCallback OnRetry { get; set; }
+
+    [Parameter] public string RetryLabel { get; set; } = "Retry";
+
+    /// <summary>Extra classes (e.g. spacing) on the alert.</summary>
+    [Parameter] public string? Class { get; set; }
+}

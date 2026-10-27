@@ -65,8 +65,15 @@
 - Manages secrets (AES) and application config.
 
 ### dashboard (Blazor Server, .NET 10)
-- Live UI over the backend API + SignalR push.
-- Views: live predictions, prediction history, trade history, win-rate, total P&L, performance curve, bot logs.
+- Live UI over the backend: a typed, read-only REST client (`/api/v1/…`: tokens, predictions, trades, stats, logs,
+  model status — never `/predict` or `/model/retrain`) and **one app-wide SignalR client** of the backend hub
+  `/hubs/live` (`prediction_created`, `trade_opened`, `trade_closed`, `log_written`, `stats_changed`), auto-reconnecting
+  with backoff. Delivery is at-most-once, so every (re)connect makes the live views re-fetch over REST.
+- Views: overview (win-rate, total P&L, model status), live predictions, prediction history, trade history,
+  performance (equity curve + win-rate donut, MudBlazor charts), bot logs.
+- Degrades instead of failing: the backend down → each view shows an error state with a retry (or keeps its last data
+  under a stale warning); the hub down → an app-bar LIVE / RECONNECTING / OFFLINE indicator, REST keeps working. See
+  [`services/dashboard/README.md`](../services/dashboard/README.md).
 
 ### PostgreSQL
 - Single source of truth. Schema in [`DATA-MODEL.md`](DATA-MODEL.md); migrations in `services/db/migrations`.
@@ -117,7 +124,8 @@ The HTTP `/predict` endpoint (features in the request → prediction) stays for 
 ## 6. Communication
 
 - **backend ↔ ai-service**: HTTP/JSON (REST). Contracts in `API-CONTRACTS.md`.
-- **backend ↔ dashboard**: in-process + SignalR (Blazor Server) and REST.
+- **backend ↔ dashboard**: REST (`/api/v1`, read endpoints) + a SignalR hub (`/hubs/live`, server → client push).
+  Separately, browsers talk to the dashboard over Blazor Server's own SignalR circuit.
 - **services ↔ db**: direct SQL — EF Core on the .NET side (backend + data-pipeline); SQLAlchemy/asyncpg on the Python side (ai-service).
 - **internal network**: a dedicated Docker bridge network; only the dashboard (and optionally backend) are published to the host.
 

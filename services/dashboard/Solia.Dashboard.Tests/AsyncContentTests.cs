@@ -171,6 +171,99 @@ public class AsyncContentTests : MudTestContext
     }
 
     [Fact]
+    public async Task A_failed_refresh_of_the_same_data_keeps_the_content_under_a_stale_warning()
+    {
+        int calls = 0;
+        IRenderedComponent<AsyncContent<string[]>> cut = RenderWith(_ => ++calls == 1
+            ? Task.FromResult(new[] { "old" })
+            : Task.FromException<string[]>(new HttpRequestException("down: secret-host")));
+        cut.WaitForAssertion(() => Assert.Equal("old", cut.Find("#items li").TextContent));
+
+        await cut.InvokeAsync(cut.Instance.ReloadAsync);
+
+        Assert.Equal(AsyncLoadState.Content, cut.Instance.State);
+        Assert.True(cut.Instance.IsStale);
+        Assert.Equal("old", cut.Find("#items li").TextContent);
+        Assert.Contains("showing the last data received", cut.Find(".solia-stale").TextContent);
+        Assert.Empty(cut.FindAll(".solia-error")); // a warning, not an error
+        Assert.DoesNotContain("secret-host", cut.Markup);
+    }
+
+    [Fact]
+    public void Retrying_a_stale_refresh_clears_the_warning_once_it_succeeds()
+    {
+        int calls = 0;
+        IRenderedComponent<AsyncContent<string[]>> cut = RenderWith(_ => ++calls switch
+        {
+            1 => Task.FromResult(new[] { "old" }),
+            2 => Task.FromException<string[]>(new HttpRequestException("down")),
+            _ => Task.FromResult(new[] { "recovered" }),
+        });
+        cut.WaitForAssertion(() => Assert.Equal("old", cut.Find("#items li").TextContent));
+        cut.InvokeAsync(cut.Instance.ReloadAsync);
+        cut.WaitForAssertion(() => Assert.True(cut.Instance.IsStale));
+
+        cut.Find(".solia-stale button.solia-stale__retry").Click();
+
+        cut.WaitForAssertion(() => Assert.Equal("recovered", cut.Find("#items li").TextContent));
+        Assert.False(cut.Instance.IsStale);
+        Assert.Empty(cut.FindAll(".solia-stale"));
+    }
+
+    [Fact]
+    public void A_failed_load_of_different_data_is_an_error_not_stale_content()
+    {
+        int key = 1;
+        IRenderedComponent<AsyncContent<string[]>> cut = Render<AsyncContent<string[]>>(p => p
+            .Add(c => c.Load, _ => key == 1
+                ? Task.FromResult(new[] { "range 1" })
+                : Task.FromException<string[]>(new HttpRequestException("down")))
+            .Add(c => c.ReloadKey, key)
+            .Add(c => c.ChildContent, (RenderFragment<string[]>)(items => b => b.AddMarkupContent(0, $"<p id=\"shown\">{items[0]}</p>"))));
+        cut.WaitForAssertion(() => Assert.Equal("range 1", cut.Find("#shown").TextContent));
+
+        key = 2;
+        cut.Render(p => p.Add(c => c.ReloadKey, key));
+
+        cut.WaitForAssertion(() => Assert.Equal(AsyncLoadState.Error, cut.Instance.State));
+        Assert.False(cut.Instance.IsStale);
+        Assert.Empty(cut.FindAll("#shown"));
+        Assert.Empty(cut.FindAll(".solia-stale"));
+    }
+
+    [Fact]
+    public async Task The_stale_warning_is_hidden_while_different_data_loads()
+    {
+        int key = 1;
+        var pending = new TaskCompletionSource<string[]>();
+        int calls = 0;
+        IRenderedComponent<AsyncContent<string[]>> cut = Render<AsyncContent<string[]>>(p => p
+            .Add(c => c.Load, _ => ++calls switch
+            {
+                1 => Task.FromResult(new[] { "range 1" }),
+                2 => Task.FromException<string[]>(new HttpRequestException("down")),
+                _ => pending.Task,
+            })
+            .Add(c => c.ReloadKey, key)
+            .Add(c => c.ChildContent, (RenderFragment<string[]>)(items => b => b.AddMarkupContent(0, $"<p id=\"shown\">{items[0]}</p>"))));
+        cut.WaitForAssertion(() => Assert.Equal("range 1", cut.Find("#shown").TextContent));
+        await cut.InvokeAsync(cut.Instance.ReloadAsync);
+        Assert.True(cut.Instance.IsStale);
+
+        key = 2;
+        cut.Render(p => p.Add(c => c.ReloadKey, key));
+
+        // The old rows stay until the new ones arrive, but the warning would claim they answer range 2.
+        Assert.Equal("range 1", cut.Find("#shown").TextContent);
+        Assert.False(cut.Instance.IsStale);
+        Assert.Empty(cut.FindAll(".solia-stale"));
+
+        pending.SetException(new HttpRequestException("down"));
+        cut.WaitForAssertion(() => Assert.Equal(AsyncLoadState.Error, cut.Instance.State));
+        Assert.Empty(cut.FindAll(".solia-stale"));
+    }
+
+    [Fact]
     public void Retry_after_a_failure_shows_the_loading_state_meanwhile()
     {
         var second = new TaskCompletionSource<string[]>();

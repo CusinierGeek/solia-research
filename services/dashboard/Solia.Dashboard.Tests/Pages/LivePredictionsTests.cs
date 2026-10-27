@@ -294,14 +294,14 @@ public class LivePredictionsTests : MudTestContext
         _api.LivePredictions = (_, _) => Task.FromException<IReadOnlyList<PredictionRecordDto>>(new BackendUnavailableException());
         await _feed.ResyncAsync();
 
-        page.WaitForAssertion(() => Assert.NotNull(page.Find(".solia-stale .solia-error")));
+        page.WaitForAssertion(() => Assert.NotNull(page.Find(".solia-stale")));
         Assert.Single(Rows(page));
 
         await _feed.PushAsync(LiveFeedEvents.PredictionCreated, Prediction(2, "m2"));
         page.WaitForAssertion(() => Assert.Equal(2, Rows(page).Count));
 
         Returns(Prediction(1, "m1"));
-        page.Find(".solia-stale .solia-error__retry").Click();
+        page.Find(".solia-stale .solia-stale__retry").Click();
         page.WaitForAssertion(() => Assert.Empty(page.FindAll(".solia-stale")));
         Assert.Single(Rows(page));
     }

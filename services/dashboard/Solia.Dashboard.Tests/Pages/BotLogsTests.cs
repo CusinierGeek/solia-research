@@ -281,11 +281,11 @@ public class BotLogsTests : MudTestContext
         page.WaitForAssertion(() => Assert.Single(Rows(page)));
         _api.BotLogs = (_, _) => Task.FromException<IReadOnlyList<LogDto>>(new BackendUnavailableException());
         await page.InvokeAsync(_feed.ResyncAsync);
-        page.WaitForAssertion(() => Assert.NotNull(page.Find(".solia-stale .solia-error")));
+        page.WaitForAssertion(() => Assert.NotNull(page.Find(".solia-stale")));
 
         page.Find("button.solia-log-tail__toggle").Click();
         Returns(Log(2), Log(1));
-        page.Find(".solia-stale button.solia-error__retry").Click();
+        page.Find(".solia-stale button.solia-stale__retry").Click();
 
         page.WaitForAssertion(() => Assert.Empty(page.FindAll(".solia-stale")));
         Assert.Equal([1], Ids(page));
@@ -417,7 +417,7 @@ public class BotLogsTests : MudTestContext
         _api.BotLogs = (_, _) => Task.FromException<IReadOnlyList<LogDto>>(new BackendUnavailableException());
         await page.InvokeAsync(_feed.ResyncAsync);
 
-        page.WaitForAssertion(() => Assert.NotNull(page.Find(".solia-stale .solia-error")));
+        page.WaitForAssertion(() => Assert.NotNull(page.Find(".solia-stale")));
         Assert.Equal([1], Ids(page));
     }
 

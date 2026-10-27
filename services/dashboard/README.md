@@ -13,16 +13,40 @@ Live UI: predictions, prediction/trade history, win-rate, total P&L, performance
 | `Solia.Dashboard` | Blazor Server host (interactive server render mode), [MudBlazor](https://mudblazor.com) components |
 | `Solia.Dashboard.Tests` | xUnit + [bUnit](https://bunit.dev) component tests, plus host smoke tests |
 
-## Run locally against a local backend
+## Run locally (Postgres + backend + dashboard)
+
+From the repo root (container wiring for the dashboard itself comes in Sprint 6):
 
 ```bash
-# 1. backend on http://localhost:8080 (see services/backend/README.md)
-# 2. dashboard on http://localhost:8081 (launch profile "http")
+# 1. Postgres 16 + schema (see services/db/README.md)
+docker compose up -d postgres
+POSTGRES_HOST=localhost dotnet run --project services/db/Solia.DbMigrator
+
+# 2. backend on http://localhost:8080 (see services/backend/README.md; POSTGRES_* / AI_SERVICE_URL from .env,
+#    PAPER_BOT_ENABLED=true to have the bot trade — without the ai-service the views simply stay empty)
+POSTGRES_HOST=localhost dotnet run --project services/backend/Solia.Api
+
+# 3. dashboard on http://localhost:8081 (launch profile "http"; Development points it at http://localhost:8080)
 dotnet run --project services/dashboard/Solia.Dashboard
 ```
 
 Open <http://localhost:8081>. Liveness probe: `GET /health/live` (checks nothing — the dashboard stays
 up while the backend is down; views show their error state with a retry instead).
+
+## Loading, empty, error and offline states
+
+Every view follows the same rules (audited in Sprint 5 T12):
+
+| Situation | What the view shows |
+|-----------|---------------------|
+| First load in flight | `LoadingState` — a skeleton for tables, a spinner in stat cards. Nothing is fetched while prerendering. |
+| Loaded, nothing to show | `EmptyState` with a view-specific message (*No tracked tokens yet.*, *No trades match these filters.*…). |
+| Backend unreachable / failing on the first load | `ErrorState` — a safe message (never the exception text) and a **Retry**. Each stat card fails on its own. |
+| A refresh of the same data fails (live update, resync, reconcile tick, retry) | The last content **stays**, under a *stale* warning with a **Retry** (`.solia-stale`); it clears on the next success. |
+| A load of different data fails (new filter, page, window) | `ErrorState`: the old content would not answer the new question. |
+| A request the backend rejects (400, e.g. a page past the depth cap) | An inline warning without retry, with a way back to the first page. |
+| Hub disconnected | The app-bar chip turns RECONNECTING / OFFLINE; views keep their data and REST keeps working (stat cards and live predictions still reconcile every 60 s). Live pushes pause. |
+| Hub reconnected | Chip back to LIVE; every live view re-fetches its snapshot (resync), so events missed while offline show up. |
 
 ## Configuration
 
@@ -32,8 +56,11 @@ up while the backend is down; views show their error state with a retry instead)
 | `Backend:AttemptTimeout` | — | Bound on one HTTP attempt to the backend (default `00:00:05`). Between 10 ms and 24 h. |
 | `Backend:TotalTimeout` | — | Bound on a whole call, its one retry included (default `00:00:12`). Between 10 ms and 24 h, and ≥ 2 × `AttemptTimeout` + 250 ms (two attempts plus the jittered retry delay). |
 
-The listen address comes from the launch profile (`http://localhost:8081`); outside `dotnet run`, set
-`ASPNETCORE_URLS` (e.g. `http://+:8081`).
+| `ASPNETCORE_URLS` | — | Listen address. The launch profile sets `http://localhost:8081`; outside `dotnet run` (containers) set it, e.g. `http://+:8081`. |
+| `ASPNETCORE_ENVIRONMENT` | — | `Development` enables the detailed error page and the local `Backend:BaseUrl` default; anything else needs `BACKEND_URL`. |
+| `Logging:LogLevel:*` | `Logging__LogLevel__Default`… | Standard ASP.NET Core logging (console). Failed loads are logged as warnings with the exception; the UI never shows it. |
+
+There is no auth (single-user, internal network) and nothing secret in the dashboard's configuration.
 
 ## Layout & building blocks
 
@@ -100,6 +127,19 @@ The listen address comes from the launch profile (`http://localhost:8081`); outs
 ## Test
 
 ```bash
-dotnet test services/dashboard/Solia.Dashboard.Tests
+dotnet test services/dashboard/Solia.Dashboard.Tests                                    # everything (CI)
+dotnet test services/dashboard/Solia.Dashboard.Tests --filter "Category!=Integration"   # fast local loop
 dotnet format --verify-no-changes
 ```
+
+- **Component tests (bUnit)** — every page (`Pages/*Tests`) against `FakeSoliaApiClient` + `FakeLiveFeed`, plus the
+  building blocks (`AsyncContent`, state components, charts, layout, live-feed indicator) and the pure mappers.
+- **Host tests** — the real host via `WebApplicationFactory` with a fake hub connection: startup validation, health,
+  prerendered shell, 404 page.
+- **End to end** (`EndToEnd/`, in memory — no socket, no Docker — so part of the fast local loop) — the Sprint-5 DoD: the real
+  host (DI, typed REST client with its resilience pipeline, SignalR live feed) bound to `StubBackend`, an in-memory
+  contract-faithful backend (seeded snake_case JSON per docs/API-CONTRACTS.md, the documented error envelope, a
+  SignalR hub at `/hubs/live`). Each view renders the seeded data; pushed predictions, trades and logs appear
+  without a reload; REST down shows error states that recover on retry; a hub outage flips the indicator, keeps the
+  views, and the reconnect's resync re-fetches what was missed. Pages render under bUnit on the host's own services,
+  because the views only fetch once interactive (an HTTP GET sees their loading skeleton).
