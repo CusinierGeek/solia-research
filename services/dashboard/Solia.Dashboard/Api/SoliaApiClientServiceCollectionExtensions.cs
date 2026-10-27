@@ -79,8 +79,7 @@ public static class SoliaApiClientServiceCollectionExtensions
     internal static bool IsTooLarge(Exception? ex) =>
         ex is HttpRequestException { HttpRequestError: HttpRequestError.ConfigurationLimitExceeded };
 
-    internal static Uri ApiBaseAddress(string baseUrl) =>
-        new(new Uri(baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/", UriKind.Absolute), ApiPrefix);
+    internal static Uri ApiBaseAddress(string baseUrl) => BackendOptions.Resolve(baseUrl, ApiPrefix);
 
     /// <summary>
     /// Reads the whole response body within the attempt (and its timeout's token), up to

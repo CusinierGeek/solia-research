@@ -3,6 +3,7 @@ using MudBlazor.Services;
 using Solia.Dashboard.Api;
 using Solia.Dashboard.Components;
 using Solia.Dashboard.Configuration;
+using Solia.Dashboard.Live;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -11,6 +12,9 @@ builder.Services.AddDashboardOptions(builder.Configuration);
 
 // --- Backend REST client: typed ISoliaApiClient, bounded by timeouts, one retry on transient failures ---
 builder.Services.AddSoliaApiClient();
+
+// --- Live feed: one app-wide SignalR connection to {BaseUrl}/hubs/live, auto-reconnecting (never blocks startup) ---
+builder.Services.AddLiveFeed();
 
 // --- UI: Blazor Server (interactive server render mode) + MudBlazor component library ---
 builder.Services.AddRazorComponents()

@@ -1,15 +1,24 @@
 using System.Net;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Solia.Dashboard.Configuration;
+using Solia.Dashboard.Live;
+using Solia.Dashboard.Tests.Live;
 
 namespace Solia.Dashboard.Tests;
 
-/// <summary>Boots the real dashboard host (no backend needed).</summary>
+/// <summary>Boots the real dashboard host (no backend needed: the live feed runs on a fake connection).</summary>
 public class HostTests
 {
     private static WebApplicationFactory<Program> Factory(string environment, params (string Key, string Value)[] settings) =>
+        Factory(new FakeLiveConnection(), environment, settings);
+
+    private static WebApplicationFactory<Program> Factory(
+        FakeLiveConnection connection, string environment, params (string Key, string Value)[] settings) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment(environment);
@@ -17,7 +26,29 @@ public class HostTests
             {
                 builder.UseSetting(key, value);
             }
+
+            builder.ConfigureTestServices(services => services.AddSingleton<ILiveConnection>(connection));
         });
+
+    [Fact]
+    public async Task The_live_feed_is_one_app_wide_hosted_singleton_started_with_the_host()
+    {
+        FakeLiveConnection connection = new();
+        using WebApplicationFactory<Program> factory = Factory(connection, "Production", ("BACKEND_URL", "http://127.0.0.1:1"));
+        IServiceProvider services = factory.Services;
+
+        LiveFeed feed = services.GetRequiredService<LiveFeed>();
+
+        Assert.Same(feed, services.GetRequiredService<ILiveFeed>());
+        Assert.Contains(feed, services.GetServices<IHostedService>());
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(5));
+        while (feed.State != LiveFeedState.Connected)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
+        Assert.Equal(1, connection.StartCalls);
+    }
 
     [Fact]
     public async Task Health_live_is_ok_without_a_reachable_backend()

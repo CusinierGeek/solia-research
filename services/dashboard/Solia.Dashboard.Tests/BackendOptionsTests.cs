@@ -90,4 +90,14 @@ public class BackendOptionsTests
 
         Assert.Equal(TimeSpan.FromSeconds(10.25), options.TotalTimeout);
     }
+
+    [Theory]
+    [InlineData("http://backend:8080", "api/v1/", "http://backend:8080/api/v1/")]
+    [InlineData("http://backend:8080/", "hubs/live", "http://backend:8080/hubs/live")]
+    [InlineData("https://host/solia", "api/v1/", "https://host/solia/api/v1/")]
+    [InlineData("https://host/solia/", "hubs/live", "https://host/solia/hubs/live")]
+    public void Endpoints_resolve_under_the_base_url_with_or_without_a_trailing_slash(string baseUrl, string path, string expected)
+    {
+        Assert.Equal(new Uri(expected), BackendOptions.Resolve(baseUrl, path));
+    }
 }

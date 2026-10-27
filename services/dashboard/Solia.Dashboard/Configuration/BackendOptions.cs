@@ -25,6 +25,13 @@ public sealed class BackendOptions
         Uri.TryCreate(BaseUrl, UriKind.Absolute, out Uri? uri)
         && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 
+    /// <summary>
+    /// <paramref name="relativePath"/> (no leading slash) under <paramref name="baseUrl"/>, which may or may not end
+    /// with a slash — the one place REST and the live hub resolve their endpoints.
+    /// </summary>
+    internal static Uri Resolve(string baseUrl, string relativePath) =>
+        new(new Uri(baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/", UriKind.Absolute), relativePath);
+
     /// <summary>The nominal delay before the one retry.</summary>
     public static readonly TimeSpan RetryDelay = TimeSpan.FromMilliseconds(200);
 

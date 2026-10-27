@@ -1,0 +1,41 @@
+@* App-bar status of the live feed: LIVE / RECONNECTING / OFFLINE. Views stay usable offline (REST), only live updates pause. *@
+@implements IDisposable
+@inject ILiveFeed LiveFeed
+
+<MudTooltip Text="@Look.Tooltip">
+    <MudChip T="string" Color="@Look.Color" Variant="Variant.Outlined" Size="Size.Small" Icon="@Look.Icon"
+             Class="@CssClass" data-state="@_state.ToString().ToLowerInvariant()">
+        @Look.Label
+    </MudChip>
+</MudTooltip>
+
+@code {
+    /// <summary>Extra CSS classes (spacing) from the host.</summary>
+    [Parameter] public string? Class { get; set; }
+
+    private LiveFeedState _state;
+    private IDisposable? _subscription;
+
+    private string CssClass => string.IsNullOrWhiteSpace(Class) ? "solia-live-indicator" : $"solia-live-indicator {Class}";
+
+    private (string Label, Color Color, string Icon, string Tooltip) Look => _state switch
+    {
+        LiveFeedState.Connected => ("LIVE", Color.Success, Icons.Material.Filled.Sensors, "Receiving live updates from the backend."),
+        LiveFeedState.Reconnecting => ("RECONNECTING", Color.Warning, Icons.Material.Filled.Sync, "Live connection lost — reconnecting…"),
+        _ => ("OFFLINE", Color.Error, Icons.Material.Filled.SensorsOff, "Live updates are offline; data shown may be stale. Retrying in the background."),
+    };
+
+    protected override void OnInitialized()
+    {
+        // Subscribe before reading the state, so a change in between isn't missed. The handler re-reads State when it
+        // runs, so a notification that arrives late can never leave a stale chip.
+        _subscription = LiveFeed.SubscribeState(_ => InvokeAsync(() =>
+        {
+            _state = LiveFeed.State;
+            StateHasChanged();
+        }));
+        _state = LiveFeed.State;
+    }
+
+    public void Dispose() => _subscription?.Dispose();
+}

@@ -82,6 +82,12 @@ public sealed record EquityPoint(DateTimeOffset Ts, decimal Equity, decimal Pnl)
 /// <summary><c>GET /stats/performance</c>.</summary>
 public sealed record PerformanceResponse(IReadOnlyList<EquityPoint> Points, decimal TotalPnl);
 
+/// <summary>
+/// The hub's <c>stats_changed</c> signal, sent right after every <c>trade_closed</c>: the <c>/stats/*</c> figures
+/// moved — re-fetch them.
+/// </summary>
+public sealed record StatsChangedDto(long TradeId, DateTimeOffset? ClosedAt);
+
 /// <summary>An operational log entry (<c>GET /logs/bot</c>); <paramref name="Context"/> is the structured JSON as-is.</summary>
 public sealed record LogDto(long Id, DateTimeOffset Ts, string Service, string Level, string Message, JsonElement? Context);
 

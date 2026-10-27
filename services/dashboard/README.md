@@ -45,6 +45,34 @@ The listen address comes from the launch profile (`http://localhost:8081`); outs
   typed query objects (null/blank omitted), one retry on transient GET failures. Every failure is a
   `BackendException` whose `Message` is safe to display: `BackendErrorException` (envelope `Code` + message +
   `StatusCode`) or `BackendUnavailableException` (network failure, timeout, gateway 502/503/504).
+- `Live` — `ILiveFeed`, the shared subscription to the backend's SignalR hub (`{BaseUrl}/hubs/live`):
+  typed events (`LiveFeedEvents.PredictionCreated`, `TradeOpened`, `TradeClosed`, `LogWritten`, `StatsChanged`)
+  carrying the same DTOs as REST. **One connection per app, not per circuit** — the hub broadcasts the same
+  events to everyone, so per-tab connections would only multiply sockets against the backend. Started with the
+  host without blocking it; a failed start and a dropped connection are retried with backoff (0 s, 2 s, 5 s,
+  10 s, then every 30 s, forever); a connection the server keeps closing backs off the same way (the backoff
+  only resets after 30 s connected). `State` is *connected / reconnecting / disconnected*, shown in the app bar by
+  `LiveFeedIndicator` (LIVE / RECONNECTING / OFFLINE). Delivery is at most once, so every (re)connect raises
+  `SubscribeResynced` — re-fetch over REST then. Handlers run off the UI thread and are started in order but not
+  awaited (a slow circuit never stalls the others); a state handler that renders later should read `State` then.
+  Subscribe in `OnInitialized`, marshal with `InvokeAsync`, and dispose the subscription with the component.
+  Host tests swap the `ILiveConnection` service for a fake so no test opens a socket:
+
+```razor
+@implements IDisposable
+@inject ILiveFeed LiveFeed
+@code {
+    private readonly List<IDisposable> _subscriptions = [];
+
+    protected override void OnInitialized()
+    {
+        _subscriptions.Add(LiveFeed.Subscribe(LiveFeedEvents.TradeOpened, t => InvokeAsync(() => { /* apply t */ StateHasChanged(); })));
+        _subscriptions.Add(LiveFeed.SubscribeResynced(() => InvokeAsync(ReloadAsync)));
+    }
+
+    public void Dispose() => _subscriptions.ForEach(s => s.Dispose());
+}
+```
 - `Components/State` — `LoadingState` (skeleton / spinner), `EmptyState`, `ErrorState` (message + retry)
   and `AsyncContent<TItem>`, the *load → loading / empty / error / content* pattern views adopt:
 

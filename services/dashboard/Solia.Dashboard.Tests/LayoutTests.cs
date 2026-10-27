@@ -1,12 +1,17 @@
 using Microsoft.AspNetCore.Components;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
 using Solia.Dashboard.Components.Layout;
+using Solia.Dashboard.Live;
+using Solia.Dashboard.Tests.Live;
 using Solia.Dashboard.Navigation;
 
 namespace Solia.Dashboard.Tests;
 
 public class LayoutTests : MudTestContext
 {
+    public LayoutTests() => Services.AddSingleton<ILiveFeed>(new FakeLiveFeed(LiveFeedState.Reconnecting));
+
     private IRenderedComponent<MainLayout> RenderLayout() =>
         Render<MainLayout>(p => p.Add(l => l.Body, (RenderFragment)(b => b.AddMarkupContent(0, "<p id=\"page-body\">body</p>"))));
 
@@ -38,6 +43,14 @@ public class LayoutTests : MudTestContext
         IRenderedComponent<MainLayout> layout = RenderLayout();
 
         Assert.Contains("PAPER TRADING", layout.Find(".solia-paper-badge").TextContent);
+    }
+
+    [Fact]
+    public void Layout_shows_the_live_feed_status()
+    {
+        IRenderedComponent<MainLayout> layout = RenderLayout();
+
+        Assert.Equal("reconnecting", layout.Find(".solia-live-indicator").GetAttribute("data-state"));
     }
 
     [Fact]
