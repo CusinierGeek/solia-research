@@ -1,0 +1,60 @@
+@*
+    A titled overview card around AsyncContent: each card loads (and fails) on its own, so one endpoint down only
+    turns its own card into an error with a retry — the rest of the page stays.
+
+        <StatCard @ref="_pnl" TItem="PerformanceResponse" Title="Total P&L" Load="ct => Api.GetPerformanceAsync(1, ct)">
+            @DisplayFormat.SignedAmount(context.TotalPnl)
+        </StatCard>
+
+    A live refresh keeps the current value on screen until the new one arrives (call ReloadAsync on the dispatcher).
+*@
+@typeparam TItem
+
+<MudPaper Outlined="true" Class="@($"solia-stat-card pa-4 {Class}".TrimEnd())" data-card="@Name">
+    <div class="d-flex align-center flex-wrap gap-2 mb-2">
+        @if (Icon is not null)
+        {
+            <MudIcon Icon="@Icon" Size="Size.Small" Color="Color.Primary" />
+        }
+        <MudText Typo="Typo.subtitle2" Class="solia-stat-card__title mud-text-secondary">@Title</MudText>
+        @if (Actions is not null)
+        {
+            <MudSpacer />
+            @Actions
+        }
+    </div>
+    <AsyncContent @ref="_content" TItem="TItem" Load="Load" ReloadKey="ReloadKey" LoadingVariant="LoadingVariant.Spinner"
+                  ErrorMessage="@ErrorMessage">
+        @ChildContent(context)
+    </AsyncContent>
+</MudPaper>
+
+@code {
+    private AsyncContent<TItem>? _content;
+
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+
+    /// <summary>A stable hook for styling and tests (<c>data-card</c>).</summary>
+    [Parameter] public string? Name { get; set; }
+
+    [Parameter] public string? Icon { get; set; }
+
+    /// <summary>Fetches the card's value; receives a token cancelled on reload or when the card goes away.</summary>
+    [Parameter, EditorRequired] public Func<CancellationToken, Task<TItem>> Load { get; set; } = default!;
+
+    /// <summary>What the value depends on (e.g. a window); a change reloads it.</summary>
+    [Parameter] public object? ReloadKey { get; set; }
+
+    /// <summary>Renders the loaded value (available as <c>context</c>).</summary>
+    [Parameter, EditorRequired] public RenderFragment<TItem> ChildContent { get; set; } = default!;
+
+    /// <summary>Controls drawn in the card's header (e.g. a window selector).</summary>
+    [Parameter] public RenderFragment? Actions { get; set; }
+
+    [Parameter] public string ErrorMessage { get; set; } = "Could not load this figure from the backend.";
+
+    [Parameter] public string? Class { get; set; }
+
+    /// <summary>Re-fetches the value, keeping the current one on screen meanwhile.</summary>
+    public Task ReloadAsync() => _content?.ReloadAsync() ?? Task.CompletedTask;
+}

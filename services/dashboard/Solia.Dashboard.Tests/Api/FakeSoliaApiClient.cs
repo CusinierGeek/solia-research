@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Solia.Dashboard.Api;
 
 namespace Solia.Dashboard.Tests.Api;
@@ -50,15 +51,39 @@ internal sealed class FakeSoliaApiClient : ISoliaApiClient
         return TradeHistory(query, cancellationToken);
     }
 
-    public Task<WinRateResponse> GetWinRateAsync(StatsWindow? window = null, CancellationToken cancellationToken = default) =>
-        throw new NotSupportedException();
+    public Func<StatsWindow?, CancellationToken, Task<WinRateResponse>> WinRate { get; set; } =
+        (w, _) => Task.FromResult(new WinRateResponse(0, 0, 0, 0, w is { } v ? QueryValues.Format(v) : "all"));
 
-    public Task<PerformanceResponse> GetPerformanceAsync(int? limit = null, CancellationToken cancellationToken = default) =>
-        throw new NotSupportedException();
+    public List<StatsWindow?> WinRateCalls { get; } = [];
+
+    public Task<WinRateResponse> GetWinRateAsync(StatsWindow? window = null, CancellationToken cancellationToken = default)
+    {
+        WinRateCalls.Add(window);
+        return WinRate(window, cancellationToken);
+    }
+
+    public Func<int?, CancellationToken, Task<PerformanceResponse>> Performance { get; set; } =
+        (_, _) => Task.FromResult(new PerformanceResponse([], 0m));
+
+    public List<int?> PerformanceCalls { get; } = [];
+
+    public Task<PerformanceResponse> GetPerformanceAsync(int? limit = null, CancellationToken cancellationToken = default)
+    {
+        PerformanceCalls.Add(limit);
+        return Performance(limit, cancellationToken);
+    }
 
     public Task<IReadOnlyList<LogDto>> GetBotLogsAsync(BotLogsQuery? query = null, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException();
 
-    public Task<ModelStatusResponse> GetModelStatusAsync(CancellationToken cancellationToken = default) =>
-        throw new NotSupportedException();
+    public Func<CancellationToken, Task<ModelStatusResponse>> ModelStatus { get; set; } =
+        _ => Task.FromResult(new ModelStatusResponse(null, null, new Dictionary<string, JsonElement>(), 0, 500));
+
+    public int ModelStatusCalls { get; private set; }
+
+    public Task<ModelStatusResponse> GetModelStatusAsync(CancellationToken cancellationToken = default)
+    {
+        ModelStatusCalls++;
+        return ModelStatus(cancellationToken);
+    }
 }

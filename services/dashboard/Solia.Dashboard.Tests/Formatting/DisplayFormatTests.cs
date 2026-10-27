@@ -68,6 +68,21 @@ public class DisplayFormatTests
     [InlineData(-1, "—")]
     public void Duration(int? seconds, string expected) => Assert.Equal(expected, DisplayFormat.Duration(seconds));
 
+    [Theory]
+    [InlineData("0.01", "solia-pnl--gain")]
+    [InlineData("-0.01", "solia-pnl--loss")]
+    [InlineData("0", null)]
+    [InlineData(null, null)]
+    public void Pnl_class_colours_by_sign(string? pnl, string? expected) =>
+        Assert.Equal(expected, DisplayFormat.PnlClass(pnl is null ? (decimal?)null : decimal.Parse(pnl, CultureInfo.InvariantCulture)));
+
+    [Theory]
+    [InlineData(0.25, "solia-pnl--gain")]
+    [InlineData(-0.25, "solia-pnl--loss")]
+    [InlineData(0.0, null)]
+    public void Pnl_class_works_for_ratios_too(double ratio, string? expected) =>
+        Assert.Equal(expected, DisplayFormat.PnlClass((double?)ratio));
+
     [Fact]
     public void A_missing_timestamp_is_the_placeholder() => Assert.Equal("—", DisplayFormat.Timestamp((DateTimeOffset?)null));
 

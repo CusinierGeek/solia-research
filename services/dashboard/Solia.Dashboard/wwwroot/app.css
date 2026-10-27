@@ -58,13 +58,24 @@ h1:focus {
     max-width: 9rem;
 }
 
-/* Trade history: P&L by sign. */
-.solia-trade-history .solia-pnl--gain {
+/* Trade history and overview: P&L by sign. */
+.solia-trade-history .solia-pnl--gain,
+.solia-overview .solia-pnl--gain {
     color: var(--mud-palette-success);
     font-weight: 600;
 }
 
-.solia-trade-history .solia-pnl--loss {
+.solia-trade-history .solia-pnl--loss,
+.solia-overview .solia-pnl--loss {
     color: var(--mud-palette-error);
     font-weight: 600;
+}
+
+/* Overview: stat cards of equal height, the figure set large. */
+.solia-stat-card {
+    height: 100%;
+}
+
+.solia-stat-card__value {
+    font-variant-numeric: tabular-nums;
 }

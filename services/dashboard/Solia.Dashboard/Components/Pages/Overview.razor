@@ -1,5 +1,165 @@
 @page "/"
+@using Solia.Dashboard.Api
+@using Solia.Dashboard.Formatting
+@implements IDisposable
+@inject ISoliaApiClient Api
+@inject ILiveFeed LiveFeed
+@inject TimeProvider Clock
+@inject ILogger<Overview> Logger
 
 <PageHeader Title="Overview" Description="Bot status, balance, win-rate and total P&L at a glance." />
 
-<EmptyState Message="This view lands in a later Sprint-5 task." Icon="@Icons.Material.Outlined.Construction" />
+<MudGrid Spacing="3" Class="solia-overview">
+    <MudItem xs="12" md="4">
+        <StatCard @ref="_winRate" TItem="WinRateResponse" Name="winrate" Title="Win-rate" Icon="@Icons.Material.Outlined.EmojiEvents"
+                  Load="ct => Api.GetWinRateAsync(_window, ct)" ReloadKey="_window"
+                  ErrorMessage="Could not load the win-rate from the backend.">
+            <Actions>
+                <MudButtonGroup Size="Size.Small" Variant="Variant.Outlined" Class="solia-windows">
+                    @foreach (StatsWindow window in Enum.GetValues<StatsWindow>())
+                    {
+                        <MudButton Color="@(window == _window ? Color.Primary : Color.Default)"
+                                   Variant="@(window == _window ? Variant.Filled : Variant.Outlined)"
+                                   data-window="@QueryValues.Format(window)" OnClick="() => _window = window">
+                            @QueryValues.Format(window)
+                        </MudButton>
+                    }
+                </MudButtonGroup>
+            </Actions>
+            <ChildContent>
+                @{ int closed = context.Wins + context.Losses + context.BreakEven; }
+                <MudText Typo="Typo.h4" Class="solia-stat-card__value">@(closed == 0 ? DisplayFormat.Missing : DisplayFormat.Percent(context.Winrate))</MudText>
+                @if (closed == 0)
+                {
+                    <MudText Typo="Typo.caption" Class="solia-winrate__empty mud-text-secondary">No closed trades in this window.</MudText>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Class="solia-winrate__breakdown mud-text-secondary">
+                        <span class="solia-pnl--gain" data-part="wins">@DisplayFormat.Count(context.Wins) wins</span> ·
+                        <span class="solia-pnl--loss" data-part="losses">@DisplayFormat.Count(context.Losses) losses</span> ·
+                        <span data-part="break-even">@DisplayFormat.Count(context.BreakEven) break-even</span>
+                    </MudText>
+                }
+            </ChildContent>
+        </StatCard>
+    </MudItem>
+
+    <MudItem xs="12" md="4">
+        <StatCard @ref="_pnl" TItem="PerformanceResponse" Name="pnl" Title="Total P&L" Icon="@Icons.Material.Outlined.AccountBalanceWallet"
+                  Load="LoadPerformanceAsync" ErrorMessage="Could not load the total P&L from the backend.">
+            <MudText Typo="Typo.h4" Class="@($"solia-stat-card__value {DisplayFormat.PnlClass(context.TotalPnl)}".TrimEnd())">
+                @DisplayFormat.SignedAmount(context.TotalPnl)
+            </MudText>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">Realized over every closed paper trade.</MudText>
+        </StatCard>
+    </MudItem>
+
+    <MudItem xs="12" md="4">
+        <StatCard @ref="_model" TItem="ModelStatusResponse" Name="model" Title="Model" Icon="@Icons.Material.Outlined.Psychology"
+                  Load="Api.GetModelStatusAsync" ErrorMessage="Could not load the model status from the backend.">
+            @if (context.ChampionVersion is { Length: > 0 } champion)
+            {
+                <MudText Typo="Typo.h4" Class="solia-stat-card__value solia-model__champion">@champion</MudText>
+                @* created_at is when the model was trained: the contract carries no promotion time. *@
+                @if (context.CreatedAt is { } trainedAt)
+                {
+                    <MudText Typo="Typo.body2" Class="solia-model__trained mud-text-secondary">
+                        Trained @DisplayFormat.Timestamp(trainedAt) UTC
+                    </MudText>
+                }
+            }
+            else
+            {
+                <MudText Typo="Typo.h4" Class="solia-stat-card__value solia-model__champion">@DisplayFormat.Missing</MudText>
+                <MudText Typo="Typo.body2" Class="solia-model__none mud-text-secondary">
+                    No champion serving (the ai-service is down or has none yet).
+                </MudText>
+            }
+            <div class="mt-3 solia-model__retrain">
+                <MudText Typo="Typo.body2">
+                    @DisplayFormat.Count(context.TradesSinceLastTrain) / @DisplayFormat.Count(context.RetrainThreshold) trades since last train
+                </MudText>
+                <MudProgressLinear Color="Color.Primary" Value="RetrainProgress(context)" Class="mt-1" />
+            </div>
+        </StatCard>
+    </MudItem>
+</MudGrid>
+
+@code {
+    /// <summary>How long a burst of closes is gathered before the cards re-fetch, once.</summary>
+    internal static readonly TimeSpan RefreshDelay = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// How often the cards re-fetch with no event at all: rolling windows age, and a promotion, a finished retrain
+    /// or an ai-service outage sends nothing on the live hub.
+    /// </summary>
+    internal static readonly TimeSpan ReconcileInterval = TimeSpan.FromSeconds(60);
+
+    private readonly List<IDisposable> _subscriptions = [];
+    private StatCard<WinRateResponse>? _winRate;
+    private StatCard<PerformanceResponse>? _pnl;
+    private StatCard<ModelStatusResponse>? _model;
+    private StatsWindow _window = StatsWindow.All;
+    private Debouncer? _refresh;
+    private ITimer? _reconcileTimer;
+    private bool _disposed;
+
+    // Prerendering never runs OnAfterRender, so the feed is only subscribed to by the interactive circuit. The cards
+    // load themselves before this subscribes, and the feed is usually connected already (no resync follows): a close in
+    // that gap is caught by the next event or, at the latest, by the periodic reconcile.
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (!firstRender || _disposed)
+        {
+            return;
+        }
+        _refresh = new Debouncer(Clock, RefreshDelay, () => InvokeAsync(RefreshAllAsync), Logger);
+        _subscriptions.Add(LiveFeed.Subscribe(LiveFeedEvents.StatsChanged, _ => OnStatsMoved()));
+        _subscriptions.Add(LiveFeed.Subscribe(LiveFeedEvents.TradeClosed, _ => OnStatsMoved()));
+        _subscriptions.Add(LiveFeed.SubscribeResynced(() => InvokeAsync(OnResyncedAsync)));
+        _reconcileTimer = Clock.CreateTimer(_ => _refresh?.Trigger(), null, ReconcileInterval, ReconcileInterval);
+    }
+
+    // Every close is followed by a stats_changed (and either may be lost): both just ask for one refresh soon.
+    private Task OnStatsMoved()
+    {
+        _refresh?.Trigger();
+        return Task.CompletedTask;
+    }
+
+    // Events sent while the feed was down are lost: re-fetch now, which also covers a refresh still pending.
+    private Task OnResyncedAsync()
+    {
+        _refresh?.Cancel();
+        return RefreshAllAsync();
+    }
+
+    // The model card too: its retrain progress counts closed trades.
+    private Task RefreshAllAsync()
+    {
+        if (_disposed)
+        {
+            return Task.CompletedTask;
+        }
+        return Task.WhenAll(
+            _winRate?.ReloadAsync() ?? Task.CompletedTask,
+            _pnl?.ReloadAsync() ?? Task.CompletedTask,
+            _model?.ReloadAsync() ?? Task.CompletedTask);
+    }
+
+    // Only total_pnl is shown: the smallest curve the backend serves keeps the payload tiny.
+    private Task<PerformanceResponse> LoadPerformanceAsync(CancellationToken cancellationToken) =>
+        Api.GetPerformanceAsync(1, cancellationToken);
+
+    private static double RetrainProgress(ModelStatusResponse status) =>
+        status.RetrainThreshold <= 0 ? 0 : Math.Clamp(100.0 * status.TradesSinceLastTrain / status.RetrainThreshold, 0, 100);
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _subscriptions.ForEach(s => s.Dispose());
+        _reconcileTimer?.Dispose();
+        _refresh?.Dispose();
+    }
+}

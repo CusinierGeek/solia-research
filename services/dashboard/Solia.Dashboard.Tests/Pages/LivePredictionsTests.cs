@@ -351,46 +351,4 @@ public class LivePredictionsTests : MudTestContext
 
         Assert.Single(_api.LivePredictionsCalls);
     }
-
-    /// <summary>A fixed clock whose timers only fire when the test ticks them.</summary>
-    private sealed class ManualClock(DateTimeOffset now) : TimeProvider
-    {
-        private readonly List<ManualTimer> _timers = [];
-
-        public override DateTimeOffset GetUtcNow() => now;
-
-        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
-        {
-            var timer = new ManualTimer(callback, state, period);
-            _timers.Add(timer);
-            return timer;
-        }
-
-        /// <summary>Fires every timer of that <paramref name="period"/>; a disposed one too when it raced its disposal.</summary>
-        public void Tick(TimeSpan period, bool includeDisposed = false)
-        {
-            foreach (ManualTimer timer in _timers.Where(t => t.Period == period && (includeDisposed || !t.Disposed)).ToList())
-            {
-                timer.Callback(timer.State);
-            }
-        }
-
-        private sealed class ManualTimer(TimerCallback callback, object? state, TimeSpan period) : ITimer
-        {
-            public TimerCallback Callback { get; } = callback;
-            public object? State { get; } = state;
-            public TimeSpan Period { get; } = period;
-            public bool Disposed { get; private set; }
-
-            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
-
-            public void Dispose() => Disposed = true;
-
-            public ValueTask DisposeAsync()
-            {
-                Dispose();
-                return ValueTask.CompletedTask;
-            }
-        }
-    }
 }

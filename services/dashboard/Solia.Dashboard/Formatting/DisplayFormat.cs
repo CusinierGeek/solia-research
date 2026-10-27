@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Numerics;
 
 namespace Solia.Dashboard.Formatting;
 
@@ -38,6 +39,13 @@ public static class DisplayFormat
     /// <summary>A ratio as a signed percentage with one decimal: <c>0.25</c> → <c>+25.0%</c>, <c>-0.034</c> → <c>-3.4%</c>.</summary>
     public static string SignedPercent(double? ratio) =>
         ratio is { } r && double.IsFinite(r) ? r.ToString("+0.0%;-0.0%;0.0%", CultureInfo.InvariantCulture) : Missing;
+
+    /// <summary>The CSS class colouring a gain or a loss; none for break-even or a missing value.</summary>
+    public static string? PnlClass<T>(T? value) where T : struct, INumber<T> => value is { } v ? PnlClass(v) : null;
+
+    /// <inheritdoc cref="PnlClass{T}(T?)"/>
+    public static string? PnlClass<T>(T value) where T : struct, INumber<T> =>
+        value > T.Zero ? "solia-pnl--gain" : value < T.Zero ? "solia-pnl--loss" : null;
 
     /// <summary>A duration in seconds, in its two largest units: <c>45s</c>, <c>3m 07s</c>, <c>1h 05m</c>, <c>2d 03h</c>.</summary>
     public static string Duration(int? seconds)

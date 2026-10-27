@@ -1,5 +1,4 @@
 @page "/trades"
-@using System.Numerics
 @using Solia.Dashboard.Api
 @using Solia.Dashboard.Formatting
 @using Solia.Dashboard.Trades
@@ -67,8 +66,8 @@
             <td data-col="exit">@DisplayFormat.Amount(context.ExitPrice)</td>
             <td data-col="size">@DisplayFormat.Amount(context.Size)</td>
             <td data-col="duration">@DisplayFormat.Duration(context.DurationSec)</td>
-            <td data-col="pnl" class="@PnlClass(context.Pnl)">@DisplayFormat.SignedAmount(context.Pnl)</td>
-            <td data-col="pnl-pct" class="@PnlClass(context.PnlPct)">@DisplayFormat.SignedPercent(context.PnlPct)</td>
+            <td data-col="pnl" class="@DisplayFormat.PnlClass(context.Pnl)">@DisplayFormat.SignedAmount(context.Pnl)</td>
+            <td data-col="pnl-pct" class="@DisplayFormat.PnlClass(context.PnlPct)">@DisplayFormat.SignedPercent(context.PnlPct)</td>
             <td data-col="strategy"><StrategyChip Strategy="@context.Strategy" /></td>
             <td data-col="confidence">@DisplayFormat.Score(context.Confidence)</td>
             <td data-col="exit-reason">@ExitReasonLabel(context.ExitReason)</td>
@@ -229,9 +228,6 @@
     // The prediction history has no id filter: the token's predictions around the trade are its context.
     private static string PredictionContext(string mint) =>
         QueryValues.Build("predictions/history", new PredictionHistoryQuery { Mint = mint }.ToParameters());
-
-    private static string? PnlClass<T>(T? value) where T : struct, INumber<T> =>
-        value is not { } v ? null : v > T.Zero ? "solia-pnl--gain" : v < T.Zero ? "solia-pnl--loss" : null;
 
     private static string ExitReasonLabel(string? reason) => reason switch
     {
