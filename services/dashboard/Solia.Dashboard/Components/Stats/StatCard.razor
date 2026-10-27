@@ -24,7 +24,7 @@
         }
     </div>
     <AsyncContent @ref="_content" TItem="TItem" Load="Load" ReloadKey="ReloadKey" LoadingVariant="LoadingVariant.Spinner"
-                  ErrorMessage="@ErrorMessage">
+                  IsEmpty="IsEmpty" EmptyMessage="@EmptyMessage" ErrorMessage="@ErrorMessage">
         @ChildContent(context)
     </AsyncContent>
 </MudPaper>
@@ -50,6 +50,11 @@
 
     /// <summary>Controls drawn in the card's header (e.g. a window selector).</summary>
     [Parameter] public RenderFragment? Actions { get; set; }
+
+    /// <summary>Whether a loaded value counts as empty (then <see cref="EmptyMessage"/> replaces it).</summary>
+    [Parameter] public Func<TItem, bool>? IsEmpty { get; set; }
+
+    [Parameter] public string EmptyMessage { get; set; } = "Nothing to show yet.";
 
     [Parameter] public string ErrorMessage { get; set; } = "Could not load this figure from the backend.";
 

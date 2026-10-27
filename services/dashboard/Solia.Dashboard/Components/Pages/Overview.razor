@@ -96,13 +96,11 @@
     /// </summary>
     internal static readonly TimeSpan ReconcileInterval = TimeSpan.FromSeconds(60);
 
-    private readonly List<IDisposable> _subscriptions = [];
     private StatCard<WinRateResponse>? _winRate;
     private StatCard<PerformanceResponse>? _pnl;
     private StatCard<ModelStatusResponse>? _model;
     private StatsWindow _window = StatsWindow.All;
-    private Debouncer? _refresh;
-    private ITimer? _reconcileTimer;
+    private StatsRefresher? _live;
     private bool _disposed;
 
     // Prerendering never runs OnAfterRender, so the feed is only subscribed to by the interactive circuit. The cards
@@ -114,39 +112,15 @@
         {
             return;
         }
-        _refresh = new Debouncer(Clock, RefreshDelay, () => InvokeAsync(RefreshAllAsync), Logger);
-        _subscriptions.Add(LiveFeed.Subscribe(LiveFeedEvents.StatsChanged, _ => OnStatsMoved()));
-        _subscriptions.Add(LiveFeed.Subscribe(LiveFeedEvents.TradeClosed, _ => OnStatsMoved()));
-        _subscriptions.Add(LiveFeed.SubscribeResynced(() => InvokeAsync(OnResyncedAsync)));
-        _reconcileTimer = Clock.CreateTimer(_ => _refresh?.Trigger(), null, ReconcileInterval, ReconcileInterval);
-    }
-
-    // Every close is followed by a stats_changed (and either may be lost): both just ask for one refresh soon.
-    private Task OnStatsMoved()
-    {
-        _refresh?.Trigger();
-        return Task.CompletedTask;
-    }
-
-    // Events sent while the feed was down are lost: re-fetch now, which also covers a refresh still pending.
-    private Task OnResyncedAsync()
-    {
-        _refresh?.Cancel();
-        return RefreshAllAsync();
+        _live = new StatsRefresher(LiveFeed, Clock, RefreshDelay, ReconcileInterval, InvokeAsync, RefreshAllAsync, Logger);
     }
 
     // The model card too: its retrain progress counts closed trades.
-    private Task RefreshAllAsync()
-    {
-        if (_disposed)
-        {
-            return Task.CompletedTask;
-        }
-        return Task.WhenAll(
+    private Task RefreshAllAsync() =>
+        Task.WhenAll(
             _winRate?.ReloadAsync() ?? Task.CompletedTask,
             _pnl?.ReloadAsync() ?? Task.CompletedTask,
             _model?.ReloadAsync() ?? Task.CompletedTask);
-    }
 
     // Only total_pnl is shown: the smallest curve the backend serves keeps the payload tiny.
     private Task<PerformanceResponse> LoadPerformanceAsync(CancellationToken cancellationToken) =>
@@ -158,8 +132,6 @@
     public void Dispose()
     {
         _disposed = true;
-        _subscriptions.ForEach(s => s.Dispose());
-        _reconcileTimer?.Dispose();
-        _refresh?.Dispose();
+        _live?.Dispose();
     }
 }

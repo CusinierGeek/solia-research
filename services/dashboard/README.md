@@ -82,6 +82,20 @@ The listen address comes from the launch profile (`http://localhost:8081`); outs
     @foreach (var token in context) { ... }
 </AsyncContent>
 ```
+- `Components/Charts` + `Stats` — the performance charts. **Library: MudBlazor charts** (chosen for Sprint 5
+  T10 over Blazor-ApexCharts, Radzen and Chart.js): it is already the UI library (no new package, one theme),
+  MIT, and renders SVG on the server with no JS interop of its own. The trade-off: no dual axis, no mixed
+  line/bar series, and value ticks spaced only by whole units. The library lives behind two thin wrappers,
+  `EquityChart` (equity line + starting-balance reference, then a per-trade P&L panel on the same time axis)
+  and `WinRateDonut`. They draw only what the pure mappers hand them: `EquityCurve.From(PerformanceResponse)`
+  (points ordered by `ts`, exact decimals for display, the starting balance derived as latest equity −
+  `total_pnl`, time-label spacing, tooltips) and `WinRateSlices.From(WinRateResponse)`. `ChartAxis` scales a
+  series by a power of ten, so a fractional tick step (a P&L of a few hundredths) becomes a whole one, and
+  labels the ticks back. In MudBlazor 9 the tooltip template gets the hovered *series* index rather than the
+  point's, so the wrapper writes the point's time round-trip (`o`) and `EquityCurve.Tooltip` finds the trade
+  from it. Swapping the library means rewriting the two wrappers only. Page tests stub them
+  (`ComponentFactories.AddStub<EquityChart>()`) and assert the mapped parameters, not library markup; under
+  bUnit the library doesn't plot series anyway (it waits for a browser layout pass).
 
 ## Test
 

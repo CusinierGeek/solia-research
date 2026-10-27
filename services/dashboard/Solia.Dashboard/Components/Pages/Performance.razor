@@ -1,5 +1,113 @@
 @page "/performance"
+@using Solia.Dashboard.Api
+@using Solia.Dashboard.Formatting
+@implements IDisposable
+@inject ISoliaApiClient Api
+@inject ILiveFeed LiveFeed
+@inject TimeProvider Clock
+@inject ILogger<Performance> Logger
 
 <PageHeader Title="Performance" Description="Equity curve and model performance over time." />
 
-<EmptyState Message="This view lands in a later Sprint-5 task." Icon="@Icons.Material.Outlined.Construction" />
+<MudGrid Spacing="3" Class="solia-performance">
+    <MudItem xs="12" lg="9">
+        <StatCard @ref="_curve" TItem="EquityCurve" Name="equity" Title="Equity curve" Icon="@Icons.Material.Outlined.ShowChart"
+                  Load="LoadCurveAsync" ReloadKey="_limit" IsEmpty="c => c.IsEmpty" EmptyMessage="No closed trades yet."
+                  ErrorMessage="Could not load the equity curve from the backend.">
+            <Actions>
+                <MudButtonGroup Size="Size.Small" Variant="Variant.Outlined" Class="solia-limits">
+                    @foreach (int limit in Limits)
+                    {
+                        <MudButton Color="@(limit == _limit ? Color.Primary : Color.Default)"
+                                   Variant="@(limit == _limit ? Variant.Filled : Variant.Outlined)"
+                                   data-limit="@limit" OnClick="() => _limit = limit">
+                            Last @DisplayFormat.Count(limit)
+                        </MudButton>
+                    }
+                </MudButtonGroup>
+            </Actions>
+            <ChildContent>
+                <div class="d-flex flex-wrap gap-4 mb-2 solia-equity-summary">
+                    <MudText Typo="Typo.body2" data-part="start">
+                        Starting balance <strong>@DisplayFormat.Amount(context.StartingBalance)</strong>
+                    </MudText>
+                    <MudText Typo="Typo.body2" data-part="equity">
+                        Equity <strong>@DisplayFormat.Amount(context.Points[^1].Equity)</strong>
+                    </MudText>
+                    <MudText Typo="Typo.body2" data-part="total">
+                        Total P&L <strong class="@DisplayFormat.PnlClass(context.TotalPnl)">@DisplayFormat.SignedAmount(context.TotalPnl)</strong>
+                    </MudText>
+                    <MudText Typo="Typo.body2" Class="mud-text-secondary" data-part="shown">
+                        @* Complete: every closed trade is on the curve, a longer limit changes nothing. *@
+                        @(context.IsComplete ? "All" : "Latest") @DisplayFormat.Count(context.Points.Count) closed trades
+                    </MudText>
+                </div>
+                <EquityChart Curve="context" />
+            </ChildContent>
+        </StatCard>
+    </MudItem>
+
+    <MudItem xs="12" lg="3">
+        <StatCard @ref="_winRate" TItem="WinRateSlices" Name="winrate" Title="Win-rate" Icon="@Icons.Material.Outlined.EmojiEvents"
+                  Load="LoadWinRateAsync" IsEmpty="s => s.IsEmpty" EmptyMessage="No closed trades yet."
+                  ErrorMessage="Could not load the win-rate from the backend.">
+            <MudText Typo="Typo.h4" Class="solia-stat-card__value">@DisplayFormat.Percent(context.Winrate)</MudText>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                over @DisplayFormat.Count(context.Closed) closed trades
+            </MudText>
+            <div class="d-flex justify-center mt-2">
+                <WinRateDonut Slices="context" />
+            </div>
+        </StatCard>
+    </MudItem>
+</MudGrid>
+
+@code {
+    /// <summary>The curve lengths offered (each fetched one point longer, within the backend's 10000).</summary>
+    internal static readonly int[] Limits = [100, 500, 1000, 5000];
+
+    internal const int DefaultLimit = 1000;
+
+    /// <summary>How long a burst of closes is gathered before the charts re-fetch, once.</summary>
+    internal static readonly TimeSpan RefreshDelay = TimeSpan.FromSeconds(1);
+
+    /// <summary>How often the charts re-fetch with no event at all: a dropped event is never replayed.</summary>
+    internal static readonly TimeSpan ReconcileInterval = TimeSpan.FromSeconds(60);
+
+    private StatCard<EquityCurve>? _curve;
+    private StatCard<WinRateSlices>? _winRate;
+    private int _limit = DefaultLimit;
+    private StatsRefresher? _live;
+    private bool _disposed;
+
+    // Same live wiring as the overview: subscribed by the interactive circuit only (prerendering never runs
+    // OnAfterRender); a close before that is caught by the next event or the periodic reconcile.
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (!firstRender || _disposed)
+        {
+            return;
+        }
+        _live = new StatsRefresher(LiveFeed, Clock, RefreshDelay, ReconcileInterval, InvokeAsync, RefreshAllAsync, Logger);
+    }
+
+    private Task RefreshAllAsync() =>
+        Task.WhenAll(_curve?.ReloadAsync() ?? Task.CompletedTask, _winRate?.ReloadAsync() ?? Task.CompletedTask);
+
+    // One point more than shown tells whether older trades were cut off; the curve keeps the length it was asked
+    // for, so a reload in flight still labels the curve on screen by its own length.
+    private async Task<EquityCurve> LoadCurveAsync(CancellationToken cancellationToken)
+    {
+        int shown = _limit;
+        return EquityCurve.From(await Api.GetPerformanceAsync(shown + 1, cancellationToken), shown);
+    }
+
+    private async Task<WinRateSlices> LoadWinRateAsync(CancellationToken cancellationToken) =>
+        WinRateSlices.From(await Api.GetWinRateAsync(StatsWindow.All, cancellationToken));
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _live?.Dispose();
+    }
+}

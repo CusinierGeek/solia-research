@@ -1,0 +1,101 @@
+@*
+    The thin wrapper around the charting library (MudBlazor charts) for the equity curve: everything it draws comes
+    from an EquityCurve, mapped beforehand, so the library can be swapped here alone and stubbed in page tests.
+
+        <EquityChart Curve="EquityCurve.From(response)" />
+
+    Two panels on the same time axis: the equity line over the starting-balance reference, then each trade's P&L
+    (its own scale — a few tenths would be a flat line next to the balance). Every point's tooltip carries the
+    timestamp, the equity and that trade's P&L (the balance, on its reference line), found again from the hovered
+    marker's series and time. The library only spaces
+    value ticks by whole units, so each panel plots its series scaled to its ChartAxis and labels them back.
+*@
+@using MudBlazor.Charts
+
+<div class="solia-equity-chart">
+    <MudChart T="double" ChartType="ChartType.Timeseries" ChartSeries="_equity" ChartOptions="_equityOptions"
+              Width="100%" Height="320px" MatchBoundsToSize="true" Class="solia-equity-chart__equity">
+        <TooltipTemplate Context="tip">
+            @* The library already translates the template to the hovered point. *@
+            @{ var point = Tooltip(tip.Segment, tip.Segment.Index == StartingBalanceSeries ? EquitySeriesKind.StartingBalance : EquitySeriesKind.Equity); }
+            <ChartTooltip Title="@point.Title" Subtitle="@point.Subtitle" X="0" Y="0" Color="@tip.Color" />
+        </TooltipTemplate>
+    </MudChart>
+    <MudText Typo="Typo.caption" Class="mud-text-secondary ml-2">Trade P&L</MudText>
+    <MudChart T="double" ChartType="ChartType.Timeseries" ChartSeries="_pnl" ChartOptions="_pnlOptions"
+              Width="100%" Height="180px" MatchBoundsToSize="true" Class="solia-equity-chart__pnl">
+        <TooltipTemplate Context="tip">
+            @{ var point = Tooltip(tip.Segment, EquitySeriesKind.Pnl); }
+            <ChartTooltip Title="@point.Title" Subtitle="@point.Subtitle" X="0" Y="0" Color="@tip.Color" />
+        </TooltipTemplate>
+    </MudChart>
+</div>
+
+@code {
+    // SVG paint attributes don't resolve CSS variables, so the series carry literal colours that read in both themes.
+    internal const string EquityColor = "#7c6cf0";
+    internal const string StartingBalanceColor = "#9e9e9e";
+    internal const string PnlColor = "#f59e0b";
+
+    internal const int MaxMarkedPoints = 100;
+
+    /// <summary>The index of the starting-balance series in the equity panel (the library's <c>SvgPath.Index</c>).</summary>
+    internal const int StartingBalanceSeries = 1;
+
+    private EquityCurve? _mapped;
+    private List<ChartSeries<double>> _equity = [];
+    private List<ChartSeries<double>> _pnl = [];
+    private TimeSeriesChartOptions _equityOptions = new();
+    private TimeSeriesChartOptions _pnlOptions = new();
+
+    /// <summary>The curve to draw, already mapped from <c>/stats/performance</c>.</summary>
+    [Parameter, EditorRequired] public EquityCurve Curve { get; set; } = default!;
+
+    // Rebuilt only when the data changes: new series lists make the chart redraw from scratch (and drop a hovered
+    // tooltip), while a live refresh with nothing new hands over a new but equal curve.
+    protected override void OnParametersSet()
+    {
+        if (Curve.HasSameData(_mapped))
+        {
+            return;
+        }
+        _mapped = Curve;
+        _equity =
+        [
+            Series("Equity", Curve.EquitySeries),
+            Series("Starting balance", Curve.StartingBalanceSeries),
+        ];
+        _pnl = [Series("Trade P&L", Curve.PnlSeries)];
+        _equityOptions = Options(Curve.EquityAxis, [EquityColor, StartingBalanceColor], showLegend: true);
+        _pnlOptions = Options(Curve.PnlAxis, [PnlColor], showLegend: false);
+        _pnlOptions.YAxisRequireZeroPoint = true;
+    }
+
+    // Read from the mapped curve, which the template's own render may already see replaced.
+    private (string Title, string Subtitle) Tooltip(SvgPath segment, EquitySeriesKind series) =>
+        (_mapped ?? Curve).Tooltip(series, segment.LabelXValue, segment.LabelYValue);
+
+    private static ChartSeries<double> Series(string name, IReadOnlyList<(DateTime Time, double Value)> points) => new()
+    {
+        Name = name,
+        Data = new ChartData<double>(points),
+        // Round-trip, so a tooltip the curve can't place still labels the hovered value exactly.
+        TooltipYValueFormat = EquityCurve.TooltipValueFormat,
+    };
+
+    private TimeSeriesChartOptions Options(ChartAxis axis, string[] palette, bool showLegend) => new()
+    {
+        YAxisTicks = axis.Ticks,
+        YAxisToStringFunc = axis.Label,
+        ChartPalette = palette,
+        ShowLegend = showLegend,
+        // Past a hundred points the markers would bury the line; the tooltips don't need them (the library
+        // hovers an invisible circle on every point either way).
+        ShowDataMarkers = Curve.Points.Count <= MaxMarkedPoints,
+        LineStrokeWidth = 2,
+        TimeLabelSpacing = Curve.LabelSpacing,
+        TimeLabelFormat = Curve.LabelFormat,
+        TooltipTimeLabelFormat = EquityCurve.TooltipTimeFormat,
+        XAxisTitle = "UTC",
+    };
+}

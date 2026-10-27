@@ -1,0 +1,33 @@
+@*
+    The thin wrapper around the charting library (MudBlazor charts) for the win-rate: a donut of the wins, losses
+    and break-even trades from WinRateSlices, mapped beforehand — swapped here alone and stubbed in page tests.
+
+        <WinRateDonut Slices="WinRateSlices.From(response)" />
+*@
+
+<MudChart T="double" ChartType="ChartType.Donut" ChartSeries="_series" ChartLabels="_labels" ChartOptions="_options"
+          Width="220px" Height="220px" LegendPosition="Position.Bottom" Class="solia-winrate-donut" />
+
+@code {
+    // Gain / loss / neutral, as literals: SVG paint attributes don't resolve CSS variables.
+    internal static readonly string[] Palette = ["#00a884", "#e5484d", "#9e9e9e"];
+
+    private WinRateSlices? _mapped;
+    private List<ChartSeries<double>> _series = [];
+    private string[] _labels = [];
+    private readonly DonutChartOptions _options = new() { ChartPalette = Palette };
+
+    /// <summary>The breakdown to draw, already mapped from <c>/stats/winrate</c>.</summary>
+    [Parameter, EditorRequired] public WinRateSlices Slices { get; set; } = default!;
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(Slices, _mapped))
+        {
+            return;
+        }
+        _mapped = Slices;
+        _labels = [.. Slices.Labels];
+        _series = [new() { Name = "Trades", Data = new ChartData<double>(Slices.Values) }];
+    }
+}
