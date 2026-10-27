@@ -16,6 +16,9 @@ builder.Services.AddSoliaApiClient();
 // --- Live feed: one app-wide SignalR connection to {BaseUrl}/hubs/live, auto-reconnecting (never blocks startup) ---
 builder.Services.AddLiveFeed();
 
+// --- Clock: injected so views that show ages (and their tests) don't read the system clock directly ---
+builder.Services.AddSingleton(TimeProvider.System);
+
 // --- UI: Blazor Server (interactive server render mode) + MudBlazor component library ---
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();

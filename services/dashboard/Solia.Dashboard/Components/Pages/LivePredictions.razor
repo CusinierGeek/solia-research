@@ -1,5 +1,316 @@
 @page "/predictions/live"
+@using Solia.Dashboard.Api
+@using Solia.Dashboard.Formatting
+@using Solia.Dashboard.Predictions
+@implements IDisposable
+@inject ISoliaApiClient Api
+@inject ILiveFeed LiveFeed
+@inject TimeProvider Clock
+@inject ILogger<LivePredictions> Logger
 
-<PageHeader Title="Live predictions" Description="Latest model predictions as tokens stream in." />
+<PageHeader Title="Live predictions" Description="The model's latest call on every tracked token, updated as the bot scores them." />
 
-<EmptyState Message="This view lands in a later Sprint-5 task." Icon="@Icons.Material.Outlined.Construction" />
+<div class="d-flex flex-wrap align-center gap-2 mb-4">
+    <MudText Typo="Typo.body2" Class="mud-text-secondary">Horizon</MudText>
+    <MudButtonGroup Size="Size.Small" Variant="Variant.Outlined" Class="solia-horizons">
+        @foreach (PredictionHorizon? horizon in Horizons)
+        {
+            <MudButton Color="@(horizon == _horizon ? Color.Primary : Color.Default)"
+                       Variant="@(horizon == _horizon ? Variant.Filled : Variant.Outlined)"
+                       data-horizon="@(horizon is { } h ? QueryValues.Format(h) : "all")"
+                       OnClick="() => SelectHorizonAsync(horizon)">
+                @(horizon is { } label ? QueryValues.Format(label) : "All")
+            </MudButton>
+        }
+    </MudButtonGroup>
+</div>
+
+@if (_refreshFailed && _state is AsyncLoadState.Content)
+{
+    <div class="solia-stale mb-4">
+        <ErrorState Message="Could not refresh live predictions; showing the last rows received." OnRetry="LoadAsync" />
+    </div>
+}
+
+@switch (_state)
+{
+    case AsyncLoadState.Loading:
+        <LoadingState Lines="6" Message="Loading live predictions" />
+        break;
+    case AsyncLoadState.Error:
+        <ErrorState Message="Could not load live predictions from the backend." OnRetry="LoadAsync" />
+        break;
+    default:
+        IReadOnlyList<PredictionRecordDto> rows = VisibleRows();
+        if (rows.Count == 0)
+        {
+            <EmptyState Message="No tracked tokens yet." Icon="@Icons.Material.Outlined.Insights" />
+            break;
+        }
+        DateTimeOffset now = Clock.GetUtcNow();
+        <MudSimpleTable Dense="true" Hover="true" Class="solia-live-predictions">
+            <thead>
+                <tr>
+                    <th>Token</th>
+                    <th>Horizon</th>
+                    @SortHeader(PredictionSort.PumpProb, "Pump")
+                    @SortHeader(PredictionSort.RugProb, "Rug")
+                    <th>Strategy</th>
+                    @SortHeader(PredictionSort.Confidence, "Confidence")
+                    <th>Model</th>
+                    @SortHeader(PredictionSort.Ts, "Age")
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (PredictionRecordDto p in rows)
+                {
+                    <tr @key="RowKey(p)" class="@RowClass(p)" data-mint="@p.Mint" data-horizon="@p.Horizon">
+                        <td class="solia-token" title="@p.Mint">
+                            <strong>@(p.Symbol ?? "?")</strong>
+                            <span class="mud-text-secondary ml-1 solia-mint">@DisplayFormat.ShortMint(p.Mint)</span>
+                        </td>
+                        <td>@p.Horizon</td>
+                        <td class="@ProbClass(p.PumpProb >= HighPumpProb, "solia-high-pump")" data-col="pump">@DisplayFormat.Percent(p.PumpProb)</td>
+                        <td class="@ProbClass(p.RugProb >= HighRugProb, "solia-high-rug")" data-col="rug">@DisplayFormat.Percent(p.RugProb)</td>
+                        <td data-col="strategy">
+                            @if (p.Strategy is { Length: > 0 } strategy)
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="@StrategyColor(strategy)"
+                                         Class="solia-strategy">@strategy.ToUpperInvariant()</MudChip>
+                            }
+                            else
+                            {
+                                @DisplayFormat.Missing
+                            }
+                        </td>
+                        <td data-col="confidence">@DisplayFormat.Score(p.Confidence)</td>
+                        <td data-col="model">@(p.ModelVersion ?? DisplayFormat.Missing)</td>
+                        <td data-col="age" title="@p.Ts.UtcDateTime.ToString("u")">@DisplayFormat.Age(p.Ts, now)</td>
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+        break;
+}
+
+@code {
+    /// <summary>Rows kept (and asked of <c>/predictions/live</c>): one per (token, horizon).</summary>
+    internal const int Capacity = 500;
+
+    /// <summary>A pump probability at or above this is emphasised.</summary>
+    internal const double HighPumpProb = 0.7;
+
+    /// <summary>A rug probability at or above this is emphasised.</summary>
+    internal const double HighRugProb = 0.5;
+
+    private static readonly PredictionHorizon?[] Horizons = [null, .. Enum.GetValues<PredictionHorizon>().Cast<PredictionHorizon?>()];
+
+    private static readonly TimeSpan AgeRefresh = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// How often the snapshot is re-fetched even without a resync: pushes never remove a row, so this is what drops
+    /// tokens the backend stopped tracking (<c>/predictions/live</c> only returns active ones).
+    /// </summary>
+    internal static readonly TimeSpan ReconcileInterval = TimeSpan.FromSeconds(60);
+
+    private readonly LivePredictionBoard _board = new(Capacity);
+    private readonly List<IDisposable> _subscriptions = [];
+    private AsyncLoadState _state = AsyncLoadState.Loading;
+    private PredictionHorizon? _horizon;
+    private PredictionSort _sort = PredictionSort.Ts;
+    private bool _descending = true;
+    private CancellationTokenSource? _cts;
+    private List<PredictionRecordDto>? _pushedDuringLoad;
+    private ITimer? _ageTimer;
+    private ITimer? _reconcileTimer;
+    private bool _refreshFailed;
+    private bool _disposed;
+
+    // Prerendering never runs OnAfterRender, so the backend and the feed are only touched by the interactive circuit.
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return Task.CompletedTask;
+        }
+
+        // Subscribe before the first fetch so nothing pushed while it runs is missed (it's replayed on top).
+        _subscriptions.Add(LiveFeed.Subscribe(LiveFeedEvents.PredictionCreated, p => InvokeAsync(() => OnPredictionCreated(p))));
+        _subscriptions.Add(LiveFeed.SubscribeResynced(() => InvokeAsync(LoadAsync)));
+        _ageTimer = Clock.CreateTimer(_ => _ = OnTimerAsync(RefreshAges), null, AgeRefresh, AgeRefresh);
+        _reconcileTimer = Clock.CreateTimer(_ => _ = OnTimerAsync(LoadAsync), null, ReconcileInterval, ReconcileInterval);
+        return LoadAsync();
+    }
+
+    /// <summary>
+    /// (Re)fetches the snapshot. Rows on screen stay until it arrives — and, if it fails, after it too, under a
+    /// warning; a newer call supersedes it.
+    /// </summary>
+    private async Task LoadAsync()
+    {
+        // A resync or timer callback can already be queued on the dispatcher when the page goes away.
+        if (_disposed)
+        {
+            return;
+        }
+
+        _cts?.Cancel();
+        _cts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _cts = cts;
+        _pushedDuringLoad = [];
+
+        if (_state is AsyncLoadState.Error)
+        {
+            _state = AsyncLoadState.Loading;
+            StateHasChanged();
+        }
+
+        try
+        {
+            IReadOnlyList<PredictionRecordDto> snapshot = await Api.GetLivePredictionsAsync(
+                new LivePredictionsQuery { Limit = Capacity, Horizon = _horizon }, cts.Token);
+            if (cts.IsCancellationRequested)
+            {
+                return;
+            }
+
+            // Events that arrived while the request was in flight may be newer than the snapshot: apply them on top.
+            _board.Reset(snapshot);
+            _pushedDuringLoad.ForEach(p => _board.Upsert(p));
+            _state = AsyncLoadState.Content;
+            _refreshFailed = false;
+        }
+        catch (Exception) when (cts.IsCancellationRequested)
+        {
+            return; // superseded, or the page went away
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Loading live predictions for the dashboard failed.");
+            if (_state is AsyncLoadState.Content)
+            {
+                _refreshFailed = true; // keep what is on screen (still updated by pushes) rather than blank it
+            }
+            else
+            {
+                _state = AsyncLoadState.Error;
+            }
+        }
+
+        _pushedDuringLoad = null;
+        StateHasChanged();
+    }
+
+    private void OnPredictionCreated(PredictionRecordDto prediction)
+    {
+        // Another horizon's rows would only take room in the board (and evict visible ones); the next re-fetch
+        // brings them back if the filter changes.
+        if (_disposed || !Matches(prediction))
+        {
+            return;
+        }
+
+        _pushedDuringLoad?.Add(prediction);
+        if (_board.Upsert(prediction) && _state is AsyncLoadState.Content)
+        {
+            StateHasChanged();
+        }
+    }
+
+    // Ages only show in the table; elsewhere a tick has nothing to redraw.
+    private void RefreshAges()
+    {
+        if (_state is AsyncLoadState.Content)
+        {
+            StateHasChanged();
+        }
+    }
+
+    // Timer callbacks run off the dispatcher and their task is not awaited: never let a fault go unobserved.
+    private async Task OnTimerAsync(Func<Task> work)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+        try
+        {
+            await InvokeAsync(work);
+        }
+        catch (ObjectDisposedException)
+        {
+            // the circuit was torn down between the tick and Dispose
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "A live predictions refresh tick failed.");
+        }
+    }
+
+    private Task OnTimerAsync(Action work) => OnTimerAsync(() => { work(); return Task.CompletedTask; });
+
+    private Task SelectHorizonAsync(PredictionHorizon? horizon)
+    {
+        if (horizon == _horizon)
+        {
+            return Task.CompletedTask;
+        }
+        _horizon = horizon;
+        return LoadAsync();
+    }
+
+    private void SortBy(PredictionSort sort)
+    {
+        _descending = sort != _sort || !_descending;
+        _sort = sort;
+    }
+
+    // Rows of the previous filter can sit in the board until the re-fetch lands (or if it failed).
+    private IReadOnlyList<PredictionRecordDto> VisibleRows() =>
+        _board.Sorted(_sort, _descending, _horizon is { } h ? QueryValues.Format(h) : null);
+
+    private bool Matches(PredictionRecordDto prediction) =>
+        _horizon is not { } h || prediction.Horizon == QueryValues.Format(h);
+
+    private static string RowKey(PredictionRecordDto p) => $"{p.Mint}|{p.Horizon}";
+
+    private static string? RowClass(PredictionRecordDto p) =>
+        p.RugProb >= HighRugProb ? "solia-row--rug" : p.PumpProb >= HighPumpProb ? "solia-row--pump" : null;
+
+    private static string? ProbClass(bool high, string cssClass) => high ? cssClass : null;
+
+    private static Color StrategyColor(string strategy) => strategy switch
+    {
+        "buy" => Color.Success,
+        "sell" => Color.Error,
+        _ => Color.Default,
+    };
+
+    private RenderFragment SortHeader(PredictionSort sort, string label) => __builder =>
+    {
+        bool active = sort == _sort;
+        // The Age column sorts by ts, which runs the other way: newest ts first is youngest age first.
+        bool descending = sort is PredictionSort.Ts ? !_descending : _descending;
+        <th data-sort="@QueryValues.Format(sort)" aria-sort="@(active ? (descending ? "descending" : "ascending") : "none")">
+            <button type="button" class="solia-sort" @onclick="() => SortBy(sort)">
+                @label
+                @if (active)
+                {
+                    <MudIcon Icon="@(descending ? Icons.Material.Filled.ArrowDownward : Icons.Material.Filled.ArrowUpward)" Size="Size.Small" />
+                }
+            </button>
+        </th>
+    };
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _subscriptions.ForEach(s => s.Dispose());
+        _ageTimer?.Dispose();
+        _reconcileTimer?.Dispose();
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = null;
+    }
+}

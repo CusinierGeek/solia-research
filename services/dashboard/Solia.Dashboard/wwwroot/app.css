@@ -11,3 +11,40 @@ h1:focus {
     .blazor-error-boundary::after {
         content: "An error has occurred."
     }
+
+/* Live predictions: emphasis for the calls that matter (high pump / high rug), sortable headers. */
+.solia-live-predictions .solia-high-pump {
+    color: var(--mud-palette-success);
+    font-weight: 600;
+}
+
+.solia-live-predictions .solia-high-rug {
+    color: var(--mud-palette-error);
+    font-weight: 600;
+}
+
+.solia-live-predictions tr.solia-row--pump {
+    box-shadow: inset 3px 0 0 var(--mud-palette-success);
+}
+
+.solia-live-predictions tr.solia-row--rug {
+    box-shadow: inset 3px 0 0 var(--mud-palette-error);
+}
+
+.solia-live-predictions .solia-mint {
+    font-family: monospace;
+    font-size: 0.85em;
+}
+
+.solia-sort {
+    all: unset;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-weight: inherit;
+}
+
+.solia-sort:focus-visible {
+    outline: 2px solid var(--mud-palette-primary);
+}
