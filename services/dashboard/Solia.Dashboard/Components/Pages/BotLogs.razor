@@ -1,5 +1,359 @@
 @page "/logs"
+@using System.Text.Json
+@using Solia.Dashboard.Api
+@using Solia.Dashboard.Formatting
+@using Solia.Dashboard.Logs
+@inherits UrlStatePage
+@inject ISoliaApiClient Api
+@inject ILiveFeed LiveFeed
+@inject TimeProvider Clock
+@inject ILogger<BotLogs> Logger
 
-<PageHeader Title="Bot logs" Description="Recent bot and pipeline log entries." />
+<PageHeader Title="Bot logs" Description="Recent log entries from every Solia service, newest first, as they are written." />
 
-<EmptyState Message="This view lands in a later Sprint-5 task." Icon="@Icons.Material.Outlined.Construction" />
+<FilterBar TFilter="BotLogsFilter" Value="_filter" Empty="BotLogsFilter.None" OnApply="ApplyFilter">
+    <MudSelect T="BotLogLevel?" Label="Minimum level" Value="context.Draft.Level" Variant="Variant.Outlined"
+               Margin="Margin.Dense" Clearable="true" Class="solia-filter-level" ToStringFunc="Wire"
+               ValueChanged="v => context.Edit(f => f with { Level = v })">
+        @foreach (BotLogLevel level in Enum.GetValues<BotLogLevel>())
+        {
+            <MudSelectItem T="BotLogLevel?" Value="level">@QueryValues.Format(level)</MudSelectItem>
+        }
+    </MudSelect>
+    <MudSelect T="LogService?" Label="Service" Value="context.Draft.Service" Variant="Variant.Outlined"
+               Margin="Margin.Dense" Clearable="true" Class="solia-filter-service" ToStringFunc="Wire"
+               ValueChanged="v => context.Edit(f => f with { Service = v })">
+        @foreach (LogService service in Enum.GetValues<LogService>())
+        {
+            <MudSelectItem T="LogService?" Value="service">@QueryValues.Format(service)</MudSelectItem>
+        }
+    </MudSelect>
+    <MudSelect T="int" Label="Limit" Value="context.Draft.EffectiveLimit" Variant="Variant.Outlined"
+               Margin="Margin.Dense" Class="solia-filter-limit"
+               ValueChanged="v => context.Edit(f => f with { Limit = v })">
+        @foreach (int limit in LimitChoices(context.Draft.EffectiveLimit))
+        {
+            <MudSelectItem T="int" Value="limit">@limit</MudSelectItem>
+        }
+    </MudSelect>
+</FilterBar>
+
+<div class="d-flex flex-wrap align-center gap-2 mb-3 solia-log-tail">
+    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="solia-log-tail__state"
+             Color="@(_paused ? Color.Warning : Color.Success)">@(_paused ? "Paused" : "Live")</MudChip>
+    <MudButton Variant="Variant.Outlined" Size="Size.Small" Class="solia-log-tail__toggle"
+               StartIcon="@(_paused ? Icons.Material.Filled.PlayArrow : Icons.Material.Filled.Pause)"
+               OnClick="TogglePauseAsync">@(_paused ? "Resume" : "Pause")</MudButton>
+    @if (_paused && _missed > 0)
+    {
+        <MudText Typo="Typo.body2" Class="mud-text-secondary solia-log-tail__missed">
+            @DisplayFormat.Count(_missed) new @(_missed == 1 ? "entry" : "entries") since paused
+        </MudText>
+    }
+</div>
+
+@if (_refreshFailed && _state is AsyncLoadState.Content)
+{
+    <div class="solia-stale mb-4">
+        <ErrorState Message="Could not refresh the logs; showing the last entries received." OnRetry="LoadAsync" />
+    </div>
+}
+
+@switch (_state)
+{
+    case AsyncLoadState.Loading:
+        <LoadingState Lines="8" Message="Loading logs" />
+        break;
+    case AsyncLoadState.Error:
+        <ErrorState Message="Could not load the logs from the backend." OnRetry="LoadAsync" />
+        break;
+    default:
+        if (_tail.Rows.Count == 0)
+        {
+            <EmptyState Message="No log entries match these filters." Icon="@Icons.Material.Outlined.Article" />
+            break;
+        }
+        <MudSimpleTable Dense="true" Hover="true" Class="solia-bot-logs">
+            <thead>
+                <tr>
+                    <th>Time (UTC)</th>
+                    <th>Service</th>
+                    <th>Level</th>
+                    <th>Message</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (LogDto log in _tail.Rows)
+                {
+                    bool expandable = IsExpandable(log);
+                    bool expanded = expandable && _expanded.Contains(log.Id);
+                    <tr @key="log.Id" data-id="@log.Id" data-level="@log.Level" data-service="@log.Service">
+                        <td data-col="ts" class="solia-log__ts" title="@log.Ts.UtcDateTime.ToString("O")">@DisplayFormat.Timestamp(log.Ts)</td>
+                        <td data-col="service">@log.Service</td>
+                        <td data-col="level">
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="LevelColor(log.Level)">@log.Level</MudChip>
+                        </td>
+                        <td data-col="message" class="solia-log__message">@(expanded ? log.Message : Preview(log.Message))</td>
+                        <td data-col="expand">
+                            @if (expandable)
+                            {
+                                <MudIconButton Size="Size.Small" Class="solia-log__expand" aria-expanded="@(expanded ? "true" : "false")"
+                                               aria-label="@(expanded ? "Hide details" : "Show details")"
+                                               Icon="@(expanded ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
+                                               OnClick="() => ToggleExpanded(log.Id)" />
+                            }
+                        </td>
+                    </tr>
+                    @if (expanded && log.Context is { ValueKind: not JsonValueKind.Null } contextJson)
+                    {
+                        <tr @key="(log.Id, true)" class="solia-log__details" data-details-for="@log.Id">
+                            <td colspan="5"><pre class="solia-log__context">@FormatContext(contextJson)</pre></td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </MudSimpleTable>
+        break;
+}
+
+@code {
+    /// <summary>Longer messages are cut to this many characters until their row is expanded.</summary>
+    internal const int MessagePreviewLength = 300;
+
+    /// <summary>Pushed entries are rendered at most this often: a burst re-renders the table once, not per entry.</summary>
+    internal static readonly TimeSpan RenderInterval = TimeSpan.FromMilliseconds(250);
+
+    // Readable as written (no < for "<"): the text is HTML-encoded by the renderer, never parsed as markup.
+    private static readonly JsonSerializerOptions Indented = new()
+    {
+        WriteIndented = true,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
+    private readonly LogTail _tail = new();
+    private readonly HashSet<long> _expanded = [];
+    private readonly List<IDisposable> _subscriptions = [];
+    private BotLogsFilter _filter = BotLogsFilter.None;
+    private AsyncLoadState _state = AsyncLoadState.Loading;
+    private CancellationTokenSource? _cts;
+    private List<LogDto>? _pushedDuringLoad;
+    private List<LogDto>? _missedDuringLoad;
+    private Debouncer? _render;
+    private bool _started;
+    private bool _refreshFailed;
+    private bool _paused;
+    private int _missed;
+    private bool _staleWhilePaused;
+    private bool _disposed;
+
+    protected override string Path => "logs";
+
+    protected override void ReadUrl()
+    {
+        BotLogsFilter filter = BotLogsFilter.FromUri(Navigation.Uri);
+        if (filter == _filter)
+        {
+            return;
+        }
+        _filter = filter;
+        if (_started)
+        {
+            // Another filter's entries must not be shown (nor pushes mixed into them) under this one.
+            _tail.Reset([], filter.EffectiveLimit);
+            _expanded.Clear();
+            _state = AsyncLoadState.Loading;
+            _refreshFailed = false;
+            _ = LoadAsync(); // never faults: failures are caught and shown
+        }
+    }
+
+    // Prerendering never runs OnAfterRender, so the backend and the feed are only touched by the interactive circuit.
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return Task.CompletedTask;
+        }
+
+        // Subscribe before the first fetch so nothing pushed while it runs is missed (it's replayed on top).
+        _started = true;
+        _render = new Debouncer(Clock, RenderInterval, () => InvokeAsync(StateHasChanged), Logger);
+        _subscriptions.Add(LiveFeed.Subscribe(LiveFeedEvents.LogWritten, l => InvokeAsync(() => OnLogWritten(l))));
+        _subscriptions.Add(LiveFeed.SubscribeResynced(() => InvokeAsync(OnResyncedAsync)));
+        return LoadAsync();
+    }
+
+    /// <summary>
+    /// (Re)fetches the newest entries for the filters. Entries on screen stay until they arrive — and, if the fetch
+    /// fails, after it too, under a warning; a newer call supersedes it. A paused tail keeps them still: the entries
+    /// fetched for it are left for the resume to catch up with.
+    /// </summary>
+    private async Task LoadAsync()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _cts?.Cancel();
+        _cts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _cts = cts;
+        _pushedDuringLoad = [];
+        _missedDuringLoad = [];
+        BotLogsFilter filter = _filter;
+
+        if (_state is AsyncLoadState.Error)
+        {
+            _state = AsyncLoadState.Loading;
+            StateHasChanged();
+        }
+
+        try
+        {
+            IReadOnlyList<LogDto> snapshot = await Api.GetBotLogsAsync(filter.ToQuery(), cts.Token);
+            if (cts.IsCancellationRequested)
+            {
+                return;
+            }
+
+            if (_paused && _state is AsyncLoadState.Content)
+            {
+                _staleWhilePaused = true; // the backend answered: no warning, but the resume re-fetches
+                _refreshFailed = false;
+            }
+            else
+            {
+                // Entries pushed while the request was in flight may be newer than the snapshot: add them on top.
+                _tail.Reset(snapshot, filter.EffectiveLimit);
+                _pushedDuringLoad.ForEach(l => _tail.Add(l));
+                _expanded.IntersectWith(_tail.Rows.Select(l => l.Id));
+                _state = AsyncLoadState.Content;
+                _refreshFailed = false;
+                _staleWhilePaused = false;
+                // What a paused tail skipped during the fetch is still missed unless the snapshot has it.
+                HashSet<long> fetched = [.. snapshot.Select(l => l.Id)];
+                _missed = _missedDuringLoad.Count(l => !fetched.Contains(l.Id));
+            }
+        }
+        catch (Exception) when (cts.IsCancellationRequested)
+        {
+            return; // superseded, or the page went away
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Loading bot logs for the dashboard failed.");
+            if (_state is AsyncLoadState.Content)
+            {
+                _refreshFailed = true;
+            }
+            else
+            {
+                _state = AsyncLoadState.Error;
+            }
+        }
+
+        _pushedDuringLoad = null;
+        _missedDuringLoad = null;
+        _render?.Cancel();
+        StateHasChanged();
+    }
+
+    // Another filter's entries would only take room in the tail; pushes are checked with the API's own rules.
+    private void OnLogWritten(LogDto log)
+    {
+        if (_disposed || !_filter.Matches(log))
+        {
+            return;
+        }
+        if (_paused)
+        {
+            _missed++;
+            _missedDuringLoad?.Add(log);
+            _render?.Trigger();
+            return;
+        }
+
+        _pushedDuringLoad?.Add(log);
+        if (!_tail.Add(log))
+        {
+            return;
+        }
+        if (_expanded.Count > 0)
+        {
+            _expanded.RemoveWhere(id => !_tail.Contains(id)); // the entry dropped past the cap
+        }
+        if (_state is AsyncLoadState.Content)
+        {
+            _render?.Trigger();
+        }
+    }
+
+    // Entries written while the feed was down are lost: re-fetch — once resumed, if paused.
+    private Task OnResyncedAsync()
+    {
+        if (_disposed)
+        {
+            return Task.CompletedTask;
+        }
+        if (_paused)
+        {
+            _staleWhilePaused = true;
+            return Task.CompletedTask;
+        }
+        return LoadAsync();
+    }
+
+    // A paused tail keeps the entries on screen still; resuming catches up with what it skipped.
+    private Task TogglePauseAsync()
+    {
+        _paused = !_paused;
+        if (!_paused && (_missed > 0 || _staleWhilePaused))
+        {
+            return LoadAsync();
+        }
+        return Task.CompletedTask;
+    }
+
+    private void ApplyFilter(BotLogsFilter filter) => Navigate(filter.ToQueryParameters());
+
+    private void ToggleExpanded(long id)
+    {
+        if (!_expanded.Remove(id))
+        {
+            _expanded.Add(id);
+        }
+    }
+
+    private static bool IsExpandable(LogDto log) =>
+        log.Context is { ValueKind: not JsonValueKind.Null } || log.Message.Length > MessagePreviewLength;
+
+    private static string Preview(string message) =>
+        message.Length > MessagePreviewLength ? string.Concat(message.AsSpan(0, MessagePreviewLength), "…") : message;
+
+    private static string FormatContext(JsonElement context) => JsonSerializer.Serialize(context, Indented);
+
+    private static Color LevelColor(string level) => QueryValues.Parse<BotLogLevel>(level) switch
+    {
+        BotLogLevel.Error => Color.Error,
+        BotLogLevel.Warn => Color.Warning,
+        BotLogLevel.Info => Color.Info,
+        _ => Color.Default,
+    };
+
+    // A limit typed into the URL that isn't one of the choices is still shown (and kept) as selected.
+    private static IEnumerable<int> LimitChoices(int current) =>
+        BotLogsFilter.Limits.Contains(current) ? BotLogsFilter.Limits : BotLogsFilter.Limits.Append(current).Order();
+
+    public override void Dispose()
+    {
+        _disposed = true;
+        _subscriptions.ForEach(s => s.Dispose());
+        _render?.Dispose();
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = null;
+        base.Dispose();
+    }
+}

@@ -73,8 +73,17 @@ internal sealed class FakeSoliaApiClient : ISoliaApiClient
         return Performance(limit, cancellationToken);
     }
 
-    public Task<IReadOnlyList<LogDto>> GetBotLogsAsync(BotLogsQuery? query = null, CancellationToken cancellationToken = default) =>
-        throw new NotSupportedException();
+    public Func<BotLogsQuery, CancellationToken, Task<IReadOnlyList<LogDto>>> BotLogs { get; set; } =
+        (_, _) => Task.FromResult<IReadOnlyList<LogDto>>([]);
+
+    public List<BotLogsQuery> BotLogsCalls { get; } = [];
+
+    public Task<IReadOnlyList<LogDto>> GetBotLogsAsync(BotLogsQuery? query = null, CancellationToken cancellationToken = default)
+    {
+        query ??= new();
+        BotLogsCalls.Add(query);
+        return BotLogs(query, cancellationToken);
+    }
 
     public Func<CancellationToken, Task<ModelStatusResponse>> ModelStatus { get; set; } =
         _ => Task.FromResult(new ModelStatusResponse(null, null, new Dictionary<string, JsonElement>(), 0, 500));

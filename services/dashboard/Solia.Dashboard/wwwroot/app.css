@@ -79,3 +79,24 @@ h1:focus {
 .solia-stat-card__value {
     font-variant-numeric: tabular-nums;
 }
+
+/* Bot logs: messages and context shown as text, wrapped (never widening the table), context in a scroll box. */
+.solia-bot-logs .solia-log__ts {
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.solia-bot-logs .solia-log__message {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    width: 100%;
+}
+
+.solia-bot-logs .solia-log__context {
+    margin: 0;
+    max-height: 24rem;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-size: 0.85em;
+}
