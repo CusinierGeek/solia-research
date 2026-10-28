@@ -5,7 +5,7 @@ using Xunit;
 namespace Solia.Testing;
 
 /// <summary>
-/// An ephemeral PostgreSQL 16 with the <c>services/db/migrations</c> SQL applied, shared by a test class.
+/// An ephemeral PostgreSQL 16 with the <c>services/db/migrations</c> SQL applied (unless a subclass opts out), shared by a test class.
 /// The single Testcontainers bootstrap for every .NET test suite, so the schema they run against can't drift.
 /// Classes using it are integration tests: tag them <c>[Trait(TestCategories.Key, TestCategories.Integration)]</c>.
 /// </summary>
@@ -16,6 +16,16 @@ public class PostgresFixture : IAsyncLifetime
         new PostgreSqlBuilder().WithImage("postgres:16-alpine").Build();
 #pragma warning restore CS0618
 
+    private readonly bool _applyMigrations;
+
+    public PostgresFixture()
+        : this(applyMigrations: true)
+    {
+    }
+
+    /// <summary><paramref name="applyMigrations"/> = false leaves the database empty (e.g. to test the migrator itself).</summary>
+    protected PostgresFixture(bool applyMigrations) => _applyMigrations = applyMigrations;
+
     public string ConnectionString { get; private set; } = null!;
 
     public NpgsqlDataSource DataSource { get; private set; } = null!;
@@ -25,6 +35,11 @@ public class PostgresFixture : IAsyncLifetime
         await _postgres.StartAsync();
         ConnectionString = _postgres.GetConnectionString();
         DataSource = NpgsqlDataSource.Create(ConnectionString);
+        if (!_applyMigrations)
+        {
+            return;
+        }
+
         foreach (string file in Directory.GetFiles(FindMigrationsDir(), "*.sql").OrderBy(f => f, StringComparer.Ordinal))
         {
             await using NpgsqlCommand cmd = DataSource.CreateCommand(await File.ReadAllTextAsync(file));
@@ -38,15 +53,21 @@ public class PostgresFixture : IAsyncLifetime
         await _postgres.DisposeAsync();
     }
 
-    public async Task<T> ScalarAsync<T>(string sql, params (string Name, object Value)[] parameters)
+    public Task<T> ScalarAsync<T>(string sql, params (string Name, object Value)[] parameters) =>
+        ScalarAsync<T>(DataSource, sql, parameters);
+
+    /// <summary>The first column of the first row, converted to <typeparamref name="T"/>; SQL NULL gives <c>default</c>.</summary>
+    public static async Task<T> ScalarAsync<T>(
+        NpgsqlDataSource dataSource, string sql, params (string Name, object Value)[] parameters)
     {
-        await using NpgsqlCommand cmd = DataSource.CreateCommand(sql);
+        await using NpgsqlCommand cmd = dataSource.CreateCommand(sql);
         foreach ((string name, object value) in parameters)
         {
             cmd.Parameters.AddWithValue(name, value);
         }
 
-        return (T)Convert.ChangeType((await cmd.ExecuteScalarAsync())!, typeof(T));
+        object? result = await cmd.ExecuteScalarAsync();
+        return result is null or DBNull ? default! : (T)Convert.ChangeType(result, typeof(T));
     }
 
     /// <summary>The repo's <c>services/db/migrations</c> directory, found by walking up from the test output.</summary>

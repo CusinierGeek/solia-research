@@ -20,6 +20,7 @@
     <Project Path="services/backend/Solia.Secrets/Solia.Secrets.csproj" />
   </Folder>
   <Folder Name="/services/db/">
+    <Project Path="services/db/Solia.DbMigrator.Tests/Solia.DbMigrator.Tests.csproj" />
     <Project Path="services/db/Solia.DbMigrator/Solia.DbMigrator.csproj" />
   </Folder>
   <Folder Name="/services/shared/">
