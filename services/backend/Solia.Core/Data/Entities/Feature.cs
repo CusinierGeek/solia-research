@@ -87,6 +87,18 @@ public sealed class Feature
     /// <summary>Seconds of price history behind the momentum returns (capped at the long window).</summary>
     public double? PriceHistorySec { get; set; }
 
+    /// <summary>Distinct trade signers in the pipeline's window (holder-concentration proxy).</summary>
+    public int? UniqueTraders { get; set; }
+
+    /// <summary>Largest single-wallet share of the window's signed volume.</summary>
+    public double? TopTraderShare { get; set; }
+
+    /// <summary>Herfindahl-Hirschman index of per-wallet volume shares (1 = one wallet).</summary>
+    public double? TraderHhi { get; set; }
+
+    /// <summary>Share of the short window's traders not seen earlier in the window.</summary>
+    public double? NewTraderRatio { get; set; }
+
     /// <summary>Pump.fun-specific signals (JSONB).</summary>
     public string? OnchainSignals { get; set; }
 

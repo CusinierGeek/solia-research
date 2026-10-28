@@ -87,6 +87,24 @@ public sealed record FeatureSnapshot
     /// </summary>
     public double PriceHistorySec { get; init; }
 
+    // Holder-concentration proxy over the window, from trade signers (see TraderConcentration).
+    // Shares are of the signed volume in the current quote currency; unsigned trades are skipped.
+
+    /// <summary>Distinct trade signers in the window.</summary>
+    public int UniqueTraders { get; init; }
+
+    /// <summary>Largest single-wallet share of the window's volume, in (0, 1]; null without signed volume.</summary>
+    public double? TopTraderShare { get; init; }
+
+    /// <summary>HHI of per-wallet volume shares, in (0, 1] (1 = one wallet); null without signed volume.</summary>
+    public double? TraderHhi { get; init; }
+
+    /// <summary>
+    /// Share of the traders of the last short momentum window not seen earlier in the window, in
+    /// [0, 1]; null without a signed trade in that short window.
+    /// </summary>
+    public double? NewTraderRatio { get; init; }
+
     public IReadOnlyDictionary<string, object?> OnchainSignals { get; init; } =
         new Dictionary<string, object?>();
 

@@ -54,12 +54,13 @@ public sealed class PostgresTokenSink(NpgsqlDataSource dataSource) : ITokenSink
         "holders_growth_rate, volume_growth_rate, tx_creation_rate, volatility, ema, rsi, price_derivative, " +
         "net_sol_flow, buy_volume_ratio, avg_buy_sol, max_buy_sol, large_buy_count, " +
         "return_short, return_medium, return_long, price_acceleration, ema_slope, volume_acceleration, volume_burst_ratio, " +
-        "price_history_sec, " +
+        "price_history_sec, unique_traders, top_trader_share, trader_hhi, new_trader_ratio, " +
         "onchain_signals, behavioral_signals) " +
         "SELECT * FROM unnest(@mint, @ts, @venue, @migrated, @pool, @price, @volume, @mc, @holders, @liq, " +
         "@buys, @sells, @ratio, @age, @trending, @social, @hgrowth, @vgrowth, @txrate, @vol, @ema, @rsi, @deriv, " +
         "@netflow, @buyvolratio, @avgbuy, @maxbuy, @largebuys, " +
-        "@ret_s, @ret_m, @ret_l, @paccel, @emaslope, @vaccel, @burst, @pricehist, @onchain, @behavioral) " +
+        "@ret_s, @ret_m, @ret_l, @paccel, @emaslope, @vaccel, @burst, @pricehist, " +
+        "@uniqtraders, @toptrader, @hhi, @newtraders, @onchain, @behavioral) " +
         "ON CONFLICT (mint, ts) DO NOTHING";
 
     public async Task WriteAsync(FlushBatch batch, CancellationToken cancellationToken)
@@ -143,6 +144,10 @@ public sealed class PostgresTokenSink(NpgsqlDataSource dataSource) : ITokenSink
                 Array("vaccel", NpgsqlDbType.Double, Column(s, x => x.VolumeAcceleration)),
                 Array("burst", NpgsqlDbType.Double, Column(s, x => x.VolumeBurstRatio)),
                 Array("pricehist", NpgsqlDbType.Double, Column(s, x => x.PriceHistorySec)),
+                Array("uniqtraders", NpgsqlDbType.Integer, Column(s, x => x.UniqueTraders)),
+                Array("toptrader", NpgsqlDbType.Double, Column(s, x => x.TopTraderShare)),
+                Array("hhi", NpgsqlDbType.Double, Column(s, x => x.TraderHhi)),
+                Array("newtraders", NpgsqlDbType.Double, Column(s, x => x.NewTraderRatio)),
                 Array("onchain", NpgsqlDbType.Jsonb, Column(s, x => JsonSerializer.Serialize(x.OnchainSignals))),
                 Array("behavioral", NpgsqlDbType.Jsonb, Column(s, x => JsonSerializer.Serialize(x.BehavioralSignals)))));
         }

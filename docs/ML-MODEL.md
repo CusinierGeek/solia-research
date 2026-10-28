@@ -144,12 +144,14 @@ and seeds.
 - **Candidates so far:** `buy_pressure` (FE-T2, #111) — `net_sol_flow`, `buy_volume_ratio`,
   `avg_buy_sol`, `max_buy_sol`, `large_buy_count`; `momentum` (FE-T3, #112) — `return_short`,
   `return_medium`, `return_long`, `price_acceleration`, `ema_slope`, `volume_acceleration`,
-  `volume_burst_ratio`, `price_history_sec` (windows: `Pipeline:Momentum{Short,Medium,Long}Seconds`).
+  `volume_burst_ratio`, `price_history_sec` (windows: `Pipeline:Momentum{Short,Medium,Long}Seconds`);
+  `concentration` (FE-T4, #113) — `unique_traders`, `top_trader_share`, `trader_hhi`,
+  `new_trader_ratio`: a holder-concentration proxy from trade signers over the window.
 - **Rows predating a group are refused, not zero-filled.** A NULL in a column the pipeline always writes
   since the group's migration (`ALWAYS_WRITTEN`, e.g. `net_sol_flow`/`large_buy_count` for
-  `buy_pressure`, `volume_burst_ratio`/`price_history_sec` for `momentum`) means "never computed": training, evaluation and ablation raise if an enabled (or
+  `buy_pressure`, `volume_burst_ratio`/`price_history_sec` for `momentum`, `unique_traders` for `concentration`) means "never computed": training, evaluation and ablation raise if an enabled (or
   ablated) group has such rows — re-replay them first. Other NULLs are imputed per `NULL_FILL`
-  (`buy_volume_ratio` → 0.5, "no pressure either way"; `volume_burst_ratio` → 1, "steady"; else 0 —
+  (`buy_volume_ratio` → 0.5, "no pressure either way"; `volume_burst_ratio` → 1, "steady"; `new_trader_ratio` → −1, "no recent trader", as 0 is "all returning"; else 0 —
   e.g. a return a young token has no history for, which `price_history_sec` tells apart from a flat
   price).
 - **Adding columns keeps the champion serving.** A checkpoint trained before columns were added (its

@@ -139,6 +139,10 @@ public sealed class SoliaDbContext(DbContextOptions<SoliaDbContext> options) : D
             e.Property(x => x.VolumeAcceleration).HasColumnName("volume_acceleration");
             e.Property(x => x.VolumeBurstRatio).HasColumnName("volume_burst_ratio");
             e.Property(x => x.PriceHistorySec).HasColumnName("price_history_sec");
+            e.Property(x => x.UniqueTraders).HasColumnName("unique_traders");
+            e.Property(x => x.TopTraderShare).HasColumnName("top_trader_share");
+            e.Property(x => x.TraderHhi).HasColumnName("trader_hhi");
+            e.Property(x => x.NewTraderRatio).HasColumnName("new_trader_ratio");
             e.Property(x => x.OnchainSignals).HasColumnName("onchain_signals").HasColumnType("jsonb");
             e.Property(x => x.BehavioralSignals).HasColumnName("behavioral_signals").HasColumnType("jsonb");
             e.Property(x => x.Raw).HasColumnName("raw").HasColumnType("jsonb");

@@ -140,6 +140,10 @@ public static class PredictEndpoints
                 f.VolumeAcceleration,
                 f.VolumeBurstRatio,
                 f.PriceHistorySec,
+                f.UniqueTraders,
+                f.TopTraderShare,
+                f.TraderHhi,
+                f.NewTraderRatio,
                 f.IsMigrated,
             })
             .ToListAsync(cancellationToken);
@@ -178,6 +182,10 @@ public static class PredictEndpoints
             ["volume_acceleration"] = f.VolumeAcceleration,
             ["volume_burst_ratio"] = f.VolumeBurstRatio,
             ["price_history_sec"] = f.PriceHistorySec,
+            ["unique_traders"] = f.UniqueTraders,
+            ["top_trader_share"] = f.TopTraderShare,
+            ["trader_hhi"] = f.TraderHhi,
+            ["new_trader_ratio"] = f.NewTraderRatio,
             ["is_migrated"] = f.IsMigrated ? 1 : 0,
         }).ToList();
     }

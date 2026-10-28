@@ -24,13 +24,19 @@ namespace Solia.DataPipeline.Features;
 /// time, never from prices after it. Volume rates and accelerations only span the time since the
 /// current quote currency began, like the volume they're summed from.
 /// </para>
+/// <para>
+/// The holder-concentration proxy (<see cref="TraderConcentration"/>) is rebuilt each snapshot from
+/// the window's trades and their signers, so per-wallet volume never outlives the window; whether a
+/// recent trader is new or returning looks up its first-seen time on the token.
+/// </para>
 /// </summary>
 internal sealed class TokenState
 {
     private const int MaxPriceHistory = 512; // per-window cap (memory bound)
 
     // QuoteAmount is null when the frame didn't report it: counted as a trade, never as an amount.
-    private readonly record struct Observation(DateTimeOffset Ts, EventKind Kind, decimal? QuoteAmount, string? QuoteMint);
+    // Trader (txSigner) is null when the source didn't report it.
+    private readonly record struct Observation(DateTimeOffset Ts, EventKind Kind, decimal? QuoteAmount, string? QuoteMint, string? Trader);
 
     private readonly record struct PricePoint(DateTimeOffset Ts, double Price);
 
@@ -47,6 +53,7 @@ internal sealed class TokenState
     private readonly Queue<PricePoint> _prices = new(); // in Ts order (late prices are not appended)
     private readonly List<Anchor> _anchors = []; // in Ts order, at most one per second
     private readonly HolderCounter _holders = new();
+    private readonly TraderConcentration _concentration;
 
     private decimal? _price;
     private decimal? _marketCap;
@@ -80,6 +87,7 @@ internal sealed class TokenState
         _rsiPeriod = rsiPeriod;
         _largeBuySol = largeBuySol;
         _momentum = momentum ?? MomentumWindows.Default;
+        _concentration = new TraderConcentration(_holders);
         _firstSeen = firstSeen;
         _createdAt = firstSeen;
         LastActivity = firstSeen;
@@ -116,12 +124,12 @@ internal sealed class TokenState
 
         if (e.Trader is not null)
         {
-            _holders.Add(e.Trader);
+            _holders.Add(e.Trader, e.Timestamp);
         }
 
         if (e.Kind is EventKind.Buy or EventKind.Sell)
         {
-            Insert(new Observation(e.Timestamp, e.Kind, e.QuoteAmount, e.QuoteMint));
+            Insert(new Observation(e.Timestamp, e.Kind, e.QuoteAmount, e.QuoteMint, e.Trader));
         }
 
         // A late event's facts are already stale: keep only what's newest.
@@ -204,6 +212,7 @@ internal sealed class TokenState
         decimal shortVolume = 0;     // (now - short, now]
         decimal prevShortVolume = 0; // (now - 2 short, now - short]
         decimal longVolume = 0;      // (now - long, now]
+        _concentration.Reset(shortStart);
         foreach (Observation o in _window)
         {
             if (o.Ts > now)
@@ -221,7 +230,9 @@ internal sealed class TokenState
             }
 
             // Only amounts in the current quote currency can be summed.
-            if (o.QuoteMint is null || _quoteMint is null || o.QuoteMint == _quoteMint)
+            bool currentQuote = o.QuoteMint is null || _quoteMint is null || o.QuoteMint == _quoteMint;
+            _concentration.Add(o.Trader, o.Ts, currentQuote ? o.QuoteAmount ?? 0 : null);
+            if (currentQuote)
             {
                 decimal amount = o.QuoteAmount ?? 0;
                 volume += amount;
@@ -266,6 +277,7 @@ internal sealed class TokenState
         int trades = buys + sells;
         double buySellRatio = trades == 0 ? 0 : (double)buys / trades;
         int holders = _holders.Count;
+        (double? topTraderShare, double? traderHhi) = _concentration.Shares();
         decimal solVolume = buySol + sellSol;
 
         // Trades are only seen since first sight, so a token younger than the window is rated over its observed span.
@@ -365,6 +377,10 @@ internal sealed class TokenState
             VolumeAcceleration = volumeAcceleration,
             VolumeBurstRatio = volumeBurst,
             PriceHistorySec = priceHistorySec,
+            UniqueTraders = _concentration.UniqueTraders,
+            TopTraderShare = topTraderShare,
+            TraderHhi = traderHhi,
+            NewTraderRatio = _concentration.NewTraderRatio,
             OnchainSignals = new Dictionary<string, object?>
             {
                 ["burnedLiquidityPercent"] = _burned,

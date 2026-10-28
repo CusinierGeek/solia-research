@@ -51,6 +51,10 @@ FEATURE_COLUMNS: list[str] = [
     "volume_acceleration",
     "volume_burst_ratio",
     "price_history_sec",
+    "unique_traders",
+    "top_trader_share",
+    "trader_hhi",
+    "new_trader_ratio",
 ]
 
 # Feature groups for ablation (solia_ai.ablation): every model input belongs to exactly one group
@@ -87,6 +91,13 @@ FEATURE_GROUPS: dict[str, tuple[str, ...]] = {
         "volume_acceleration",
         "volume_burst_ratio",
         "price_history_sec",  # how far back the returns can look: "no history" vs a flat price
+    ),
+    # FE-T4 (#113): holder-concentration proxy from trade signers (txSigner) over the window.
+    "concentration": (
+        "unique_traders",
+        "top_trader_share",
+        "trader_hhi",
+        "new_trader_ratio",
     ),
 }
 
@@ -133,7 +144,13 @@ def group_mask(groups: Iterable[str]) -> np.ndarray:
 
 # NULL imputation where 0 would mean something: no SOL trade in the window is "no pressure either
 # way" (0.5), not "only sells" (0.0); a burst ratio of 1 is steady volume, 0 would be a collapse.
-NULL_FILL: dict[str, float] = {"buy_volume_ratio": 0.5, "volume_burst_ratio": 1.0}
+# No recent signed trader is -1 for new_trader_ratio: 0 is a real reading ("all returning"). The
+# concentration shares live in (0, 1], so their default 0 already marks "no signed volume".
+NULL_FILL: dict[str, float] = {
+    "buy_volume_ratio": 0.5,
+    "volume_burst_ratio": 1.0,
+    "new_trader_ratio": -1.0,
+}
 
 # Per group, the columns the pipeline always writes since the group's migration: a NULL there
 # means the row predates it (never computed), not "no signal" — such rows must be re-replayed
@@ -141,6 +158,7 @@ NULL_FILL: dict[str, float] = {"buy_volume_ratio": 0.5, "volume_burst_ratio": 1.
 ALWAYS_WRITTEN: dict[str, tuple[str, ...]] = {
     "buy_pressure": ("net_sol_flow", "large_buy_count"),  # migration 0005
     "momentum": ("volume_burst_ratio", "price_history_sec"),  # migration 0006
+    "concentration": ("unique_traders",),  # migration 0007
 }
 
 

@@ -40,8 +40,8 @@ public class SoliaDbContextIntegrationTests(SoliaDbFixture db) : IClassFixture<S
             ("v", $"v-{Guid.NewGuid():N}"));
         long featureId = await InsertAsync(
             "INSERT INTO features (mint, ts, venue, is_migrated, price, market_cap, liquidity, holders, buy_sell_ratio, " +
-            "volatility, net_sol_flow, avg_buy_sol, price_acceleration, onchain_signals, raw) VALUES (@m, @ts, 'pumpfun', FALSE, " +
-            "0.000000123456789, 123456789.123456789, 42.5, 311, 1.75, 0.0123456789, -1.234567890123, 0.5, -0.0625, " +
+            "volatility, net_sol_flow, avg_buy_sol, price_acceleration, trader_hhi, onchain_signals, raw) VALUES (@m, @ts, 'pumpfun', FALSE, " +
+            "0.000000123456789, 123456789.123456789, 42.5, 311, 1.75, 0.0123456789, -1.234567890123, 0.5, -0.0625, 0.375, " +
             "'{\"dev_sold\":false}', '{\"src\":\"test\"}') RETURNING id",
             ("m", mint),
             ("ts", T0));
@@ -77,6 +77,8 @@ public class SoliaDbContextIntegrationTests(SoliaDbFixture db) : IClassFixture<S
         Assert.Null(feature.LargeBuyCount);
         Assert.Equal(-0.0625, feature.PriceAcceleration);
         Assert.Null(feature.VolumeBurstRatio);
+        Assert.Equal(0.375, feature.TraderHhi);
+        Assert.Null(feature.UniqueTraders);
         Assert.Equal(0.0123456789, feature.Volatility!.Value, 12);
         Assert.Equal(T0, feature.Ts);
         Assert.Equal(TimeSpan.Zero, feature.Ts.Offset); // timestamptz reads back as UTC

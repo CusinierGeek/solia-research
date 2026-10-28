@@ -173,6 +173,27 @@ public sealed class PostgresTokenSinkTests(PostgresFixture db) : IClassFixture<P
             "AND volume_acceleration IS NULL AND volume_burst_ratio = 1 AND price_history_sec = 0"));
     }
 
+    [Fact]
+    public async Task Concentration_columns_are_persisted()
+    {
+        FeatureSnapshot snap = Snap("CONC1", T0, 1m) with
+        {
+            UniqueTraders = 7,
+            TopTraderShare = 0.6,
+            TraderHhi = 0.4,
+            NewTraderRatio = 0.25,
+        };
+        await Sink.WriteAsync(Batch(T0, [snap, Snap("CONC2", T0, 1m)]), default);
+
+        Assert.Equal(7, await Feature<int>("unique_traders", "CONC1"));
+        Assert.Equal(0.6, await Feature<double>("top_trader_share", "CONC1"));
+        Assert.Equal(0.4, await Feature<double>("trader_hhi", "CONC1"));
+        Assert.Equal(0.25, await Feature<double>("new_trader_ratio", "CONC1"));
+        Assert.Equal(1L, await db.ScalarAsync<long>(
+            "SELECT count(*) FROM features WHERE mint = 'CONC2' AND unique_traders = 0 " +
+            "AND top_trader_share IS NULL AND trader_hhi IS NULL AND new_trader_ratio IS NULL"));
+    }
+
     private Task<T> Feature<T>(string column, string mint) =>
         db.ScalarAsync<T>($"SELECT {column} FROM features WHERE mint = @m", ("m", mint));
 

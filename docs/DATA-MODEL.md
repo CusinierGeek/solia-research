@@ -102,6 +102,10 @@ Time-series feature snapshots per token. The model's input unit.
 | volume_acceleration | DOUBLE PRECISION | (volume rate of the last short window − of the one before) / short, quote/s²; NULL until 2 short windows observed in the current quote currency |
 | volume_burst_ratio | DOUBLE PRECISION | short / long per-second volume rate (rated over the observed span, since the current quote currency began, when shorter); 1 when nothing traded over the long window. Always written |
 | price_history_sec | DOUBLE PRECISION | how far back (s) the momentum price history reaches, capped at `MomentumLongSeconds`; 0 without a price. A return over a longer look-back is NULL. Always written |
+| unique_traders | INT | distinct signers (`txSigner`) of the window's trades in the current quote currency; trades without a signer are skipped. Always written |
+| top_trader_share | DOUBLE PRECISION | largest single wallet's share of the window's signed volume (current quote currency; non-positive amounts carry none), (0, 1]; NULL without signed volume |
+| trader_hhi | DOUBLE PRECISION | Herfindahl-Hirschman index of per-wallet volume shares (Σ share²), (0, 1]: 1 = one wallet, 1/n = volume split evenly over n wallets; NULL without signed volume |
+| new_trader_ratio | DOUBLE PRECISION | share of the traders of the last `MomentumShortSeconds` first seen on the token in that span (the rest are returning, even from before the window; past `HolderCounter.ExactLimit` wallets, first seen in the window), [0, 1]; NULL without a signed trade in that span |
 | onchain_signals | JSONB | Pump.fun-specific signals |
 | behavioral_signals | JSONB | pump/rug pattern flags |
 | raw | JSONB | nullable debug payload |

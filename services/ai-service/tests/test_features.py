@@ -263,7 +263,19 @@ def test_momentum_is_a_candidate_group_outside_the_baseline():
         "volume_burst_ratio",
         "price_history_sec",
     )
-    assert FEATURE_COLUMNS[24:] == list(FEATURE_GROUPS["momentum"])
+    assert FEATURE_COLUMNS[24:32] == list(FEATURE_GROUPS["momentum"])
+
+
+def test_concentration_is_a_candidate_group_outside_the_baseline():
+    # FE-T4 (#113): stays disabled by default until its ablation lift clears the margin.
+    assert "concentration" not in BASELINE_GROUPS
+    assert FEATURE_GROUPS["concentration"] == (
+        "unique_traders",
+        "top_trader_share",
+        "trader_hhi",
+        "new_trader_ratio",
+    )
+    assert FEATURE_COLUMNS[32:] == list(FEATURE_GROUPS["concentration"])
 
 
 def test_group_columns_keep_canonical_order():
@@ -397,3 +409,32 @@ def test_column_mask_rejects_unknown_columns():
     assert column_mask(["a", "b"], ["b"]).tolist() == [False, True]
     with pytest.raises(ValueError, match="not in the feature spec: c"):
         column_mask(["a", "b"], ["c"])
+
+
+def test_rows_predating_concentration_are_refused_when_it_is_enabled():
+    df = pd.concat([_frame(), _frame(unique_traders=None)], ignore_index=True)
+
+    with pytest.raises(ValueError, match="1 of 2 feature rows predate the 'concentration' group"):
+        check_group_coverage(df, [*BASELINE_GROUPS, "concentration"])
+    check_group_coverage(df, BASELINE_GROUPS)  # disabled: no error
+
+
+def test_null_concentration_shares_alone_are_legitimate_not_uncomputed():
+    # No signed volume / no recent trader: NULL shares, but unique_traders is always written.
+    df = _frame(top_trader_share=None, trader_hhi=None, new_trader_ratio=None)
+
+    check_group_coverage(df, ["concentration"])  # no error
+    row = build_feature_matrix(df)[0]
+    # The shares live in (0, 1]: 0 is out of range, so it can't pass for a real reading.
+    assert row[FEATURE_COLUMNS.index("top_trader_share")] == 0.0
+    assert row[FEATURE_COLUMNS.index("trader_hhi")] == 0.0
+    # 0 is a real ratio ("every recent trader returns"): no recent trader must not look like it.
+    assert row[FEATURE_COLUMNS.index("new_trader_ratio")] == -1.0
+
+
+def test_no_recent_trader_is_told_apart_from_all_returning():
+    df = pd.concat([_frame(new_trader_ratio=None), _frame(new_trader_ratio=0.0)], ignore_index=True)
+
+    col = build_feature_matrix(df)[:, FEATURE_COLUMNS.index("new_trader_ratio")]
+
+    assert col[0] != col[1]

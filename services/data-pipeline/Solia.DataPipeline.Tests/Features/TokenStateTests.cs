@@ -609,4 +609,246 @@ public class TokenStateTests
         Assert.Null(s.ReturnShort); // USDC prices don't compare with SOL ones
         Assert.Null(s.EmaSlope);
     }
+
+    // --- Holder-concentration proxy (txSigner) ---
+
+    [Fact]
+    public void Single_wallet_window_is_maximally_concentrated()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(Trade(EventKind.Buy, 1m, 2m, "A", 0));
+        state.Apply(Trade(EventKind.Buy, 1m, 3m, "A", 5));
+        state.Apply(Trade(EventKind.Sell, 1m, 1m, "A", 8));
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(9));
+
+        Assert.Equal(1, s.UniqueTraders);
+        Assert.Equal(1.0, s.TopTraderShare!.Value, 10);
+        Assert.Equal(1.0, s.TraderHhi!.Value, 10);
+    }
+
+    [Fact]
+    public void Uniform_wallets_spread_the_volume_evenly()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        string[] traders = ["A", "B", "C", "D"];
+        for (int i = 0; i < traders.Length; i++)
+        {
+            state.Apply(Trade(EventKind.Buy, 1m, 5m, traders[i], i));
+        }
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(4));
+
+        Assert.Equal(4, s.UniqueTraders);
+        Assert.Equal(0.25, s.TopTraderShare!.Value, 10);
+        Assert.Equal(0.25, s.TraderHhi!.Value, 10); // 1/n
+    }
+
+    [Fact]
+    public void Skewed_wallets_weight_shares_by_volume()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(Trade(EventKind.Buy, 1m, 2m, "A", 0));
+        state.Apply(Trade(EventKind.Sell, 1m, 1m, "A", 1)); // buys and sells both count: A = 3
+        state.Apply(Trade(EventKind.Buy, 1m, 1m, "B", 2));
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(3));
+
+        Assert.Equal(2, s.UniqueTraders);
+        Assert.Equal(0.75, s.TopTraderShare!.Value, 10);
+        Assert.Equal((0.75 * 0.75) + (0.25 * 0.25), s.TraderHhi!.Value, 10);
+    }
+
+    [Fact]
+    public void Returning_traders_are_told_apart_from_new_ones()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0); // short momentum window: 10 s
+        state.Apply(Trade(EventKind.Buy, 1m, 1m, "A", 0));
+        state.Apply(Trade(EventKind.Buy, 1m, 1m, "B", 2));
+        state.Apply(Trade(EventKind.Sell, 1m, 1m, "A", 25)); // returning: seen at 0
+        state.Apply(Trade(EventKind.Buy, 1m, 1m, "C", 26));  // new
+        state.Apply(Trade(EventKind.Buy, 1m, 1m, "C", 28));  // still new: its first trade is recent
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(30));
+
+        Assert.Equal(3, s.UniqueTraders);
+        Assert.Equal(0.5, s.NewTraderRatio!.Value, 10); // recent {A, C}, new {C}
+    }
+
+    [Fact]
+    public void Returning_detection_tolerates_out_of_order_trades()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(Trade(EventKind.Buy, 1m, 1m, "A", 25));
+        state.Apply(Trade(EventKind.Buy, 1m, 1m, "A", 0)); // late: A's earlier trade
+
+        Assert.Equal(0.0, state.Snapshot(T0.AddSeconds(30)).NewTraderRatio!.Value, 10);
+    }
+
+    [Fact]
+    public void New_trader_ratio_is_null_without_a_recent_signed_trade()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(Trade(EventKind.Buy, 1m, 1m, "A", 0));
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(30)); // nothing in the last 10 s
+
+        Assert.Null(s.NewTraderRatio);
+        Assert.Equal(1, s.UniqueTraders);
+    }
+
+    [Fact]
+    public void Only_new_traders_in_a_fresh_token_give_a_ratio_of_one()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(Trade(EventKind.Buy, 1m, 1m, "A", 0));
+        state.Apply(Trade(EventKind.Buy, 1m, 1m, "B", 1));
+
+        Assert.Equal(1.0, state.Snapshot(T0.AddSeconds(2)).NewTraderRatio!.Value, 10);
+    }
+
+    [Fact]
+    public void Missing_signers_are_skipped_not_lumped_into_one_wallet()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(Trade(EventKind.Buy, 1m, 100m, "X", 0) with { Trader = null });
+        state.Apply(Trade(EventKind.Buy, 1m, 100m, "X", 1) with { Trader = null });
+        state.Apply(Trade(EventKind.Buy, 1m, 1m, "A", 2));
+        state.Apply(Trade(EventKind.Buy, 1m, 1m, "B", 3));
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(4));
+
+        Assert.Equal(4, s.BuyEvents); // still trades
+        Assert.Equal(2, s.UniqueTraders);
+        Assert.Equal(0.5, s.TopTraderShare!.Value, 10); // of the signed volume only
+        Assert.Equal(0.5, s.TraderHhi!.Value, 10);
+        Assert.Equal(1.0, s.NewTraderRatio!.Value, 10);
+    }
+
+    [Fact]
+    public void Window_without_signers_leaves_concentration_undefined()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(Trade(EventKind.Buy, 1m, 5m, "X", 0) with { Trader = null });
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(1));
+
+        Assert.Equal(0, s.UniqueTraders);
+        Assert.Null(s.TopTraderShare);
+        Assert.Null(s.TraderHhi);
+        Assert.Null(s.NewTraderRatio);
+    }
+
+    [Fact]
+    public void Signed_trades_without_volume_count_traders_but_leave_shares_undefined()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(Trade(EventKind.Buy, 1m, 0m, "A", 0) with { QuoteAmount = null });
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(1));
+
+        Assert.Equal(1, s.UniqueTraders);
+        Assert.Null(s.TopTraderShare);
+        Assert.Null(s.TraderHhi);
+    }
+
+    [Fact]
+    public void Per_wallet_volume_is_scoped_to_the_window_but_newness_to_the_token()
+    {
+        var state = new TokenState("M", windowSeconds: 60, emaSpan: 20, rsiPeriod: 14, firstSeen: T0);
+        state.Apply(Trade(EventKind.Buy, 1m, 100m, "WHALE", 0));
+        state.Apply(Trade(EventKind.Buy, 1m, 1m, "A", 70));
+        state.Apply(Trade(EventKind.Buy, 1m, 1m, "WHALE", 75));
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(76)); // the whale's first buy has left the window
+
+        Assert.Equal(2, s.UniqueTraders);
+        Assert.Equal(0.5, s.TopTraderShare!.Value, 10); // its 100 no longer counts
+        Assert.Equal(0.5, s.NewTraderRatio!.Value, 10); // recent {A, WHALE}: the whale still returns
+        Assert.Equal(2, s.Holders); // the lifetime holders proxy is unaffected
+    }
+
+    [Fact]
+    public void Concentration_shares_only_sum_the_current_quote_currency()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(Quoted(EventKind.Buy, 1m, 1000m, Wsol, 0) with { Trader = "OLD" });
+        state.Apply(Quoted(EventKind.Buy, 1m, 1m, Usdc, 1) with { Trader = "A" });
+        state.Apply(Quoted(EventKind.Buy, 1m, 3m, Usdc, 2) with { Trader = "B" });
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(3));
+
+        Assert.Equal(2, s.UniqueTraders); // OLD's WSOL trade isn't counted, like its volume
+        Assert.Equal(0.75, s.TopTraderShare!.Value, 10); // B: 3 of 4 USDC
+    }
+
+    [Fact]
+    public void A_quote_switch_keeps_unique_traders_consistent_with_the_hhi()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        for (int i = 0; i < 10; i++)
+        {
+            state.Apply(Quoted(EventKind.Buy, 1m, 1m, Wsol, i) with { Trader = $"W{i}" });
+        }
+
+        state.Apply(Quoted(EventKind.Buy, 1m, 1m, Usdc, 20) with { Trader = "U" });
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(21));
+
+        Assert.Equal(1, s.UniqueTraders);
+        Assert.Equal(1.0, s.TraderHhi!.Value, 10); // 1/n with n = 1
+    }
+
+    [Fact]
+    public void Another_quote_currency_trade_still_makes_a_trader_returning()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(Quoted(EventKind.Buy, 1m, 5m, Wsol, 0) with { Trader = "A" });
+        state.Apply(Quoted(EventKind.Buy, 1m, 1m, Usdc, 25) with { Trader = "A" });
+
+        Assert.Equal(0.0, state.Snapshot(T0.AddSeconds(30)).NewTraderRatio!.Value, 10);
+    }
+
+    [Fact]
+    public void Newness_falls_back_to_the_window_once_holders_are_a_sketch()
+    {
+        var state = new TokenState("M", windowSeconds: 60, emaSpan: 20, rsiPeriod: 14, firstSeen: T0);
+        for (int i = 0; i <= HolderCounter.ExactLimit; i++)
+        {
+            state.Apply(Trade(EventKind.Buy, 1m, 1m, $"W{i}", 0));
+        }
+
+        state.Apply(Trade(EventKind.Buy, 1m, 1m, "W0", 75)); // first-seen forgotten, t=0 pruned
+
+        Assert.Equal(1.0, state.Snapshot(T0.AddSeconds(76)).NewTraderRatio!.Value, 10);
+    }
+
+    [Fact]
+    public void Non_positive_amounts_carry_no_volume_and_keep_shares_in_range()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(Trade(EventKind.Buy, 1m, 5m, "A", 0));
+        state.Apply(Trade(EventKind.Sell, 1m, -5m, "B", 1));
+        state.Apply(Trade(EventKind.Buy, 1m, 0m, "C", 2));
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(3));
+
+        Assert.Equal(3, s.UniqueTraders);
+        Assert.Equal(1.0, s.TopTraderShare!.Value, 10); // A: all of the 5, not 5 of 0
+        Assert.Equal(1.0, s.TraderHhi!.Value, 10);
+    }
+
+    [Fact]
+    public void Snapshots_reuse_state_without_leaking_between_them()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(Trade(EventKind.Buy, 1m, 3m, "A", 0));
+        state.Snapshot(T0.AddSeconds(1));
+        state.Apply(Trade(EventKind.Buy, 1m, 1m, "B", 2));
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(3));
+
+        Assert.Equal(2, s.UniqueTraders);
+        Assert.Equal(0.75, s.TopTraderShare!.Value, 10); // A 3 of 4, not double-counted
+    }
 }

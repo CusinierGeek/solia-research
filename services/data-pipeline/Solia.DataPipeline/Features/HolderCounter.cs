@@ -6,7 +6,8 @@ namespace Solia.DataPipeline.Features;
 /// Unique-trader count (the free holders proxy) in bounded memory. Exact up to
 /// <see cref="ExactLimit"/> wallets; past that it switches to a HyperLogLog sketch (4 KB,
 /// ~1.6% standard error) that keeps counting instead of saturating, so a token with millions of
-/// traders costs the same memory as one with a thousand.
+/// traders costs the same memory as one with a thousand. While exact, it also remembers each
+/// wallet's first-seen time on the token, so "new vs returning" can look past the rolling window.
 /// </summary>
 internal sealed class HolderCounter
 {
@@ -15,12 +16,24 @@ internal sealed class HolderCounter
     private const int Precision = 12;
     private const int RegisterCount = 1 << Precision;
 
-    private HashSet<string>? _exact = new(StringComparer.Ordinal);
+    private Dictionary<string, DateTimeOffset>? _exact = new(StringComparer.Ordinal); // wallet -> first seen
     private byte[]? _registers;
 
     public int Count => _exact?.Count ?? Estimate();
 
-    public void Add(string trader)
+    /// <summary>
+    /// The wallet's earliest seen time on the token; false when unknown, including every wallet once
+    /// the counter has switched to the sketch (which keeps no wallet).
+    /// </summary>
+    public bool TryGetFirstSeen(string trader, out DateTimeOffset firstSeen)
+    {
+        firstSeen = default;
+        return _exact is not null && _exact.TryGetValue(trader, out firstSeen);
+    }
+
+    /// <param name="trader">The wallet.</param>
+    /// <param name="ts">When it was seen (any order: the earliest is kept).</param>
+    public void Add(string trader, DateTimeOffset ts)
     {
         if (_exact is null)
         {
@@ -28,13 +41,24 @@ internal sealed class HolderCounter
             return;
         }
 
-        if (!_exact.Add(trader) || _exact.Count <= ExactLimit)
+        if (_exact.TryGetValue(trader, out DateTimeOffset seen))
+        {
+            if (ts < seen)
+            {
+                _exact[trader] = ts;
+            }
+
+            return;
+        }
+
+        _exact[trader] = ts;
+        if (_exact.Count <= ExactLimit)
         {
             return;
         }
 
         _registers = new byte[RegisterCount];
-        foreach (string known in _exact)
+        foreach (string known in _exact.Keys)
         {
             AddToSketch(known);
         }
