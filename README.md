@@ -75,11 +75,19 @@ Full detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 Each sprint = one milestone = one (or more) PR, reviewed before merge. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the branch/PR/review process. Each sprint file ends with a **"Kickoff prompt"** you can paste into a fresh conversation to implement that sprint.
 
-## Quick start (once services exist)
+## Quick start
+
+Requires Docker Engine 25+ and Docker Compose 2.24+.
 
 ```bash
-cp .env.example .env    # fill in values
-docker compose up -d    # postgres + services
+cp .env.example .env              # fill in values
+docker compose up -d --build      # whole stack: backend on :8080, dashboard on :8081
 ```
 
-Nothing is runnable yet — follow the sprints in order.
+Local dev (`dotnet run` / pytest against the containerized Postgres, published on `127.0.0.1:5432`):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres
+```
+
+See [`infra/README.md`](infra/README.md) for the secrets mount and the startup order.

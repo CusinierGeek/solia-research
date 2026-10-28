@@ -1,92 +1,169 @@
-# Solia — Docker Compose (SKELETON).
-# Only `postgres` is runnable today. The app services are placeholders filled
-# in during Sprint 6 (see docs/sprints/SPRINT-06-docker.md) and are gated behind
-# the `app` profile so `docker compose up` works before they exist:
+# Solia — Docker Compose: the whole system with one command.
 #
-#   docker compose up -d postgres          # today
-#   docker compose --profile app up -d     # once Sprint 6 Dockerfiles are done
+#   cp .env.example .env && docker compose up -d --build
+#
+# Requires Docker Engine 25+ (healthcheck start_interval) and Docker Compose 2.24+ (optional env_file).
+#
+# Startup order (depends_on conditions):
+#   postgres (healthy) → db-migrate (exited 0) → data-pipeline + ai-service (healthy)
+#   ai-service (healthy) → backend (healthy) → dashboard
+# The backend reads the DB and ai-service only: a failing data-pipeline doesn't keep 8080/8081 down.
+#
+# Only backend:8080 and dashboard:8081 are published on the host; postgres, data-pipeline and
+# ai-service are reachable on the internal `solia` network only. Local dev (`dotnet run` against the
+# containerized Postgres) publishes 5432 through the dev override:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres
+#
+# Config comes from .env (.env.example keys). Values that must point at the other containers
+# (service hosts, in-container ports and paths) are pinned below, so a .env written for local
+# `dotnet run` (POSTGRES_HOST=localhost, SOLIA_DB_CONNECTION=Host=localhost;…) can't misroute the
+# containers, and every container runs as Production. Healthcheck commands come from each image's
+# HEALTHCHECK (infra/docker); compose only tunes their timing.
+
+x-env-file: &env-file
+  # Optional so `docker compose config` validates without a .env (CI); every key has a default.
+  env_file:
+    - path: .env
+      required: false
+
+x-postgres-env: &postgres-env
+  # SOLIA_DB_CONNECTION wins over POSTGRES_* in every service: blanked (empty = unset) so a .env
+  # connection string can't override the compose host. Credentials still come from POSTGRES_*.
+  SOLIA_DB_CONNECTION: ""
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  # Containers always run as Production (the image default), whatever .env says.
+  ASPNETCORE_ENVIRONMENT: Production
 
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-solia}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
       POSTGRES_DB: ${POSTGRES_DB:-solia}
-    ports:
-      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-solia}"]
+      # Over TCP: the first-boot init server listens on the unix socket only, so it can't pass as ready.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
+      start_interval: 2s
+    networks: [solia]
+
+  # One-shot job: applies services/db/migrations (baked into the image) then exits. Re-running is a no-op.
+  db-migrate:
+    build:
+      context: .
+      dockerfile: infra/docker/db-migrator.Dockerfile
+    <<: *env-file
+    environment:
+      <<: *postgres-env
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks: [solia]
 
   data-pipeline:
-    profiles: ["app"]
     build:
       context: .
       dockerfile: infra/docker/data-pipeline.Dockerfile
-    env_file: [.env]
+    <<: *env-file
     environment:
-      # Containers always run as Production (the image default), whatever .env says.
-      ASPNETCORE_ENVIRONMENT: Production
+      <<: *postgres-env
       # The pipeline's job in the stack is to ingest; set INGEST=false in .env to run it idle.
       INGEST: ${INGEST:-true}
+    restart: unless-stopped
+    healthcheck:
+      # /health needs the database; a dropped pumpapi stream is Degraded, not unhealthy.
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+      start_interval: 3s
     depends_on:
-      postgres:
-        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
     networks: [solia]
 
   ai-service:
-    profiles: ["app"]
     build:
       context: .
       dockerfile: infra/docker/ai-service.Dockerfile
-    env_file: [.env]
-    depends_on:
-      postgres:
-        condition: service_healthy
+    <<: *env-file
+    environment:
+      <<: *postgres-env
+      MODEL_DIR: /app/models
+    restart: unless-stopped
+    healthcheck:
+      # Cold start imports torch: a longer grace period than the .NET services.
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+      start_interval: 3s
     volumes:
       - models:/app/models
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
     networks: [solia]
 
   backend:
-    profiles: ["app"]
     build:
       context: .
       dockerfile: infra/docker/backend.Dockerfile
-    env_file: [.env]
+    <<: *env-file
     environment:
-      # Containers always run as Production (the image default), whatever .env says: no OpenAPI/Swagger.
-      ASPNETCORE_ENVIRONMENT: Production
+      <<: *postgres-env
+      AI_SERVICE_URL: http://ai-service:8000
+    restart: unless-stopped
+    healthcheck:
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+      start_interval: 3s
     ports:
       - "8080:8080"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      ai-service:
-        condition: service_started
     volumes:
+      # secrets.enc only (docs/SECRETS.md); SOLIA_MASTER_KEY comes from the environment. The backend runs
+      # as UID 1654: secrets.enc must be readable by it (e.g. chmod 644). No secrets.enc ⇒ plaintext config.
       - ./secrets:/app/secrets:ro
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+      ai-service:
+        condition: service_healthy
     networks: [solia]
 
   dashboard:
-    profiles: ["app"]
     build:
       context: .
       dockerfile: infra/docker/dashboard.Dockerfile
-    env_file: [.env]
+    <<: *env-file
     environment:
       # Containers always run as Production (the image default), whatever .env says: no developer exception page.
       ASPNETCORE_ENVIRONMENT: Production
+      BACKEND_URL: http://backend:8080
+    restart: unless-stopped
+    healthcheck:
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+      start_interval: 3s
     ports:
       - "8081:8081"
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
     networks: [solia]
 
 networks:

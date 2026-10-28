@@ -15,11 +15,11 @@ Live UI: predictions, prediction/trade history, win-rate, total P&L, performance
 
 ## Run locally (Postgres + backend + dashboard)
 
-From the repo root (container wiring for the dashboard itself comes in Sprint 6):
+From the repo root, with `dotnet run` (the full containerized stack is `docker compose up -d --build`, dashboard on http://localhost:8081):
 
 ```bash
 # 1. Postgres 16 + schema (see services/db/README.md)
-docker compose up -d postgres
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres   # publishes 127.0.0.1:5432
 POSTGRES_HOST=localhost dotnet run --project services/db/Solia.DbMigrator
 
 # 2. backend on http://localhost:8080 (see services/backend/README.md; POSTGRES_* / AI_SERVICE_URL from .env,

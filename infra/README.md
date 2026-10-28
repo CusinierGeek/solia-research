@@ -2,7 +2,7 @@
 
 Docker & orchestration assets. See the root [`docker-compose.yml`](../docker-compose.yml) and [Sprint 6](../docs/sprints/SPRINT-06-docker.md).
 
-- `docker/*.Dockerfile` — per-service build definitions (filled in Sprint 6; `data-pipeline`, `ai-service`, `backend`, `dashboard` done).
+- `docker/*.Dockerfile` — per-service build definitions (`data-pipeline`, `ai-service`, `backend`, `dashboard`, `db-migrator`).
 
 ## Image conventions
 
@@ -37,4 +37,24 @@ Docker & orchestration assets. See the root [`docker-compose.yml`](../docker-com
   (failing fast if the container turns unhealthy or exits). Add a
   new image as one `matrix.include` entry.
 
-Today only `postgres` runs: `docker compose up -d postgres`.
+## Compose
+
+- Requires **Docker Engine 25+** (healthcheck `start_interval`) and **Docker Compose 2.24+**
+  (`env_file` with `required: false`).
+- `docker compose up -d --build` — the whole stack, in order: postgres → `db-migrate` (one-shot) →
+  data-pipeline + ai-service → backend → dashboard (the backend waits for db-migrate and ai-service,
+  not the pipeline). Only `8080` (backend) and `8081` (dashboard) are
+  published. Topology: [`docs/ARCHITECTURE.md` §7](../docs/ARCHITECTURE.md#7-deployment-topology-docker-compose).
+- `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres` — local dev:
+  Postgres alone, published on `127.0.0.1:5432` for `dotnet run` / pytest.
+- Compose healthchecks only tune timing; the probe command is each image's `HEALTHCHECK`.
+- `.env` can't misroute the containers: service hosts are pinned, `SOLIA_DB_CONNECTION` is blanked
+  (it wins over `POSTGRES_*`) and every container runs as Production.
+- **Secrets mount**: `./secrets` → `/app/secrets` (ro). The backend runs as UID 1654, so
+  `secrets/secrets.enc` must be readable by it (`chmod 644 secrets/secrets.enc`, or
+  `chown 1654 secrets/secrets.enc` to keep mode 600). Create `./secrets` yourself: if it's missing
+  Docker creates it root-owned on the host (the backend then just runs on plaintext config).
+- The `compose` job in [`ci.yml`](../.github/workflows/ci.yml) validates both files and asserts the
+  topology (services, published ports, startup conditions, restart policies, volumes, service hosts);
+  `compose-up` starts the real stack from a fresh volume (`INGEST=false`) and waits until db-migrate
+  exits 0 and every service is healthy.

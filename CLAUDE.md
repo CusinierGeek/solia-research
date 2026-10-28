@@ -88,7 +88,8 @@ Installed locally: .NET 10, Python 3.11, PostgreSQL 16 (Docker), git, gh (scopes
 ## Common commands
 
 ```bash
-docker compose up -d postgres          # local Postgres
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres   # local Postgres on 127.0.0.1:5432
+docker compose up -d --build           # whole stack (only 8080/8081 published)
 # .NET:   dotnet build ; dotnet test ; dotnet format --verify-no-changes
 #         fast local run (skip Testcontainers): dotnet test --filter "Category!=Integration"
 # Python: ruff check . ; black --check . ; pytest

@@ -68,6 +68,115 @@ jobs:
         if: steps.detect.outputs.found == 'true'
         run: dotnet test --no-build -c Release
 
+  # Validates docker-compose.yml (no .env: it's optional) and asserts the topology of docs/ARCHITECTURE.md §7.
+  compose:
+    name: Docker Compose config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate
+        run: |
+          docker compose config -q
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml config -q
+      - name: Assert topology
+        run: |
+          docker compose config --format json > compose.json
+          fail() { echo "::error::$1"; exit 1; }
+          check() { jq -e "$1" compose.json > /dev/null || fail "$2"; }
+          check '.services | keys == ["ai-service","backend","dashboard","data-pipeline","db-migrate","postgres"]' \
+            "unexpected service set: $(jq -c '.services | keys' compose.json)"
+          check '[.services[] | select(.profiles)] == []' "a service is gated behind a profile"
+          # Only backend:8080 and dashboard:8081 are published.
+          check '[.services | to_entries[] | .key as $s | (.value.ports // [])[] | "\($s):\(.published)->\(.target)"]
+                 | sort == ["backend:8080->8080","dashboard:8081->8081"]' \
+            "published ports: $(jq -c '[.services | to_entries[] | {(.key): .value.ports}]' compose.json)"
+          # Ordered startup.
+          dep() { check ".services[\"$1\"].depends_on[\"$2\"].condition == \"$3\"" "$1 must wait for $2 ($3)"; }
+          dep db-migrate postgres service_healthy
+          dep data-pipeline db-migrate service_completed_successfully
+          dep ai-service db-migrate service_completed_successfully
+          dep backend db-migrate service_completed_successfully
+          dep backend ai-service service_healthy
+          # The backend doesn't read the pipeline: a pipeline failure must not keep 8080/8081 down.
+          check '.services.backend.depends_on["data-pipeline"] == null' "backend must not wait for data-pipeline"
+          dep dashboard backend service_healthy
+          # Long-running services restart and have a healthcheck with a start period; the migrator does neither.
+          for s in postgres data-pipeline ai-service backend dashboard; do
+            check ".services[\"$s\"].restart == \"unless-stopped\"" "$s: restart must be unless-stopped"
+            check ".services[\"$s\"].healthcheck.start_period and (.services[\"$s\"].healthcheck.disable | not)" \
+              "$s: healthcheck missing or without start_period"
+          done
+          check '.services["db-migrate"].restart == "no"' "db-migrate must not restart"
+          # Volumes: pgdata, models, read-only secrets.
+          vol() { check "any(.services[\"$1\"].volumes[]; $2)" "$1: $3"; }
+          vol postgres '.source == "pgdata" and .target == "/var/lib/postgresql/data"' "pgdata volume"
+          vol ai-service '.source == "models" and .target == "/app/models"' "models volume"
+          vol backend '.target == "/app/secrets" and .read_only == true' "read-only /app/secrets mount"
+          check '.services["ai-service"].environment.MODEL_DIR == "/app/models"' "MODEL_DIR must be the models volume"
+          # Containers reach each other by service host; the pipeline ingests by default.
+          for s in db-migrate data-pipeline ai-service backend; do
+            check ".services[\"$s\"].environment.POSTGRES_HOST == \"postgres\"" "$s: POSTGRES_HOST must be postgres"
+            # SOLIA_DB_CONNECTION wins over POSTGRES_*: blanked so a .env connection string can't override it.
+            check ".services[\"$s\"].environment.SOLIA_DB_CONNECTION == \"\"" "$s: SOLIA_DB_CONNECTION must be blanked"
+          done
+          for s in db-migrate data-pipeline ai-service backend dashboard; do
+            check ".services[\"$s\"].environment.ASPNETCORE_ENVIRONMENT == \"Production\"" "$s: must run as Production"
+          done
+          check '.services.backend.environment.AI_SERVICE_URL == "http://ai-service:8000"' "backend: AI_SERVICE_URL"
+          check '.services.dashboard.environment.BACKEND_URL == "http://backend:8080"' "dashboard: BACKEND_URL"
+          check '.services["data-pipeline"].environment.INGEST == "true"' "data-pipeline must ingest by default"
+          # The dev override publishes Postgres on loopback only.
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml config --format json \
+            | jq -e '[.services.postgres.ports[] | {host_ip, target, published: (.published | tostring)}]
+                     == [{"host_ip":"127.0.0.1","target":5432,"published":"5432"}]' \
+            > /dev/null || fail "dev override must publish 127.0.0.1:5432"
+          echo ok
+
+  # Starts the real stack from a fresh volume (no .env, INGEST=false: no pumpapi traffic from CI) and
+  # waits for the ordered startup: db-migrate exits 0, every long-running service turns healthy.
+  compose-up:
+    name: Docker Compose up (smoke)
+    runs-on: ubuntu-latest
+    needs: compose
+    env:
+      INGEST: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start the stack
+        run: docker compose up -d --build
+      - name: Wait for healthy
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          deadline=$((SECONDS + 600))
+          while :; do
+            migrate=$(docker inspect -f '{{.State.Status}} {{.State.ExitCode}}' "$(docker compose ps -aq db-migrate)")
+            case "$migrate" in
+              "exited 0") ;;
+              exited*) fail "db-migrate failed ($migrate)" ;;
+            esac
+            pending=""
+            for s in postgres data-pipeline ai-service backend dashboard; do
+              id=$(docker compose ps -aq "$s")
+              h=$([ -n "$id" ] && docker inspect -f '{{.State.Health.Status}}' "$id" || echo created)
+              [ "$h" = unhealthy ] && fail "$s is unhealthy"
+              [ "$h" = healthy ] || pending="$pending $s($h)"
+            done
+            if [ "$migrate" = "exited 0" ] && [ -z "$pending" ]; then echo "ok: stack healthy"; break; fi
+            [ $SECONDS -lt $deadline ] || fail "timed out waiting for:$pending (db-migrate: $migrate)"
+            sleep 5
+          done
+      - name: Probe published ports
+        run: |
+          curl -fsS http://localhost:8080/health/ready
+          curl -fsS -o /dev/null http://localhost:8081/health/live
+          echo ok
+      - name: Logs on failure
+        if: failure()
+        run: docker compose ps -a && docker compose logs --no-color --tail 200
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
+
   # Builds every service image on each PR (never pushed) and checks it runs non-root.
   # T2–T5 add their image as one more `include` entry.
   docker:

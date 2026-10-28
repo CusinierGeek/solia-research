@@ -131,15 +131,34 @@ The HTTP `/predict` endpoint (features in the request → prediction) stays for 
 
 ## 7. Deployment topology (Docker Compose)
 
-| Container      | Published | Depends on            | Volume            |
-|----------------|-----------|-----------------------|-------------------|
-| postgres       | — (internal) | —                  | `pgdata`          |
-| data-pipeline  | —         | postgres              | —                 |
-| ai-service     | —         | postgres              | `models`          |
-| backend        | 8080      | postgres, ai-service  | `secrets` (ro)    |
-| dashboard      | 8081      | backend               | —                 |
+`docker compose up -d --build` starts everything on the internal `solia` bridge network; only the
+backend and the dashboard are published on the host.
 
-See [`../infra/`](../infra/) and [`../docker-compose.yml`](../docker-compose.yml).
+| Container      | Published | Starts after (condition)                          | Volume            | Restart          |
+|----------------|-----------|---------------------------------------------------|-------------------|------------------|
+| postgres       | — (internal) | —                                              | `pgdata`          | unless-stopped   |
+| db-migrate     | —         | postgres (healthy)                                | —                 | no (one-shot)    |
+| data-pipeline  | —         | db-migrate (exited 0)                             | —                 | unless-stopped   |
+| ai-service     | —         | db-migrate (exited 0)                             | `models` (`MODEL_DIR`) | unless-stopped |
+| backend        | 8080      | db-migrate (exited 0), ai-service (healthy)       | `./secrets` → `/app/secrets` (ro) | unless-stopped |
+| dashboard      | 8081      | backend (healthy)                                 | —                 | unless-stopped   |
+
+- `db-migrate` is a job, not a server: it applies `services/db/migrations` and exits; no service
+  touches the database before it succeeds.
+- The backend reads only the database and ai-service, so it doesn't wait for the data-pipeline: a
+  failing pipeline never keeps 8080/8081 down.
+- Every long-running container has a healthcheck (the image's `HEALTHCHECK`, timing tuned in
+  compose so cold starts don't flap). The data-pipeline ingests (`INGEST=true` by default).
+- Service hosts are pinned in compose (`POSTGRES_HOST=postgres`, `AI_SERVICE_URL=http://ai-service:8000`,
+  `BACKEND_URL=http://backend:8080`) and `SOLIA_DB_CONNECTION` is blanked (it would win over
+  `POSTGRES_*`); every container runs as `ASPNETCORE_ENVIRONMENT=Production`. Everything else comes
+  from `.env`.
+- Requires Docker Engine 25+ (healthcheck `start_interval`) and Docker Compose 2.24+ (optional `env_file`).
+- Local dev: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres` publishes
+  Postgres on `127.0.0.1:5432` for `dotnet run` / pytest (`POSTGRES_HOST=localhost`).
+
+See [`../infra/`](../infra/), [`../docker-compose.yml`](../docker-compose.yml) and
+[`../docker-compose.dev.yml`](../docker-compose.dev.yml).
 
 ## 8. Cross-cutting concerns
 

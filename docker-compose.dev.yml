@@ -1,0 +1,11 @@
+# Solia — local dev override: publishes Postgres on the host for `dotnet run` / pytest against the
+# containerized database (POSTGRES_HOST=localhost). Never loaded implicitly — pass it explicitly:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres
+#
+# Bound to 127.0.0.1 only: the dev database is not exposed to the LAN.
+
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"

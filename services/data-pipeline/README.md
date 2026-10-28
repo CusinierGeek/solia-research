@@ -16,7 +16,7 @@ PostgreSQL (T7) via the opt-in **ingest mode** below. Sprint 1 complete.
 
 ```bash
 # 1. Start PostgreSQL + apply migrations (see services/db/README.md)
-docker compose up -d postgres
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres   # publishes 127.0.0.1:5432
 POSTGRES_HOST=localhost dotnet run --project services/db/Solia.DbMigrator
 
 # 2. Run the worker (the launch profile listens on http://localhost:8090)
@@ -36,7 +36,7 @@ docker run --network solia_solia -e POSTGRES_HOST=postgres solia-data-pipeline
 
 Non-root, Production config from env vars only (nothing baked in): a bare `docker run` like the
 one above starts **idle** (`INGEST` defaults to `false`; add `-e INGEST=true`), while
-`docker compose --profile app up` ingests (compose sets `INGEST=${INGEST:-true}`).
+`docker compose up` ingests (compose sets `INGEST=${INGEST:-true}`).
 `/health` is on in-container port `8080` (the base image's `ASPNETCORE_HTTP_PORTS`). The image's
 `HEALTHCHECK` runs `dotnet Solia.DataPipeline.dll --healthcheck`, which probes the port Kestrel is
 configured with (`ASPNETCORE_URLS` / `ASPNETCORE_HTTP_PORTS`, else 8080); it covers

@@ -20,9 +20,10 @@ services/db/
 
 ## Run the migrations locally
 
-1. Start PostgreSQL (from the repo root — the compose file defines Postgres 16):
+1. Start PostgreSQL (from the repo root — the dev override publishes the compose Postgres 16 on localhost;
+   in the full stack the `db-migrate` job applies the migrations before any service starts):
    ```bash
-   docker compose up -d postgres
+   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres   # publishes 127.0.0.1:5432
    ```
 2. Run the migrator (from the repo root):
    ```bash
