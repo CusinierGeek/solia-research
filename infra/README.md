@@ -3,6 +3,7 @@
 Docker & orchestration assets. See the root [`docker-compose.yml`](../docker-compose.yml) and [Sprint 6](../docs/sprints/SPRINT-06-docker.md).
 
 - `docker/*.Dockerfile` — per-service build definitions (`data-pipeline`, `ai-service`, `backend`, `dashboard`, `db-migrator`).
+- `scripts/smoke.sh` — end-to-end smoke test of the compose stack (see [Smoke test](#smoke-test)).
 
 ## Image conventions
 
@@ -65,6 +66,26 @@ Docker & orchestration assets. See the root [`docker-compose.yml`](../docker-com
 - The `compose` job in [`ci.yml`](../.github/workflows/ci.yml) validates both files and asserts the
   topology (services, published ports, startup conditions, restart policies, volumes, service hosts,
   the exact variable set of each service, `.env.example` coverage, optional `config/<service>.env` per service only, git/docker ignore of `.env`/`secrets/`/`config/*.env`);
-  `compose-up` starts the real stack from `.env.example` on a fresh volume (`INGEST=false`), waits
-  until db-migrate exits 0 and every service is healthy, then checks the secrets path: a wrong key
-  makes the backend exit non-zero without leaking the key or a value, the right key brings it back.
+  `compose-up` runs the [smoke test](#smoke-test) on the real stack from `.env.example` (fresh volumes,
+  `INGEST=false`), then checks the secrets path: a wrong key makes the backend exit non-zero without
+  leaking the key or a value, the right key brings it back.
+
+## Smoke test
+
+`infra/scripts/smoke.sh` (bash; GitHub Actions or Git Bash on Windows; needs docker + curl, no jq)
+proves the containerized system works end-to-end:
+
+1. `docker compose up -d --wait --build`, then asserts `db-migrate` exited 0 and every long-running
+   service is healthy — otherwise fails with the logs of the failing service.
+2. `backend:8080/health` and `dashboard:8081/health/live` answer 200 from the host; postgres,
+   ai-service and data-pipeline publish no port and `localhost:5432` / `:8000` don't answer.
+3. Every running container's PID 1 runs non-root.
+4. *Opt-in* (`SMOKE_DATA_FLOW=1`, needs the pumpapi live stream): ingested `features` rows grow and
+   `/api/v1/tokens/live` is non-empty.
+5. `down` (volumes kept) then `up`: DB rows (migrations, features, tokens, a marker row) and a marker
+   file in the `models` volume survive; health and non-root are checked again.
+
+It runs as its own compose project (`COMPOSE_PROJECT_NAME`, default `solia-smoke`), so the teardown
+(`down -v`) never touches a dev stack's volumes; ports 8080/8081 must be free. `SMOKE_KEEP=1` leaves
+the stack running, `SMOKE_BUILD=0` reuses built images, `SMOKE_TIMEOUT` (default 600 s) bounds the
+startup. Heavy (builds every image): CI runs it on each PR, it isn't required locally.
