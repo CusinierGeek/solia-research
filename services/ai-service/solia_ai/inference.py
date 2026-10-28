@@ -26,6 +26,8 @@ neutral "no signal" output — 0.5 / 0.5 / 0.0 return / 0 confidence — instead
 from __future__ import annotations
 
 import argparse
+import os
+import re
 import warnings
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -117,6 +119,26 @@ def load_checkpoint(path: str | Path) -> dict[str, Any]:
     if not isinstance(checkpoint, dict) or "model_state" not in checkpoint:
         raise ValueError(f"{path} is not a Solia checkpoint (no 'model_state')")
     return checkpoint
+
+
+def resolve_checkpoint_path(path: str | Path) -> Path:
+    """The registered checkpoint ``path`` if it exists here, else the same file name in
+    ``$MODEL_DIR``.
+
+    The registry stores the absolute path where training wrote the checkpoint, which is only
+    valid on that machine: a champion trained on the host (``./models``) and served from the
+    container (``/app/models`` volume) is found by name in the serving process's model directory.
+    """
+    registered = Path(path)
+    if registered.is_file():
+        return registered
+    model_dir = os.environ.get("MODEL_DIR")
+    if model_dir:
+        # Split on both separators: a Windows-registered path read on Linux has no "/" in it.
+        candidate = Path(model_dir) / re.split(r"[\\/]", str(path))[-1]
+        if candidate.is_file():
+            return candidate
+    return registered  # missing everywhere: let load_checkpoint raise on the registered path
 
 
 def build_model(checkpoint: dict[str, Any]) -> SoliaTransformer:
@@ -217,9 +239,11 @@ class Predictor:
 
     @classmethod
     def from_record(cls, record: Any, *, temperature: float = 1.0) -> Predictor:
-        """Load a registry record's checkpoint, stamped with the registry version (the traceable
-        identity callers echo back)."""
-        predictor = cls.from_checkpoint(record.path, temperature=temperature)
+        """Load a registry record's checkpoint (see :func:`resolve_checkpoint_path`), stamped with
+        the registry version (the traceable identity callers echo back)."""
+        predictor = cls.from_checkpoint(
+            resolve_checkpoint_path(record.path), temperature=temperature
+        )
         predictor.model_version = record.version
         return predictor
 

@@ -29,6 +29,8 @@ shape.
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
 import threading
 import time
 from collections.abc import Callable
@@ -134,6 +136,34 @@ def _window_matrix(rows: list[Row]) -> np.ndarray:
 # --------------------------------------------------------------------------- app
 
 
+def check_model_dir_writable() -> bool:
+    """Warn (once, at startup) when ``$MODEL_DIR`` exists but this process can't write to it.
+
+    Serving only reads checkpoints, so it doesn't fail; training and promotion will. In the
+    image, the non-root user (uid 10001) owns ``/app/models``, and a fresh named volume inherits
+    that ownership, but a bind mount or a volume first created by a root container doesn't.
+    Returns whether the directory is usable (``True`` when ``$MODEL_DIR`` isn't set).
+    """
+    model_dir = os.environ.get("MODEL_DIR")
+    if not model_dir or not os.path.isdir(model_dir):
+        return True
+    try:
+        tempfile.TemporaryFile(dir=model_dir).close()
+    except OSError as exc:
+        uid = getattr(os, "getuid", lambda: "?")()
+        logger.warning(
+            "MODEL_DIR %s is not writable by uid %s (%s): training and promotion will fail. "
+            "Give the volume to that user, e.g. "
+            "docker run --rm -v <volume>:/m alpine chown -R %s /m",
+            model_dir,
+            uid,
+            exc,
+            uid,
+        )
+        return False
+    return True
+
+
 def create_app(
     load_champion: ChampionLoader | None = None,
     *,
@@ -145,6 +175,7 @@ def create_app(
     re-checked at most every ``refresh_seconds`` (``clock`` is injectable for tests)."""
     if refresh_seconds < 0:
         raise ValueError(f"refresh_seconds must be >= 0, got {refresh_seconds}")
+    check_model_dir_writable()
     app = FastAPI(title="Solia ai-service", version="0.1.0")
     app.state.load_champion = load_champion or registry_loader()
     app.state.champion = None

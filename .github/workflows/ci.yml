@@ -81,10 +81,25 @@ jobs:
             dockerfile: infra/docker/data-pipeline.Dockerfile
             # Probe the image's HEALTHCHECK against a real Postgres.
             healthcheck: true
+          - service: ai-service
+            dockerfile: infra/docker/ai-service.Dockerfile
+            # /health needs neither the database nor a champion model: healthy from a cold start.
+            healthcheck: true
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      # Layers (incl. the ai-service torch layer) are cached in the GitHub Actions cache, one
+      # scope per service; the image is loaded into the local daemon for the checks below.
       - name: Build
-        run: docker build -f ${{ matrix.dockerfile }} -t solia-${{ matrix.service }}:ci .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          tags: solia-${{ matrix.service }}:ci
+          load: true
+          push: false
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
       - name: Assert non-root
         run: |
           uid=$(docker run --rm --entrypoint id solia-${{ matrix.service }}:ci -u)
@@ -93,6 +108,31 @@ jobs:
             echo "::error::solia-${{ matrix.service }} runs as root"
             exit 1
           fi
+      - name: Assert image contents (ai-service)
+        if: matrix.service == 'ai-service'
+        run: |
+          docker run --rm --entrypoint python solia-ai-service:ci -c '
+          import importlib.util, os, pathlib, tempfile, torch
+          from importlib import resources
+          assert torch.version.cuda is None, f"CUDA torch build: {torch.version.cuda}"
+          assert resources.files("solia_ai").joinpath("config.yaml").is_file(), "config.yaml missing"
+          model_dir = os.environ["MODEL_DIR"]
+          assert model_dir == "/app/models", model_dir
+          tempfile.NamedTemporaryFile(dir=model_dir).close()  # writable by the non-root user
+          dev = [m for m in ("pytest", "ruff", "black", "testcontainers", "httpx") if importlib.util.find_spec(m)]
+          assert not dev, f"dev dependencies in the image: {dev}"
+          # The build stage stages sources in /src; only /opt/venv is copied over, and /app holds
+          # nothing but the (empty) models directory.
+          assert not pathlib.Path("/src").exists(), "build-stage sources leaked into the image"
+          extra = sorted(p.name for p in pathlib.Path("/app").iterdir() if p.name != "models")
+          assert not extra, f"unexpected entries in /app: {extra}"
+          site = pathlib.Path(resources.files("solia_ai")).parent
+          leaked = [str(p) for p in (site / "tests", site / "solia_ai" / "tests") if p.exists()]
+          leaked += [str(p) for root in ("/app", "/opt/venv") for p in pathlib.Path(root).rglob(".env")]
+          assert not leaked, f"tests or secrets in the image: {leaked}"
+          print("ok: torch", torch.__version__)
+          '
+          docker image ls solia-ai-service:ci --format 'image size: {{.Size}}'
       - name: Assert healthy (with Postgres)
         if: matrix.healthcheck
         run: |

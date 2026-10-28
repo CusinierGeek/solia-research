@@ -12,8 +12,9 @@ import pytest
 from fastapi.testclient import TestClient
 from test_inference import saved_checkpoint
 
+import solia_ai.api
 import solia_ai.registry
-from solia_ai.api import LoadedChampion, create_app, registry_loader
+from solia_ai.api import LoadedChampion, check_model_dir_writable, create_app, registry_loader
 from solia_ai.features import FEATURE_COLUMNS
 from solia_ai.inference import Predictor
 from solia_ai.model import SoliaTransformer
@@ -441,3 +442,28 @@ def test_registry_loader_without_a_champion_raises_lookup_error(monkeypatch):
             loader(None)
 
     assert len(engines) == 1  # no engine leaked per call
+
+
+# --------------------------------------------------------------------------- MODEL_DIR
+
+
+def test_model_dir_check_passes_when_unset_missing_or_writable(tmp_path, monkeypatch):
+    monkeypatch.delenv("MODEL_DIR", raising=False)
+    assert check_model_dir_writable()
+    monkeypatch.setenv("MODEL_DIR", str(tmp_path / "absent"))
+    assert check_model_dir_writable()
+    monkeypatch.setenv("MODEL_DIR", str(tmp_path))
+    assert check_model_dir_writable()
+    assert list(tmp_path.iterdir()) == []  # the probe leaves nothing behind
+
+
+def test_unwritable_model_dir_warns_without_failing_startup(tmp_path, monkeypatch, caplog):
+    def denied(**kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setenv("MODEL_DIR", str(tmp_path))
+    monkeypatch.setattr(solia_ai.api.tempfile, "TemporaryFile", denied)
+
+    assert not check_model_dir_writable()
+    assert "is not writable" in caplog.text and "chown" in caplog.text
+    assert _client().get("/health").json() == {"status": "ok"}  # serving still starts

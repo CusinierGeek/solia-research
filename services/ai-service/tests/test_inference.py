@@ -28,6 +28,7 @@ from solia_ai.inference import (
     load_checkpoint,
     main,
     onnx_parity,
+    resolve_checkpoint_path,
 )
 from solia_ai.model import SoliaTransformer
 from solia_ai.train import build_checkpoint, save_checkpoint
@@ -334,6 +335,47 @@ def test_from_champion_loads_the_registered_checkpoint(tmp_path, monkeypatch):
     predictor = Predictor.from_champion(engine=object())
 
     assert predictor.model_version == "champ-1"
+
+
+@pytest.mark.parametrize(
+    "registered",
+    ["/elsewhere/models/{name}", r"C:\Users\someone\models\{name}"],
+    ids=["posix", "windows"],
+)
+def test_from_record_finds_a_checkpoint_registered_elsewhere_in_model_dir(
+    tmp_path, monkeypatch, registered
+):
+    _, path = saved_checkpoint(tmp_path, version="champ-2")
+    monkeypatch.setenv("MODEL_DIR", str(tmp_path))
+    record = SimpleNamespace(version="champ-2", path=registered.format(name=path.name))
+
+    assert resolve_checkpoint_path(record.path) == tmp_path / path.name
+    assert Predictor.from_record(record).model_version == "champ-2"
+
+
+def test_resolve_checkpoint_path_prefers_the_registered_path(tmp_path, monkeypatch):
+    (tmp_path / "registered").mkdir()
+    (tmp_path / "model_dir").mkdir()
+    _, path = saved_checkpoint(tmp_path / "registered", version="v1")
+    _, other = saved_checkpoint(tmp_path / "model_dir", version="v1")
+    monkeypatch.setenv("MODEL_DIR", str(other.parent))
+
+    assert resolve_checkpoint_path(str(path)) == path
+
+
+@pytest.mark.parametrize("model_dir", [None, "empty"])
+def test_from_record_with_a_missing_checkpoint_raises_on_the_registered_path(
+    tmp_path, monkeypatch, model_dir
+):
+    if model_dir is None:
+        monkeypatch.delenv("MODEL_DIR", raising=False)
+    else:
+        monkeypatch.setenv("MODEL_DIR", str(tmp_path))
+    record = SimpleNamespace(version="gone", path=str(tmp_path / "nowhere" / "gone.pt"))
+
+    assert resolve_checkpoint_path(record.path) == tmp_path / "nowhere" / "gone.pt"
+    with pytest.raises(FileNotFoundError):
+        Predictor.from_record(record)
 
 
 def test_from_champion_without_a_champion_raises(monkeypatch):
