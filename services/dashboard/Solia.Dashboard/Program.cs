@@ -4,6 +4,14 @@ using Solia.Dashboard.Api;
 using Solia.Dashboard.Components;
 using Solia.Dashboard.Configuration;
 using Solia.Dashboard.Live;
+using Solia.Shared.Hosting;
+
+// --- Container healthcheck: `--healthcheck` probes /health/live and exits without starting the host (no backend
+// call, no options validation). Liveness only: the backend being down must not mark the dashboard unhealthy. ---
+if (HealthProbe.IsRequested(args))
+{
+    return await HealthProbe.RunAsync(args, path: DashboardRoutes.HealthLive);
+}
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -29,6 +37,8 @@ builder.Services.AddHealthChecks();
 
 var app = builder.Build();
 
+// No UseHttpsRedirection/UseHsts: the container serves plain HTTP on its published port (TLS, if any, is
+// terminated in front of it), so a redirect or an HSTS header would break the page and the SignalR circuit.
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Error", createScopeForErrors: true);
@@ -37,13 +47,14 @@ app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages:
 
 app.UseAntiforgery();
 
-app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
+app.MapHealthChecks(DashboardRoutes.HealthLive, new HealthCheckOptions { Predicate = _ => false });
 
 app.MapStaticAssets();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
-app.Run();
+await app.RunAsync();
+return 0;
 
 // Exposed for WebApplicationFactory in Solia.Dashboard.Tests.
 public partial class Program;

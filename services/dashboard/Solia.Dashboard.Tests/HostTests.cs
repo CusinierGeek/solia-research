@@ -30,6 +30,14 @@ public class HostTests
             builder.ConfigureTestServices(services => services.AddSingleton<ILiveConnection>(connection));
         });
 
+    // Redirects are surfaced (not followed), so a 3xx is visible to the assertions.
+    private static HttpClient ProductionClient(WebApplicationFactory<Program> factory, string baseAddress) =>
+        factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri(baseAddress),
+            AllowAutoRedirect = false,
+        });
+
     [Fact]
     public async Task The_live_feed_is_one_app_wide_hosted_singleton_started_with_the_host()
     {
@@ -55,9 +63,38 @@ public class HostTests
     {
         using WebApplicationFactory<Program> factory = Factory("Production", ("BACKEND_URL", "http://127.0.0.1:1"));
 
-        HttpResponseMessage response = await factory.CreateClient().GetAsync("/health/live");
+        HttpResponseMessage response = await factory.CreateClient().GetAsync(DashboardRoutes.HealthLive);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    // Both middlewares are silent unless they could act: UseHttpsRedirection needs an HTTPS port to redirect to
+    // (TestServer exposes none, hence https_port), and UseHsts skips plain-HTTP and localhost requests (hence an
+    // HTTPS request to a public host name). So adding either to Program.cs makes this test fail.
+    [Fact]
+    public async Task Production_serves_plain_http_without_https_redirect_or_hsts()
+    {
+        using WebApplicationFactory<Program> factory = Factory(
+            "Production", ("BACKEND_URL", "http://127.0.0.1:1"), ("https_port", "443"));
+
+        HttpResponseMessage http = await ProductionClient(factory, "http://dashboard.example").GetAsync("/");
+        HttpResponseMessage https = await ProductionClient(factory, "https://dashboard.example").GetAsync("/");
+
+        Assert.Equal(HttpStatusCode.OK, http.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, https.StatusCode);
+        Assert.False(https.Headers.Contains("Strict-Transport-Security"));
+    }
+
+    [Fact]
+    public async Task Production_negotiates_the_blazor_circuit_over_websockets()
+    {
+        using WebApplicationFactory<Program> factory = Factory("Production", ("BACKEND_URL", "http://127.0.0.1:1"));
+
+        HttpResponseMessage response = await ProductionClient(factory, "http://localhost:8081")
+            .PostAsync("/_blazor/negotiate?negotiateVersion=1", content: null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("\"WebSockets\"", await response.Content.ReadAsStringAsync());
     }
 
     [Fact]

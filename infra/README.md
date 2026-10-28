@@ -2,7 +2,7 @@
 
 Docker & orchestration assets. See the root [`docker-compose.yml`](../docker-compose.yml) and [Sprint 6](../docs/sprints/SPRINT-06-docker.md).
 
-- `docker/*.Dockerfile` — per-service build definitions (filled in Sprint 6; `data-pipeline`, `ai-service`, `backend` done).
+- `docker/*.Dockerfile` — per-service build definitions (filled in Sprint 6; `data-pipeline`, `ai-service`, `backend`, `dashboard` done).
 
 ## Image conventions
 
@@ -21,6 +21,12 @@ Docker & orchestration assets. See the root [`docker-compose.yml`](../docker-com
   (`Solia.Shared.Hosting.HealthProbe`, exit 0 on 2xx; follows `ASPNETCORE_URLS`/`ASPNETCORE_HTTP_PORTS`
   if overridden). Run it via `env DOTNET_gcServer=0 DOTNET_TieredPGO=0` to keep the probe process light.
   The backend probes `/health/live` (liveness, no dependency); `/health/ready` stays for readiness.
+- **Dashboard**: listens on **8081** (`ASPNETCORE_HTTP_PORTS=8081`) over plain HTTP — no HTTPS
+  redirect / HSTS, so the published port and the Blazor SignalR circuit (WebSockets) work as-is; TLS
+  termination is a future reverse proxy's job. `BACKEND_URL` (internal `http://backend:8080`) is
+  required: missing or invalid ⇒ the container exits non-zero. Its HEALTHCHECK probes the
+  dependency-free `/health/live` (backend down ≠ unhealthy). `RequiresAspNetWebAssets` is pinned in
+  the `.csproj` so the csproj-only restore layer still pulls `_framework/blazor.web.js`.
 - **Secrets (backend)**: nothing baked in. `secrets.enc` is read from `/app/secrets/secrets.enc` (the
   default relative path under `WORKDIR /app`), mounted **read-only** at runtime; `SOLIA_MASTER_KEY`
   comes from the environment. No mount ⇒ plaintext config; explicit `SOLIA_SECRETS_FILE` missing, no

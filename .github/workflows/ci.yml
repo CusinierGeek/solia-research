@@ -89,6 +89,10 @@ jobs:
             dockerfile: infra/docker/backend.Dockerfile
             # The HEALTHCHECK probes /health/live (no dependency): healthy with or without the DB.
             healthcheck: true
+          - service: dashboard
+            dockerfile: infra/docker/dashboard.Dockerfile
+            # Needs BACKEND_URL, not Postgres: probed by its own step (backend unreachable).
+            healthcheck: false
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -212,6 +216,88 @@ jobs:
           if docker logs app-secrets 2>&1 | grep -q not-a-real-secret; then
             echo "::error::decrypted secret value in the logs"; exit 1
           fi
+      - name: Assert image contents (dashboard)
+        if: matrix.service == 'dashboard'
+        run: |
+          docker run --rm --entrypoint sh solia-dashboard:ci -c '
+          set -e
+          test -f /app/Solia.Dashboard.dll
+          test -f /app/wwwroot/app.css
+          if dotnet --list-sdks | grep -q .; then echo "SDK in the image"; exit 1; fi
+          test ! -e /src || { echo "build-stage sources leaked into the image"; exit 1; }
+          # No tests, no Development config, no sources, nothing secret baked in.
+          leaked=$(find /app \( -iname "*Tests*" -o -name "appsettings.Development.json" -o -name "*.cs" \
+                   -o -name "*.razor" -o -name "*.csproj" -o -name "secrets" -o -name "*.enc" -o -name ".env*" \) -print)
+          if [ -n "$leaked" ]; then echo "unexpected files in the image:"; echo "$leaked"; exit 1; fi
+          echo ok
+          '
+          docker image ls solia-dashboard:ci --format 'image size: {{.Size}}'
+      # BACKEND_URL is required (fail fast); with an unreachable backend the dashboard still comes up healthy,
+      # serves plain HTTP on the published 8081 (no HTTPS redirect) with its static assets, and the Blazor
+      # SignalR circuit negotiates and upgrades to WebSockets. HSTS only ever applies to HTTPS requests, so its
+      # absence can't be observed over plain HTTP here: HostTests covers it.
+      - name: Assert startup & HTTP (dashboard)
+        if: matrix.service == 'dashboard'
+        run: |
+          work=$(mktemp -d)
+          trap 'docker rm -f app-fail app > /dev/null 2>&1 || true' EXIT
+          fails() {
+            name=$1; shift
+            rc=0
+            timeout 60 docker run --name app-fail "$@" solia-dashboard:ci > "$work/log" 2>&1 || rc=$?
+            docker rm -f app-fail > /dev/null 2>&1 || true
+            if [ "$rc" -eq 0 ]; then echo "::error::$name: the dashboard started"; cat "$work/log"; exit 1; fi
+            if [ "$rc" -eq 124 ]; then echo "::error::$name: the dashboard hung instead of failing"; cat "$work/log"; exit 1; fi
+            grep -q 'BACKEND_URL' "$work/log" || {
+              echo "::error::$name: exited $rc without the BACKEND_URL validation error"; cat "$work/log"; exit 1
+            }
+            echo "ok: $name -> exit $rc"
+          }
+          fails "no BACKEND_URL"
+          fails "invalid BACKEND_URL" -e BACKEND_URL=backend:8080
+          # http://backend:8080 doesn't resolve here: the backend is down. HTTPS_PORT only tells
+          # UseHttpsRedirection where to redirect (Kestrel still binds 8081 alone): without it the middleware
+          # would be a no-op, and the 200 on GET / below couldn't catch a redirect.
+          docker run -d --name app -p 8081:8081 -e BACKEND_URL=http://backend:8080 -e HTTPS_PORT=443             solia-dashboard:ci
+          status=starting
+          for _ in $(seq 1 30); do
+            state=$(docker inspect -f '{{.State.Status}}' app)
+            status=$(docker inspect -f '{{.State.Health.Status}}' app)
+            echo "state=$state health=$status"
+            [ "$status" = "healthy" ] && break
+            if [ "$status" = "unhealthy" ] || [ "$state" != "running" ]; then break; fi
+            sleep 5
+          done
+          fail() { echo "::error::$1"; docker logs app; exit 1; }
+          [ "$status" = "healthy" ] || fail "the dashboard did not become healthy (state=$state health=$status)"
+          base=http://localhost:8081
+          code=$(curl -s -o "$work/home.html" -w '%{http_code}' "$base/")
+          [ "$code" = "200" ] || fail "GET / returned $code"
+          grep -q 'PAPER TRADING' "$work/home.html" || fail "the home page didn't prerender"
+          # Every stylesheet/script the page references is published and served.
+          assets=$(grep -oE '(href|src)="[^"]+\.(css|js)"' "$work/home.html" | sed -E 's/^(href|src)="([^"]+)"$/\2/')
+          [ -n "$assets" ] || fail "no static assets referenced by the page"
+          for asset in $assets; do
+            case "$asset" in
+              *://* | //*) echo "skip (external): $asset"; continue ;;
+              /*) url="$base$asset" ;;
+              *) url="$base/$asset" ;;
+            esac
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$url")
+            [ "$code" = "200" ] || fail "static asset $asset returned $code"
+            echo "ok: $asset"
+          done
+          token=$(curl -fsS -X POST "$base/_blazor/negotiate?negotiateVersion=1" | jq -r '
+            select(any(.availableTransports[]; .transport == "WebSockets")) | .connectionToken')
+          [ -n "$token" ] || fail "the Blazor hub doesn't offer WebSockets"
+          # The circuit's WebSocket upgrade through the published port (101 Switching Protocols). The key must
+          # be 16 base64-encoded bytes (the RFC 6455 sample nonce), else Kestrel falls back to long polling.
+          # curl then waits on the open socket until --max-time: its non-zero exit is expected.
+          curl -s -i -N --http1.1 --max-time 3 -o "$work/ws" \
+            -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' \
+            -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' "$base/_blazor?id=$token" || true
+          head -1 "$work/ws" | grep -q ' 101' || fail "WebSocket upgrade failed: $(head -1 "$work/ws")"
+          echo "ok: WebSocket circuit upgrade"
       - name: Assert healthy (with Postgres)
         if: matrix.healthcheck
         run: |
