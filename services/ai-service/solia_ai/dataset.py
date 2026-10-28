@@ -43,7 +43,7 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
-from .config import load_config
+from .config import MAX_POS_WEIGHT, load_config
 from .features import (
     BASELINE_GROUPS,
     FEATURE_COLUMNS,
@@ -55,7 +55,6 @@ _HORIZON_UNITS = {"s": 1, "m": 60, "h": 3600}
 
 DEFAULT_MAX_GAP_FRACTION = 0.25
 DEFAULT_MIN_GAP_SECONDS = 20  # two pipeline snapshot cadences: normal spacing is never a "gap"
-MAX_POS_WEIGHT = 1000.0
 
 
 def horizon_seconds(label: str) -> int:

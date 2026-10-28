@@ -169,3 +169,70 @@ def test_old_split_loss_weights_are_not_accepted(tmp_path):
 
     with pytest.raises(ConfigError, match="'loss.alpha' must be a number"):
         load_config(write(tmp_path, variant(loss=loss)))
+
+
+NATURAL = {**VALID["training"], "balanced_sampling": False}
+
+
+@pytest.mark.parametrize(
+    ("sections", "message"),
+    [
+        ({"calibration": "platt"}, "'calibration' must be a mapping"),
+        ({"calibration": {"method": "isotonic"}}, "'calibration.method' must be one of"),
+        ({"calibration": {"fraction": 0}}, r"'calibration.fraction' must be in \(0, 1\)"),
+        ({"calibration": {"fraction": 1.0}}, r"'calibration.fraction' must be in \(0, 1\)"),
+        ({"calibration": {"min_samples": 0}}, "'calibration.min_samples' must be > 0"),
+        ({"calibration": {"min_samples": 2.5}}, "'calibration.min_samples' must be an integer"),
+        (
+            {"loss": {**VALID["loss"], "pos_weight": "auto"}},  # balanced_sampling: true
+            "'loss.pos_weight' needs 'training.balanced_sampling: false'",
+        ),
+        (
+            {"training": NATURAL, "loss": {**VALID["loss"], "pos_weight": -1}},
+            "'loss.pos_weight' must be a positive number",
+        ),
+        (
+            {"training": NATURAL, "loss": {**VALID["loss"], "pos_weight": "heavy"}},
+            "'loss.pos_weight' must be a positive number",
+        ),
+        (
+            {"training": NATURAL, "loss": {**VALID["loss"], "pos_weight": {"return": 2.0}}},
+            r"'loss.pos_weight' has unknown head\(s\): return",
+        ),
+        (
+            {"training": NATURAL, "loss": {**VALID["loss"], "pos_weight": {"pump": 0}}},
+            "'loss.pos_weight.pump' must be a positive number",
+        ),
+        (
+            {"calibration": {"min_class_samples": 0}},
+            "'calibration.min_class_samples' must be > 0",
+        ),
+        (
+            {"training": NATURAL, "loss": {**VALID["loss"], "pos_weight": 5000}},
+            "'loss.pos_weight' must be at most 1000",
+        ),
+        (
+            {"training": NATURAL, "loss": {**VALID["loss"], "pos_weight": {"rug": 2000.0}}},
+            "'loss.pos_weight.rug' must be at most 1000",
+        ),
+    ],
+)
+def test_invalid_calibration_and_class_weighting_are_rejected(tmp_path, sections, message):
+    with pytest.raises(ConfigError, match=message):
+        load_config(write(tmp_path, variant(**sections)))
+
+
+@pytest.mark.parametrize(
+    "pos_weight", ["auto", "none", 3.0, 1000, {"pump": 5.0, "rug": 2}, {"rug": 1.5}]
+)
+def test_class_weighting_is_accepted_with_natural_sampling(tmp_path, pos_weight):
+    cfg = load_config(
+        write(tmp_path, variant(training=NATURAL, loss={**VALID["loss"], "pos_weight": pos_weight}))
+    )
+
+    assert cfg["loss"]["pos_weight"] == pos_weight
+
+
+def test_calibration_section_is_optional(tmp_path):
+    assert "calibration" not in load_config(write(tmp_path, variant(calibration=None)))
+    assert VALID["calibration"]["method"] == "platt"

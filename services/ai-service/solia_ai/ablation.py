@@ -23,6 +23,11 @@ difference *with group − without group* over the same (window, seed) runs, ori
 is better (ECE is negated). It is flagged significant only when it clears the margin by more than
 one standard deviation of those paired differences.
 
+Each run is calibrated (``config.yaml`` ``calibration``) on its early-stopping validation split —
+never the scored slice — and scored calibrated, as served. The raw (uncalibrated) metrics are kept
+too, and the report's ``calibration`` section pairs calibrated vs raw over every run: a strictly
+increasing map can't move ROC-AUC / PR-AUC, so only ECE should change.
+
 Ablation runs never save a checkpoint, register a model, or touch ``is_champion``.
 """
 
@@ -42,15 +47,17 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .calibration import settings as calibration_settings
 from .dataset import SequenceDataset, config_samples, embargo_seconds, temporal_split
 from .evaluate import EvaluationReport, ReferencePolicy, evaluate, fmt, json_safe
 from .features import BASELINE_GROUPS, FEATURE_GROUPS, check_group_coverage
-from .train import fit
+from .train import fit, fit_calibration_window
 
 HEADS = ("pump", "rug")
 PREDICTIVE_METRICS = ("roc_auc", "pr_auc", "ece")
 POLICY_METRICS = ("total_pnl", "avg_pnl")
 LOWER_IS_BETTER = frozenset({"ece"})
+RAW_PREFIX = "raw/"
 
 DEFAULT_WINDOWS = 3
 DEFAULT_SEEDS = (0, 1, 2)
@@ -199,14 +206,23 @@ def metric_keys(horizons: Sequence[str]) -> list[str]:
     return keys + [f"policy/{m}" for m in POLICY_METRICS]
 
 
+def raw_key(key: str) -> str:
+    """The uncalibrated twin of a predictive metric key."""
+    return f"{RAW_PREFIX}{key}"
+
+
 def run_metrics(report: EvaluationReport) -> dict[str, float | None]:
-    """The ablation metrics of one evaluation (``None`` where a metric is undefined)."""
+    """The ablation metrics of one evaluation (``None`` where a metric is undefined), plus the
+    uncalibrated predictive metrics under :func:`raw_key`."""
     out: dict[str, float | None] = {}
     for head in HEADS:
         per_horizon = getattr(report, head)
+        raw = report.uncalibrated.get(head, {})
         for h in report.horizons:
             for m in PREDICTIVE_METRICS:
                 out[f"{head}/{h}/{m}"] = _finite(per_horizon[h][m])
+                if h in raw:
+                    out[raw_key(f"{head}/{h}/{m}")] = _finite(raw[h][m])
     for m in POLICY_METRICS:
         out[f"policy/{m}"] = _finite(report.policy[m])
     return out
@@ -284,6 +300,8 @@ class AblationReport:
     runs: list[RunResult] = field(default_factory=list)
     summary: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
     lifts: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
+    # Per predictive metric: calibrated - raw over every run (positive = better, ECE negated).
+    calibration: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return json_safe(asdict(self))
@@ -326,6 +344,15 @@ class AblationReport:
                     f"{key:>22} | {_pm(self.summary[base][key]):>17} | "
                     f"{_pm(self.summary[name][key]):>17} | {_pm(lift):>17} | {lift['verdict']}"
                 )
+        if self.calibration:
+            method = s.get("calibration", {}).get("method", "?")
+            lines += [
+                "",
+                f"Calibration ({method}): calibrated - raw over all runs, positive = better",
+                f"{'metric':>22} | {'effect':>17} | verdict",
+            ]
+            for key, effect in self.calibration.items():
+                lines.append(f"{key:>22} | {_pm(effect):>17} | {effect['verdict']}")
         return "\n".join(lines)
 
 
@@ -412,8 +439,14 @@ def run_ablation(
                 cfg["training"] = {**cfg["training"], "seed": seed}
                 cfg["features"] = {"groups": list(variant.groups)}  # the model masks the rest
                 fitted = fit(train_ds, val_ds, cfg, device=device)
+                model = fitted.model.cpu()
+                calibration, _ = fit_calibration_window(model, val_ds, cfg)
                 report = evaluate(
-                    fitted.model.cpu(), eval_ds, model_version=variant.name, policy=policy
+                    model,
+                    eval_ds,
+                    model_version=variant.name,
+                    policy=policy,
+                    calibration=calibration,
                 )
                 runs.append(
                     RunResult(
@@ -440,6 +473,17 @@ def run_ablation(
             for k in keys
         }
 
+    predictive = [k for k in keys if not k.startswith("policy/")]
+    calibration_effect = {
+        k: decide(
+            paired_lifts(
+                [r.metrics.get(k) for r in runs], [r.metrics.get(raw_key(k)) for r in runs], k
+            ),
+            margin,
+        )
+        for k in predictive
+    }
+
     return AblationReport(
         generated_at=datetime.now(UTC).isoformat(),
         settings={
@@ -455,6 +499,7 @@ def run_ablation(
                 "rug_threshold": policy.rug_threshold,
             },
             "embargo_seconds": embargo_seconds(horizons),
+            "calibration": calibration_settings(config),
         },
         horizons=horizons,
         windows=[w.describe() for w in windows],
@@ -462,6 +507,7 @@ def run_ablation(
         runs=runs,
         summary=summary,
         lifts=lifts,
+        calibration=calibration_effect,
     )
 
 

@@ -7,11 +7,12 @@ This is the inference side of the model (docs/ARCHITECTURE.md §5, docs/API-CONT
   traceability. The model is a *signal* model: nothing here decides a trade (that is the policy
   layer's job, see docs/ML-MODEL.md).
 * **Confidence is derived, not learned** (:func:`derive_confidence`): a monotonic map of the
-  probability margin. An optional temperature (the calibration finalized later this sprint) is
-  applied to the logits, so the served ``pump_prob``/``rug_prob`` *and* the confidence derived
-  from them are both calibrated. A default temperature of 1.0 leaves the probabilities untouched.
+  (calibrated) probability margin. The checkpoint's per-horizon calibration
+  (:mod:`solia_ai.calibration`, identity for an older checkpoint) is applied to the logits, so the
+  served ``pump_prob``/``rug_prob`` *and* the confidence derived from them are both calibrated. A
+  ``temperature`` override replaces it with one uniform temperature (1.0 = untouched).
 * **The ONNX export** (:func:`export_onnx`) is the artifact the latency-critical .NET fast path
-  runs in-process. It emits the whole contract — confidence included, with the temperature baked
+  runs in-process. It emits the whole contract — confidence included, with the calibration baked
   in — from the same torch code as :class:`Predictor`, so .NET never re-implements the formula.
   It is exported at a fixed window length (``seq_len``) with a dynamic batch and always ships with
   a parity check: ONNXRuntime must match PyTorch within tolerance, or the export fails rather than
@@ -26,6 +27,7 @@ neutral "no signal" output — 0.5 / 0.5 / 0.0 return / 0 confidence — instead
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import warnings
@@ -38,6 +40,7 @@ import numpy as np
 import torch
 from torch import nn
 
+from .calibration import Calibration
 from .dataset import pad_window
 from .features import FEATURE_COLUMNS
 from .model import IncompatibleCheckpointError, SoliaTransformer
@@ -52,15 +55,11 @@ PARITY_TOL = 1e-4
 
 INPUT_NAMES = ("features", "padding_mask")
 OUTPUT_NAMES = ("pump_prob", "rug_prob", "expected_return", "confidence")
+# The ONNX ``temperature`` metadata value when the calibration has no single temperature.
+PER_HORIZON = "per-horizon"
 
 
 # --------------------------------------------------------------------------- confidence
-
-
-def _check_temperature(temperature: float) -> float:
-    if not temperature > 0:  # also rejects NaN
-        raise ValueError(f"temperature must be > 0, got {temperature}")
-    return float(temperature)
 
 
 def _confidence(pump: torch.Tensor, rug: torch.Tensor) -> torch.Tensor:
@@ -69,11 +68,14 @@ def _confidence(pump: torch.Tensor, rug: torch.Tensor) -> torch.Tensor:
     return (200.0 * margin).clamp(0.0, 100.0)
 
 
-def contract_outputs(logits: dict[str, torch.Tensor], temperature: float = 1.0) -> dict[str, Any]:
-    """Model logits -> the serving contract: temperature-scaled probabilities, expected return,
-    and the confidence derived from those *same* (calibrated) probabilities."""
-    pump = torch.sigmoid(logits["pump_logits"] / temperature)
-    rug = torch.sigmoid(logits["rug_logits"] / temperature)
+Scale = float | torch.Tensor
+
+
+def _contract(
+    logits: dict[str, torch.Tensor], pump_t: Scale, pump_b: Scale, rug_t: Scale, rug_b: Scale
+) -> dict[str, Any]:
+    pump = torch.sigmoid(logits["pump_logits"] / pump_t + pump_b)
+    rug = torch.sigmoid(logits["rug_logits"] / rug_t + rug_b)
     return {
         "pump_prob": pump,
         "rug_prob": rug,
@@ -82,26 +84,45 @@ def contract_outputs(logits: dict[str, torch.Tensor], temperature: float = 1.0) 
     }
 
 
-def derive_confidence(
-    pump_prob: np.ndarray | float,
-    rug_prob: np.ndarray | float,
-    *,
-    temperature: float = 1.0,
-) -> np.ndarray:
-    """Confidence ∈ [0, 100] from the pump/rug probabilities (docs/ML-MODEL.md "Confidence").
+def contract_outputs(
+    logits: dict[str, torch.Tensor], calibration: Calibration | float = 1.0
+) -> dict[str, Any]:
+    """Model logits -> the serving contract: calibrated probabilities, expected return, and the
+    confidence derived from those *same* (calibrated) probabilities. ``calibration`` is a
+    per-horizon :class:`Calibration` or one uniform temperature."""
+    if isinstance(calibration, Calibration):
+        return _contract(logits, *calibration.params("pump"), *calibration.params("rug"))
+    return _contract(logits, calibration, 0.0, calibration, 0.0)
+
+
+def resolve_calibration(
+    horizons: Sequence[str],
+    calibration: Calibration | None = None,
+    temperature: float | None = None,
+) -> Calibration:
+    """The calibration to serve: a ``temperature`` override (uniform), else ``calibration``, else
+    the identity. Both at once is ambiguous and refused; a calibration fit for other horizons is
+    refused rather than mis-applied."""
+    if temperature is not None:
+        if calibration is not None:
+            raise ValueError("pass either a calibration or a temperature override, not both")
+        return Calibration.uniform(horizons, temperature)
+    if calibration is None:
+        return Calibration.identity(horizons)
+    return calibration.check_horizons(horizons)
+
+
+def derive_confidence(pump_prob: np.ndarray | float, rug_prob: np.ndarray | float) -> np.ndarray:
+    """Confidence ∈ [0, 100] from **already calibrated** pump/rug probabilities (docs/ML-MODEL.md
+    "Confidence") — the formula :func:`contract_outputs` applies after calibrating the logits.
 
     How decisive the dominant signal is: ``200 * max(|pump-0.5|, |rug-0.5|)``, so a coin-flip
     (0.5) scores 0 and a near-certain 0/1 scores 100. It is monotonic with the probability margin,
-    hence with historical hit-rate once the probabilities are calibrated. ``temperature`` (>0,
-    default 1.0 = identity) applies that calibration in logit space before the margin is taken.
+    hence with historical hit-rate once the probabilities are calibrated. Calibration itself is
+    per head and horizon (a :class:`Calibration`), so it is applied to logits, never here.
     """
-    temperature = _check_temperature(temperature)
     pump = torch.as_tensor(np.asarray(pump_prob, dtype=np.float64))
     rug = torch.as_tensor(np.asarray(rug_prob, dtype=np.float64))
-    if temperature != 1.0:
-        eps = 1e-7
-        pump = torch.sigmoid(torch.logit(pump, eps=eps) / temperature)
-        rug = torch.sigmoid(torch.logit(rug, eps=eps) / temperature)
     return _confidence(pump, rug).numpy()
 
 
@@ -225,7 +246,8 @@ class Predictor:
         model: SoliaTransformer,
         *,
         model_version: str,
-        temperature: float = 1.0,
+        calibration: Calibration | None = None,
+        temperature: float | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
         self.model = model.eval()
@@ -237,7 +259,7 @@ class Predictor:
             else [FEATURE_COLUMNS.index(c) for c in model.feature_columns]
         )
         self.model_version = model_version
-        self.temperature = _check_temperature(temperature)
+        self.calibration = resolve_calibration(model.horizons, calibration, temperature)
         # The checkpoint's non-weight fields (metrics, created_at, train_end_ts, ...).
         self.metadata = dict(metadata or {})
 
@@ -260,19 +282,28 @@ class Predictor:
         return int(model.get("min_seq_len", model.get("seq_len", self.seq_len)))
 
     @classmethod
-    def from_checkpoint(cls, path: str | Path, *, temperature: float = 1.0) -> Predictor:
+    def from_checkpoint(cls, path: str | Path, *, temperature: float | None = None) -> Predictor:
+        """Load a checkpoint with its recorded calibration (the identity for one saved before
+        calibration existed); ``temperature`` overrides it with one uniform temperature."""
         checkpoint = load_checkpoint(path)
         version = checkpoint.get("version") or Path(path).stem
         metadata = {k: v for k, v in checkpoint.items() if k != "model_state"}
+        model = build_model(checkpoint)
+        calibration = (
+            None
+            if temperature is not None
+            else Calibration.from_checkpoint(checkpoint, model.horizons)
+        )
         return cls(
-            build_model(checkpoint),
+            model,
             model_version=version,
+            calibration=calibration,
             temperature=temperature,
             metadata=metadata,
         )
 
     @classmethod
-    def from_record(cls, record: Any, *, temperature: float = 1.0) -> Predictor:
+    def from_record(cls, record: Any, *, temperature: float | None = None) -> Predictor:
         """Load a registry record's checkpoint (see :func:`resolve_checkpoint_path`), stamped with
         the registry version (the traceable identity callers echo back)."""
         predictor = cls.from_checkpoint(
@@ -282,7 +313,7 @@ class Predictor:
         return predictor
 
     @classmethod
-    def from_champion(cls, engine: Any, *, temperature: float = 1.0) -> Predictor:
+    def from_champion(cls, engine: Any, *, temperature: float | None = None) -> Predictor:
         """Load the registry's champion checkpoint (raises if none is promoted yet)."""
         from .registry import read_champion
 
@@ -345,7 +376,7 @@ class Predictor:
 
         x, mask = self._to_batch(batch)
         with torch.no_grad():
-            out = contract_outputs(self.model(x, mask), self.temperature)
+            out = contract_outputs(self.model(x, mask), self.calibration)
         pump = out["pump_prob"].numpy()
         rug = out["rug_prob"].numpy()
         ret = out["expected_return"].numpy()
@@ -378,10 +409,13 @@ class _OnnxInferenceModule(nn.Module):
     probabilities, return, confidence), not raw logits — via :func:`contract_outputs`, the same
     code :class:`Predictor` runs, so the .NET fast path never re-implements the formula."""
 
-    def __init__(self, model: SoliaTransformer, temperature: float = 1.0) -> None:
+    def __init__(self, model: SoliaTransformer, calibration: Calibration) -> None:
         super().__init__()
         self.model = model
-        self.temperature = _check_temperature(temperature)
+        for head in ("pump", "rug"):
+            temperature, bias = calibration.params(head)
+            self.register_buffer(f"{head}_temperature", temperature)
+            self.register_buffer(f"{head}_bias", bias)
 
     def forward(
         self, features: torch.Tensor, padding_mask: torch.Tensor
@@ -391,7 +425,13 @@ class _OnnxInferenceModule(nn.Module):
         # row is un-masked for the math (no 0/0 -> NaN) and its outputs overwritten as neutral.
         has_rows = (~padding_mask).any(dim=1, keepdim=True)
         safe_mask = padding_mask & has_rows
-        out = contract_outputs(self.model.encode_logits(features, safe_mask), self.temperature)
+        out = _contract(
+            self.model.encode_logits(features, safe_mask),
+            self.pump_temperature,
+            self.pump_bias,
+            self.rug_temperature,
+            self.rug_bias,
+        )
         return (
             torch.where(has_rows, out["pump_prob"], 0.5),
             torch.where(has_rows, out["rug_prob"], 0.5),
@@ -413,7 +453,7 @@ def onnx_parity(
     model: SoliaTransformer,
     onnx_path: str | Path,
     *,
-    temperature: float = 1.0,
+    calibration: Calibration | float = 1.0,
     tol: float = PARITY_TOL,
     seed: int = 0,
 ) -> float:
@@ -434,7 +474,7 @@ def onnx_parity(
             pad = int(rng.integers(0, model.seq_len))
             mask[b, :pad] = True
         with torch.no_grad():
-            expected = contract_outputs(model(x, mask), temperature)
+            expected = contract_outputs(model(x, mask), calibration)
         feeds = {"features": x.numpy(), "padding_mask": mask.numpy()}
         actual = session.run(list(OUTPUT_NAMES), feeds)
         for name, got in zip(OUTPUT_NAMES, actual, strict=True):
@@ -452,7 +492,8 @@ def export_onnx(
     *,
     opset: int = DEFAULT_OPSET,
     model_version: str | None = None,
-    temperature: float = 1.0,
+    calibration: Calibration | None = None,
+    temperature: float | None = None,
     verify: bool = True,
     tol: float = PARITY_TOL,
 ) -> Path:
@@ -461,12 +502,16 @@ def export_onnx(
     Exported at a fixed window length (``seq_len``) with a dynamic batch, taking ``features``
     ``[B, seq_len, F]`` and a bool ``padding_mask`` ``[B, seq_len]`` and returning
     ``pump_prob`` / ``rug_prob`` / ``expected_return`` / ``confidence`` ``[B, n_horizons]`` — the
-    fast-path contract, with ``temperature`` baked in (and recorded in the metadata alongside
-    ``model_version``). When ``verify`` is set, a graph that fails its parity check is removed and
-    the :class:`ValueError` re-raised.
+    fast-path contract, with the calibration baked in — ``calibration``, or a uniform
+    ``temperature`` override, else the identity — and recorded in the metadata alongside
+    ``model_version``: ``calibration`` (the full per-head/horizon JSON) and, as before,
+    ``temperature`` — the single temperature of a uniform calibration, or ``per-horizon`` when
+    there is none (read ``calibration`` then). When ``verify`` is set, a graph that fails its
+    parity check is removed and the :class:`ValueError` re-raised.
     """
     path = Path(path)
-    wrapper = _OnnxInferenceModule(model, temperature).eval()
+    calibration = resolve_calibration(model.horizons, calibration, temperature)
+    wrapper = _OnnxInferenceModule(model, calibration).eval()
     # A batch > 1 example: torch.export specializes a size-1 dim to a constant, which would bake
     # the example's batch into the graph and defeat the dynamic batch axis.
     x, mask = _example_inputs(model, 2)
@@ -490,7 +535,11 @@ def export_onnx(
 
     import onnx
 
-    metadata = {"temperature": repr(wrapper.temperature)}
+    uniform = calibration.uniform_temperature
+    metadata = {
+        "temperature": PER_HORIZON if uniform is None else repr(uniform),
+        "calibration": json.dumps(calibration.as_dict()),
+    }
     if model_version is not None:
         metadata["model_version"] = model_version
     onnx_model = onnx.load(str(path))
@@ -500,7 +549,7 @@ def export_onnx(
 
     if verify:
         try:
-            onnx_parity(model, path, temperature=wrapper.temperature, tol=tol)
+            onnx_parity(model, path, calibration=calibration, tol=tol)
         except ValueError:
             # Only a genuine parity failure condemns the graph; an interrupt or a broken
             # onnxruntime install says nothing about it, so the file is kept in those cases.
@@ -522,7 +571,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--out", required=True, help="output .onnx path")
     parser.add_argument("--opset", type=int, default=DEFAULT_OPSET)
     parser.add_argument(
-        "--temperature", type=float, default=1.0, help="calibration temperature baked into graph"
+        "--temperature",
+        type=float,
+        help="override the checkpoint's calibration with one uniform temperature",
     )
     parser.add_argument("--no-verify", action="store_true", help="skip the ONNX parity check")
     args = parser.parse_args(argv)
@@ -544,7 +595,7 @@ def main(argv: list[str] | None = None) -> None:
         args.out,
         opset=args.opset,
         model_version=predictor.model_version,
-        temperature=predictor.temperature,
+        calibration=predictor.calibration,
         verify=not args.no_verify,
     )
     print(f"exported {predictor.model_version} -> {out} (opset {args.opset})")

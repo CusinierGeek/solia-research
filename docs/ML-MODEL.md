@@ -52,6 +52,27 @@ Total loss = weighted sum (per-horizon and per-task weights configurable):
   `L = α · BCE + (1-α) · Focal(γ)`
 - **expected return**: Huber (smooth L1).
 
+Class imbalance is corrected **once**: class-balanced batches (`training.balanced_sampling`, the
+default), *or* natural batches with a BCE `loss.pos_weight` (`auto` = neg/pos per horizon on the
+training split, a fixed number, or per head). The two together are rejected by config validation.
+
+## Calibration
+
+The policy acts on probability thresholds, so the served probabilities must be calibrated. After
+training, `p = sigmoid(logit / T + b)` is fit **per head × horizon** (`calibration.method`:
+`platt` = T and b, `temperature` = T only, `none`) on the earliest `calibration.fraction` of the
+validation windows, by minimizing log-loss. Platt is the default because balanced batches bias the
+raw probabilities toward the ~50% event rate — a shift a temperature alone can't undo. The fit is
+stored in the checkpoint (`calibration`, `calibration_end_ts`) and applied identically by
+`/predict` and the ONNX graph; a checkpoint without it loads as the identity. Both maps are
+strictly increasing; the fit is bounded (`T` ∈ [0.1, 10], `|b|` ≤ 10) so the sigmoid doesn't
+saturate into ties, and `evaluate` scores in float64, so ROC-AUC / PR-AUC are unchanged. A
+head × horizon keeps the identity when it has fewer than `calibration.min_samples` labels or fewer
+than `calibration.min_class_samples` of its minority class (a rare event can't support a fit). The
+calibration window is a strict prefix of the validation split (too short a split keeps the
+identity, with a warning); `evaluate` reports ECE before/after and only scores windows after it,
+and the ablation reports the calibrated − raw effect over all runs.
+
 ## Optimizer & training
 
 - **Optimizer**: AdamW (`lr`, `weight_decay` in config).
@@ -77,8 +98,9 @@ so a pump/rug after migration is labeled correctly; a pre-bonding-only dataset w
 
 ## Confidence
 
-Confidence (0–100) is **derived** from the calibrated probabilities (e.g. temperature-scaled
-margin), not a learned head; it must be monotonic with historical hit-rate. Finalized in Sprint 2.
+Confidence (0–100) is **derived** from the calibrated probabilities (their margin from 0.5, after
+the per-head × horizon calibration of the logits), not a learned head; it must be monotonic with historical hit-rate. See
+"Calibration" above.
 
 ## Outputs contract
 

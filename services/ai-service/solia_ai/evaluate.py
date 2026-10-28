@@ -26,7 +26,7 @@ import argparse
 import json
 import sys
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -37,8 +37,15 @@ from scipy.stats import rankdata
 from sklearn.metrics import average_precision_score, roc_auc_score
 from torch.utils.data import DataLoader
 
+from .calibration import (
+    DEFAULT_METHOD,
+    DEFAULT_MIN_CLASS_SAMPLES,
+    DEFAULT_MIN_SAMPLES,
+    Calibration,
+    fit_calibration,
+)
 from .dataset import SequenceDataset, make_datasets, make_holdout_dataset
-from .inference import contract_outputs
+from .inference import contract_outputs, resolve_calibration
 from .model import SoliaTransformer
 
 # Finance convention: the information coefficient is a rank correlation, so a monotonic but
@@ -49,25 +56,24 @@ DEFAULT_ECE_BINS = 10
 # --------------------------------------------------------------------------- scoring
 
 
-def score_dataset(
-    model: SoliaTransformer,
-    dataset: SequenceDataset,
-    *,
-    temperature: float = 1.0,
-    batch_size: int = 256,
-) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
-    """Score every window in ``dataset`` into the serving contract.
+LOGIT_KEYS = ("pump_logits", "rug_logits", "expected_return")
+PRED_KEYS = ("pump_prob", "rug_prob", "expected_return", "confidence")
+TRUE_KEYS = ("pump", "rug", "expected_return", "mask")
 
-    Returns ``(predictions, truth)``: ``predictions`` holds ``pump_prob`` / ``rug_prob`` /
-    ``expected_return`` / ``confidence`` and ``truth`` holds the labels ``pump`` / ``rug`` /
-    ``expected_return`` / ``mask`` — each a ``[N, H]`` array aligned row-for-row, over the
-    dataset's own order (unshuffled), so a metric can mask by ``truth['mask']`` per horizon.
+
+def score_logits(
+    model: SoliaTransformer, dataset: SequenceDataset, *, batch_size: int = 256
+) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+    """The model's raw outputs over every window in ``dataset``: ``(logits, truth)``.
+
+    ``logits`` holds ``pump_logits`` / ``rug_logits`` / ``expected_return`` and ``truth`` the labels
+    ``pump`` / ``rug`` / ``expected_return`` / ``mask`` — each a ``[N, H]`` array aligned
+    row-for-row, over the dataset's own order (unshuffled). One pass serves both the calibration
+    fit and any number of calibrated views (:func:`apply_calibration`).
     """
     n_h = len(dataset.samples.horizons)
-    pred_keys = ("pump_prob", "rug_prob", "expected_return", "confidence")
-    true_keys = ("pump", "rug", "expected_return", "mask")
-    preds: dict[str, list[np.ndarray]] = {k: [] for k in pred_keys}
-    trues: dict[str, list[np.ndarray]] = {k: [] for k in true_keys}
+    outs: dict[str, list[np.ndarray]] = {k: [] for k in LOGIT_KEYS}
+    trues: dict[str, list[np.ndarray]] = {k: [] for k in TRUE_KEYS}
 
     was_training = model.training
     model.eval()
@@ -76,10 +82,10 @@ def score_dataset(
             for x, padding_mask, targets in DataLoader(
                 dataset, batch_size=batch_size, shuffle=False
             ):
-                out = contract_outputs(model(x, padding_mask), temperature)
-                for key in pred_keys:
-                    preds[key].append(out[key].numpy())
-                for key in true_keys:
+                out = model(x, padding_mask)
+                for key in LOGIT_KEYS:
+                    outs[key].append(out[key].numpy())
+                for key in TRUE_KEYS:
                     trues[key].append(targets[key].numpy())
     finally:
         model.train(was_training)
@@ -87,7 +93,44 @@ def score_dataset(
     def stack(parts: list[np.ndarray]) -> np.ndarray:
         return np.concatenate(parts) if parts else np.empty((0, n_h), np.float32)
 
-    return ({k: stack(v) for k, v in preds.items()}, {k: stack(v) for k, v in trues.items()})
+    return ({k: stack(v) for k, v in outs.items()}, {k: stack(v) for k, v in trues.items()})
+
+
+def apply_calibration(
+    logits: Mapping[str, np.ndarray], calibration: Calibration | float = 1.0
+) -> dict[str, np.ndarray]:
+    """Raw logits -> the serving contract (``pump_prob`` / ``rug_prob`` / ``expected_return`` /
+    ``confidence``), through the same :func:`contract_outputs` ``/predict`` and ONNX run."""
+    # float64, so a calibrated probability only saturates to exactly 0/1 (tying distinct scores and
+    # moving ROC-AUC / PR-AUC) far beyond any realistic logit; the served float32 values differ by
+    # rounding only.
+    out = contract_outputs(
+        {k: torch.from_numpy(np.asarray(logits[k], dtype=np.float64)) for k in LOGIT_KEYS},
+        calibration,
+    )
+    return {k: out[k].numpy() for k in PRED_KEYS}
+
+
+def calibrate(
+    model: SoliaTransformer,
+    dataset: SequenceDataset,
+    *,
+    method: str = DEFAULT_METHOD,
+    min_samples: int = DEFAULT_MIN_SAMPLES,
+    min_class_samples: int = DEFAULT_MIN_CLASS_SAMPLES,
+    batch_size: int = 256,
+) -> Calibration:
+    """Fit the per-head, per-horizon calibration of ``model`` on ``dataset`` (the calibration
+    window — never the one the report scores)."""
+    logits, truth = score_logits(model, dataset, batch_size=batch_size)
+    return fit_calibration(
+        logits,
+        truth,
+        model.horizons,
+        method=method,
+        min_samples=min_samples,
+        min_class_samples=min_class_samples,
+    )
 
 
 # --------------------------------------------------------------------------- metrics
@@ -245,7 +288,10 @@ class EvaluationReport:
     rug: dict[str, dict[str, Any]]
     expected_return: dict[str, dict[str, Any]]
     policy: dict[str, Any]
-    temperature: float = 1.0
+    # The calibration the probabilities above went through (Calibration.as_dict()), and the same
+    # classification metrics on the raw (identity) probabilities — the ECE "before".
+    calibration: dict[str, Any] = field(default_factory=dict)
+    uncalibrated: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         """A JSON-safe dict (non-finite metrics, which JSON can't hold, become ``null``)."""
@@ -276,6 +322,17 @@ class EvaluationReport:
                 f"{fmt(p['ece']):>8} | {fmt(r['roc_auc']):>8} {fmt(r['pr_auc']):>8} "
                 f"{fmt(r['ece']):>8} | {fmt(e['ic']):>7} {fmt(e['mae']):>8}"
             )
+        if self.uncalibrated:
+            lines += [
+                "",
+                f"Calibration ({self.calibration.get('method', 'none')}) — ECE before -> after:",
+            ]
+            for horizon in self.horizons:
+                before = {head: self.uncalibrated[head][horizon]["ece"] for head in ("pump", "rug")}
+                lines.append(
+                    f"{horizon:>8} | pump {fmt(before['pump'])} -> {fmt(self.pump[horizon]['ece'])}"
+                    f" | rug {fmt(before['rug'])} -> {fmt(self.rug[horizon]['ece'])}"
+                )
         pol = self.policy
         lines += [
             "",
@@ -312,7 +369,8 @@ def evaluate(
     *,
     model_version: str = "unknown",
     policy: ReferencePolicy | None = None,
-    temperature: float = 1.0,
+    calibration: Calibration | None = None,
+    temperature: float | None = None,
     n_bins: int = DEFAULT_ECE_BINS,
     batch_size: int = 256,
 ) -> EvaluationReport:
@@ -322,6 +380,10 @@ def evaluate(
     is scored on its labeled samples only. The dataset must be labeled for exactly the model's
     horizons, in the model's order — prediction column ``h`` is only comparable to label column
     ``h`` then — and the policy horizon is checked up front, before the inference pass.
+
+    Probabilities go through ``calibration`` (or a uniform ``temperature`` override; identity when
+    neither is given), exactly as ``/predict`` serves them; the classification metrics of the raw
+    probabilities are reported alongside (``uncalibrated``), so the ECE before/after is visible.
     """
     horizons = list(dataset.samples.horizons)
     if not horizons:
@@ -333,21 +395,28 @@ def evaluate(
         )
     policy = policy or ReferencePolicy(horizon=horizons[0])
     policy.horizon_index(horizons)
+    calibration = resolve_calibration(horizons, calibration, temperature)
 
-    predictions, truth = score_dataset(
-        model, dataset, temperature=temperature, batch_size=batch_size
-    )
+    logits, truth = score_logits(model, dataset, batch_size=batch_size)
+    predictions = apply_calibration(logits, calibration)
+    # The identity leaves nothing to compare: reuse the calibrated metrics instead of recomputing.
+    raw = None if calibration.is_identity else apply_calibration(logits)
     pump: dict[str, dict[str, Any]] = {}
     rug: dict[str, dict[str, Any]] = {}
     ret: dict[str, dict[str, Any]] = {}
+    uncalibrated: dict[str, dict[str, dict[str, Any]]] = {"pump": {}, "rug": {}}
     for h, horizon in enumerate(horizons):
         labeled = truth["mask"][:, h] == 1
-        pump[horizon] = classification_metrics(
-            truth["pump"][:, h][labeled], predictions["pump_prob"][:, h][labeled], n_bins=n_bins
-        )
-        rug[horizon] = classification_metrics(
-            truth["rug"][:, h][labeled], predictions["rug_prob"][:, h][labeled], n_bins=n_bins
-        )
+        for head, out in (("pump", pump), ("rug", rug)):
+            y = truth[head][:, h][labeled]
+            out[horizon] = classification_metrics(
+                y, predictions[f"{head}_prob"][:, h][labeled], n_bins=n_bins
+            )
+            uncalibrated[head][horizon] = (
+                out[horizon]
+                if raw is None
+                else classification_metrics(y, raw[f"{head}_prob"][:, h][labeled], n_bins=n_bins)
+            )
         ret[horizon] = regression_metrics(
             truth["expected_return"][:, h][labeled],
             predictions["expected_return"][:, h][labeled],
@@ -362,7 +431,8 @@ def evaluate(
         rug=rug,
         expected_return=ret,
         policy=policy.simulate(predictions, truth, horizons),
-        temperature=temperature,
+        calibration=calibration.as_dict(),
+        uncalibrated=uncalibrated,
     )
 
 
@@ -376,13 +446,18 @@ def holdout_dataset(
 
     Labels follow the **checkpoint's** horizons (not whatever ``config.yaml`` lists today), so
     predictions and truth stay column-aligned. Windows are kept only after the checkpoint's
-    ``train_end_ts`` + embargo; a legacy checkpoint without it falls back to the time split's
+    ``train_end_ts`` — or its ``calibration_end_ts`` when later, so the calibration window is never
+    re-scored — + embargo; a legacy checkpoint without it falls back to the time split's
     validation share, with a warning that overlap with its training data can't be ruled out.
     """
     cfg = {**config, "horizons": list(predictor.horizons)}
-    train_end_ts = predictor.metadata.get("train_end_ts")
-    if train_end_ts is not None:
-        return make_holdout_dataset(df, cfg, train_end_ts=int(train_end_ts))
+    ends = [
+        int(predictor.metadata[key])
+        for key in ("train_end_ts", "calibration_end_ts")
+        if predictor.metadata.get(key) is not None
+    ]
+    if predictor.metadata.get("train_end_ts") is not None:
+        return make_holdout_dataset(df, cfg, train_end_ts=max(ends))
     print(
         "warning: the checkpoint records no train_end_ts; evaluating the val_fraction split, "
         "which may overlap the model's training data",
@@ -407,7 +482,11 @@ def main(argv: list[str] | None = None) -> None:
         default=0.2,
         help="validation share, only for legacy checkpoints that don't record train_end_ts",
     )
-    parser.add_argument("--temperature", type=float, default=1.0)
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        help="override the checkpoint's calibration with one uniform temperature",
+    )
     parser.add_argument("--bins", type=int, default=DEFAULT_ECE_BINS, help="ECE bin count")
     parser.add_argument("--policy-horizon", help="reference-policy horizon (default: first)")
     parser.add_argument("--pump-threshold", type=float, default=ReferencePolicy.pump_threshold)
@@ -444,7 +523,7 @@ def main(argv: list[str] | None = None) -> None:
         val_ds,
         model_version=predictor.model_version,
         policy=policy,
-        temperature=predictor.temperature,
+        calibration=predictor.calibration,
         n_bins=args.bins,
     )
     print(report.render())

@@ -429,3 +429,52 @@ def test_main_rejects_bad_settings_before_reading_data(monkeypatch, argv, messag
 def test_main_reports_an_empty_window_cleanly(offline_cli, capsys):
     with pytest.raises(SystemExit, match="empty"):
         ablation.main(["--windows", "50", "--seeds", "0", "--device", "cpu"])
+
+
+# --- calibration ---
+
+
+def test_ablation_scores_calibrated_runs_and_shows_auc_is_untouched(no_registry):
+    cfg = small_config()
+    cfg["calibration"] = {
+        "method": "platt",
+        "fraction": 0.5,
+        "min_samples": 5,
+        "min_class_samples": 2,
+    }
+    calibrations = []
+    real_evaluate = ablation.evaluate
+
+    def spy(model, dataset, **kwargs):
+        calibrations.append(kwargs.get("calibration"))
+        return real_evaluate(model, dataset, **kwargs)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(ablation, "evaluate", spy)
+        report = run_ablation(
+            make_features_df(), cfg, variants=plan_variants(["holders"]), n_windows=1, seeds=[0]
+        )
+
+    assert all(c is not None and c.method == "platt" for c in calibrations)
+    assert report.settings["calibration"] == cfg["calibration"]
+    predictive = [k for k in ablation.metric_keys(["30s", "1m"]) if not k.startswith("policy/")]
+    assert set(report.calibration) == set(predictive)
+    for run in report.runs:
+        assert all(ablation.raw_key(k) in run.metrics for k in predictive)
+    for key, effect in report.calibration.items():
+        if key.endswith("/roc_auc") and effect["mean"] is not None:
+            assert effect["mean"] == pytest.approx(0.0, abs=1e-9)  # monotonic: same ranking
+            assert effect["verdict"] != "worse"
+    assert "Calibration (platt)" in report.render()
+
+
+def test_ablation_with_calibration_off_compares_identical_scores(no_registry):
+    cfg = small_config()
+    cfg["calibration"] = {"method": "none"}
+
+    report = run_ablation(
+        make_features_df(), cfg, variants=plan_variants(["holders"]), n_windows=1, seeds=[0]
+    )
+
+    for effect in report.calibration.values():
+        assert effect["mean"] in (None, 0.0)

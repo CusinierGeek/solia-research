@@ -11,16 +11,19 @@ from scipy.stats import spearmanr
 from test_train import make_features_df, small_config
 
 import solia_ai.evaluate
+from solia_ai.calibration import Calibration
 from solia_ai.dataset import embargo_seconds, make_datasets
 from solia_ai.evaluate import (
     EvaluationReport,
     ReferencePolicy,
+    apply_calibration,
+    calibrate,
     classification_metrics,
     evaluate,
     expected_calibration_error,
     holdout_dataset,
     regression_metrics,
-    score_dataset,
+    score_logits,
 )
 from solia_ai.model import SoliaTransformer
 
@@ -168,10 +171,11 @@ def _trained_tiny():
     return model.eval(), val_ds
 
 
-def test_score_dataset_aligns_predictions_and_truth():
+def test_scored_logits_calibrate_into_aligned_predictions_and_truth():
     model, val_ds = _trained_tiny()
 
-    predictions, truth = score_dataset(model, val_ds, batch_size=4)
+    logits, truth = score_logits(model, val_ds, batch_size=4)
+    predictions = apply_calibration(logits)
 
     n_h = len(val_ds.samples.horizons)
     for array in (*predictions.values(), *truth.values()):
@@ -265,7 +269,7 @@ def test_evaluate_checks_the_policy_horizon_before_scoring(monkeypatch):
     def never(*_args, **_kwargs):
         raise AssertionError("scored the dataset before validating the policy")
 
-    monkeypatch.setattr(solia_ai.evaluate, "score_dataset", never)
+    monkeypatch.setattr(solia_ai.evaluate, "score_logits", never)
 
     with pytest.raises(ValueError, match="not one of the model's"):
         evaluate(model, val_ds, policy=ReferencePolicy(horizon="7d"))
@@ -331,3 +335,107 @@ def test_holdout_rejects_data_that_ends_before_the_training_cutoff():
 
     with pytest.raises(ValueError, match="no window ends after"):
         holdout_dataset(df, cfg, _predictor_stub(model, train_end_ts=far_future))
+
+
+# --- calibration ---
+
+
+def test_evaluate_reports_the_ece_before_and_after_calibration():
+    model, val_ds = _trained_tiny()
+    n = len(model.horizons)
+    calibration = Calibration(
+        tuple(model.horizons), (3.0,) * n, (-1.0,) * n, (0.3,) * n, (0.5,) * n, "platt"
+    )
+
+    report = evaluate(model, val_ds, calibration=calibration)
+    raw = evaluate(model, val_ds)
+
+    assert report.calibration == calibration.as_dict()
+    for head in ("pump", "rug"):
+        for h in model.horizons:
+            after, before = getattr(report, head)[h], report.uncalibrated[head][h]
+            assert before == getattr(raw, head)[h]  # "before" = the uncalibrated scoring
+            assert after["roc_auc"] == pytest.approx(before["roc_auc"])  # ranking untouched
+            assert after["ece"] != pytest.approx(before["ece"])
+    assert "ECE before -> after" in report.render()
+    json.dumps(report.as_dict())
+
+
+@pytest.mark.parametrize("bias", [10.0, -10.0])
+def test_a_calibration_at_its_bounds_does_not_tie_scores_or_move_the_ranking(bias):
+    # T = 0.1 and |b| = 10 push logit/T + b past float32's sigmoid saturation (~17); scoring in
+    # float64 keeps distinct scores distinct, so ROC-AUC / PR-AUC stay those of the raw scores.
+    model, val_ds = _trained_tiny()
+    n = len(model.horizons)
+    calibration = Calibration(
+        tuple(model.horizons), (0.1,) * n, (bias,) * n, (0.1,) * n, (bias,) * n, "platt"
+    )
+
+    report = evaluate(model, val_ds, calibration=calibration)
+
+    for head in ("pump", "rug"):
+        for h in model.horizons:
+            after, before = getattr(report, head)[h], report.uncalibrated[head][h]
+            for key in ("roc_auc", "pr_auc"):
+                if before[key] is not None:
+                    assert after[key] == pytest.approx(before[key], abs=1e-12)
+
+
+def test_an_identity_calibration_scores_the_classification_metrics_once(monkeypatch):
+    model, val_ds = _trained_tiny()
+    calls = []
+    real = solia_ai.evaluate.classification_metrics
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(solia_ai.evaluate, "classification_metrics", counting)
+    n = len(model.horizons)
+
+    report = evaluate(model, val_ds)
+    assert len(calls) == 2 * n  # pump + rug per horizon, not again for "uncalibrated"
+    assert report.uncalibrated == {"pump": report.pump, "rug": report.rug}
+
+    calls.clear()
+    evaluate(model, val_ds, temperature=2.0)
+    assert len(calls) == 4 * n
+
+
+def test_identity_calibration_leaves_the_metrics_unchanged():
+    model, val_ds = _trained_tiny()
+
+    report = evaluate(model, val_ds)
+
+    assert report.calibration["method"] == "none"
+    for head in ("pump", "rug"):
+        assert report.uncalibrated[head] == getattr(report, head)
+
+
+def test_calibrate_fits_on_the_given_window():
+    model, val_ds = _trained_tiny()
+
+    cal = calibrate(model, val_ds, method="temperature", min_samples=1)
+
+    assert cal.horizons == tuple(model.horizons) and cal.method == "temperature"
+    assert all(t > 0 for t in cal.pump_temperature + cal.rug_temperature)
+    assert cal.pump_bias == (0.0,) * len(model.horizons)
+
+
+def test_holdout_starts_after_the_calibration_window():
+    model, _ = _trained_tiny()
+    cfg = small_config()
+    df = make_features_df(n_tokens=8, n_rows=90, seed=3)
+    train_ds, val_ds = make_datasets(df, cfg, val_fraction=0.5)
+    train_end_ts = int(train_ds.samples.end_ts[train_ds.indices].max())
+    val_ends = np.sort(val_ds.samples.end_ts[val_ds.indices])
+    calibration_end_ts = int(val_ends[len(val_ends) // 4])
+
+    held_out = holdout_dataset(
+        df,
+        cfg,
+        _predictor_stub(model, train_end_ts=train_end_ts, calibration_end_ts=calibration_end_ts),
+    )
+
+    ends = held_out.samples.end_ts[held_out.indices]
+    assert ends.min() > calibration_end_ts + embargo_seconds(cfg["horizons"])

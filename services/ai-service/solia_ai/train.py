@@ -7,11 +7,15 @@ Flow (one task per docs/ML-MODEL.md "Optimizer & training"):
 2. Fit the input normalizer on the **training rows only**, so validation statistics never leak in.
 3. Train with AdamW + cosine-with-warmup and gradient clipping. Class imbalance is corrected
    **once**: class-balanced batches by default (``training.balanced_sampling``), otherwise the
-   natural distribution with a per-horizon ``pos_weight`` measured on the training split.
+   natural distribution with ``loss.pos_weight`` (``auto`` = measured per horizon on the training
+   split, or fixed per head) — see :func:`resolve_pos_weight`.
 4. Early-stop on the validation loss (the true masked mean over the validation set), keeping the
    best epoch's weights. A run whose validation loss is never finite fails instead of saving the
    untrained weights.
-5. Save the checkpoint (weights + the config needed to rebuild the architecture) under a new,
+5. Calibrate the probabilities (:mod:`solia_ai.calibration`) on the earliest
+   ``calibration.fraction`` of the validation windows; the checkpoint records the fit and the
+   window's end (``calibration_end_ts``), so evaluation only scores windows after it.
+6. Save the checkpoint (weights + the config needed to rebuild the architecture) under a new,
    never-overwritten file and, when a database engine is given, write the ``models`` registry row
    (with the checkpoint's absolute path). If registration fails, the new checkpoint is removed.
 
@@ -25,6 +29,7 @@ import argparse
 import copy
 import math
 import os
+import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -39,8 +44,16 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
 
+from .calibration import Calibration
+from .calibration import settings as calibration_settings
 from .config import load_config
-from .dataset import SequenceDataset, make_datasets, make_loaders, positive_weights
+from .dataset import (
+    SequenceDataset,
+    make_datasets,
+    make_loaders,
+    positive_weights,
+)
+from .evaluate import calibrate
 from .features import BASELINE_GROUPS
 from .loss import SoliaLoss
 from .model import SoliaTransformer
@@ -69,15 +82,90 @@ def default_version(now: datetime | None = None) -> str:
 
 
 def hyperparams_snapshot(config: Mapping[str, Any]) -> dict[str, Any]:
-    """The config knobs worth recording with a checkpoint (model + training + loss + horizons +
-    the enabled feature groups, so the model is rebuilt with the mask it trained with)."""
+    """The config knobs worth recording with a checkpoint (model + training + loss + calibration +
+    horizons + the enabled feature groups, so the model is rebuilt with the mask it trained
+    with)."""
     return {
         "model": dict(config["model"]),
         "training": dict(config["training"]),
         "loss": dict(config["loss"]),
+        "calibration": calibration_settings(config),
         "horizons": list(config["horizons"]),
         "features": {"groups": list(config.get("features", {}).get("groups", BASELINE_GROUPS))},
     }
+
+
+def resolve_pos_weight(
+    train_ds: SequenceDataset, config: Mapping[str, Any]
+) -> dict[str, torch.Tensor] | None:
+    """The BCE ``pos_weight`` per head from ``loss.pos_weight`` (validated by ``config.py``).
+
+    Default: ``none`` with balanced batches (they already put events at ~50%; weighting on top
+    would correct the imbalance twice and bias the probabilities upward), ``auto`` with natural
+    sampling. ``auto`` measures neg/pos per horizon on the training split; a number applies to
+    both heads; a ``{pump: x, rug: y}`` mapping sets each head (an omitted head keeps 1.0). A fixed
+    weight is applied as configured: validation already rejects one above ``MAX_POS_WEIGHT``.
+    """
+    balanced = bool(config["training"].get("balanced_sampling", True))
+    spec = config["loss"].get("pos_weight", "none" if balanced else "auto")
+    if spec == "none":
+        return None
+    if spec == "auto":
+        return positive_weights(train_ds)
+    n_h = len(train_ds.samples.horizons)
+    per_head = spec if isinstance(spec, Mapping) else {"pump": spec, "rug": spec}
+    return {head: torch.full((n_h,), float(per_head.get(head, 1.0))) for head in ("pump", "rug")}
+
+
+def calibration_split(val_ds: SequenceDataset, fraction: float) -> SequenceDataset:
+    """The earliest ``fraction`` of the validation windows (by end time): the calibration window.
+
+    Always a strict, non-empty prefix: windows tied on the cutoff's end time are left out when
+    including them would take the whole split, so some validation windows still end after it.
+    Raises :class:`ValueError` when the split is too small (or its end times too few) for that.
+    """
+    if not 0 < fraction < 1:
+        raise ValueError(f"calibration fraction must be in (0, 1), got {fraction}")
+    if len(val_ds) == 0:
+        raise ValueError("cannot calibrate on an empty validation split")
+    ends = val_ds.samples.end_ts[val_ds.indices]
+    cutoff = np.quantile(ends.astype(np.float64), fraction)
+    in_window = ends <= cutoff
+    if in_window.all():
+        in_window = ends < cutoff
+    if not in_window.any():
+        raise ValueError(
+            f"the validation split ({len(val_ds)} windows, {len(np.unique(ends))} distinct end "
+            "times) is too short to hold a calibration window and windows after it"
+        )
+    return SequenceDataset(val_ds.samples, val_ds.indices[in_window])
+
+
+def fit_calibration_window(
+    model: SoliaTransformer, val_ds: SequenceDataset, config: Mapping[str, Any]
+) -> tuple[Calibration | None, int | None]:
+    """``(calibration, calibration_end_ts)`` per ``config``'s ``calibration`` section, fit on
+    :func:`calibration_split`; ``(None, None)`` (the identity) for ``method: none``, or — with a
+    warning — when the validation split is too short to split. ``model`` is left untouched on
+    its device: a model off the CPU is scored through a CPU copy."""
+    cal = calibration_settings(config)
+    if cal["method"] == "none":
+        return None, None
+    try:
+        cal_ds = calibration_split(val_ds, cal["fraction"])
+    except ValueError as exc:
+        warnings.warn(f"calibration skipped (identity kept): {exc}", stacklevel=2)
+        return None, None
+    if any(p.device.type != "cpu" for p in model.parameters()):
+        model = copy.deepcopy(model).cpu()
+    calibration = calibrate(
+        model,
+        cal_ds,
+        method=cal["method"],
+        min_samples=cal["min_samples"],
+        min_class_samples=cal["min_class_samples"],
+    )
+    return calibration, int(cal_ds.samples.end_ts[cal_ds.indices].max())
 
 
 def training_feature_rows(dataset: SequenceDataset) -> np.ndarray:
@@ -149,12 +237,16 @@ def build_checkpoint(
     version: str,
     metrics: Mapping[str, float] | None = None,
     train_end_ts: int | None = None,
+    calibration: Calibration | None = None,
+    calibration_end_ts: int | None = None,
 ) -> dict[str, Any]:
     """The serialized checkpoint: weights plus everything needed to rebuild and identify it.
 
     ``train_end_ts`` is the epoch second of the latest training window's last row: evaluation only
     scores windows strictly after it (plus the label embargo), so held-out metrics never re-score
-    data the model was fit on, whatever window the evaluation run reads.
+    data the model was fit on, whatever window the evaluation run reads. ``calibration`` (applied
+    at inference; ``None`` = identity) was fit on windows ending by ``calibration_end_ts``, which
+    pushes that boundary later still.
     """
     return {
         "version": version,
@@ -166,6 +258,8 @@ def build_checkpoint(
         "n_params": model.n_params,
         "metrics": dict(metrics or {}),
         "train_end_ts": train_end_ts,
+        "calibration": None if calibration is None else calibration.as_dict(),
+        "calibration_end_ts": calibration_end_ts,
     }
 
 
@@ -223,9 +317,7 @@ def fit(
 
     model = SoliaTransformer.from_config(cfg).to(device)
     model.fit_normalizer(training_feature_rows(train_ds))
-    # Balanced batches already put events at ~50%; adding pos_weight on top would correct the
-    # imbalance twice and bias the probabilities upward, so it only applies to natural sampling.
-    pos_weight = None if balanced else positive_weights(train_ds)
+    pos_weight = resolve_pos_weight(train_ds, cfg)
     loss_fn = SoliaLoss.from_config(cfg, pos_weight=pos_weight).to(device)
 
     optimizer = AdamW(
@@ -309,8 +401,15 @@ def train(
     directory.mkdir(parents=True, exist_ok=True)
     checkpoint_path = directory / f"{version}.pt"
     train_end_ts = int(train_ds.samples.end_ts[train_ds.indices].max())
+    calibration, calibration_end_ts = fit_calibration_window(model, val_ds, cfg)
     checkpoint = build_checkpoint(
-        model, cfg, version=version, metrics=metrics, train_end_ts=train_end_ts
+        model,
+        cfg,
+        version=version,
+        metrics=metrics,
+        train_end_ts=train_end_ts,
+        calibration=calibration,
+        calibration_end_ts=calibration_end_ts,
     )
     save_checkpoint(checkpoint, checkpoint_path)
 

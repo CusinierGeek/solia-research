@@ -33,6 +33,21 @@ loss:
   # Optional per-horizon weights (default 1.0 each); unlisted horizons keep 1.0.
   # horizon_weights:
   #   "1h": 1.5
+  # Class weighting of the BCE term (positive class). Only with training.balanced_sampling: false
+  # (balanced batches already correct the imbalance; the two are rejected together).
+  #   auto            neg/pos per horizon, measured on the training split (the default then)
+  #   none            no weighting
+  #   3.0             one weight for both heads
+  #   {pump: 5.0, rug: 2.0}   per head (an omitted head keeps 1.0)
+  # pos_weight: auto
+
+# Post-hoc probability calibration per head x horizon (solia_ai/calibration.py), fit after training
+# on the earliest `fraction` of the validation windows; `evaluate` only scores windows after them.
+calibration:
+  method: platt # platt (temperature + bias) | temperature | none
+  fraction: 0.5
+  min_samples: 50 # fewer labeled samples on a head/horizon keeps the identity
+  min_class_samples: 10 # ... as does a minority class (events or non-events) smaller than this
 
 # Feature groups the model sees (solia_ai/features.py FEATURE_GROUPS); the columns of every other
 # group are zeroed. Omitted = the baseline (BASELINE_GROUPS). A candidate group is enabled only once

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import pickle
 from types import SimpleNamespace
 
@@ -15,14 +16,17 @@ from test_train import small_config
 import solia_ai.db
 import solia_ai.inference
 import solia_ai.registry
+from solia_ai.calibration import Calibration
 from solia_ai.dataset import pad_window
 from solia_ai.features import FEATURE_COLUMNS
 from solia_ai.inference import (
     OUTPUT_NAMES,
+    PER_HORIZON,
     HorizonPrediction,
     Prediction,
     Predictor,
     build_model,
+    contract_outputs,
     derive_confidence,
     export_onnx,
     load_checkpoint,
@@ -98,17 +102,28 @@ def test_confidence_preserves_array_shape():
     assert np.allclose(out, 50.0)  # 200 * |0.75 - 0.5|
 
 
-def test_temperature_softens_or_sharpens_confidence():
-    base = derive_confidence(0.9, 0.5)
+def test_derive_confidence_matches_the_served_formula_for_a_per_horizon_calibration():
+    # contract_outputs calibrates the logits (temperature AND bias, per horizon), then takes the
+    # margin: derive_confidence over those calibrated probabilities must give the same number.
+    calibration = Calibration(("a", "b"), (2.0, 0.5), (-1.0, 0.5), (1.5, 1.0), (0.0, -0.5), "platt")
+    logits = {
+        "pump_logits": torch.tensor([[0.3, -1.2], [2.0, 0.1]]),
+        "rug_logits": torch.tensor([[-0.4, 0.9], [0.0, -2.5]]),
+        "expected_return": torch.zeros(2, 2),
+    }
 
-    assert derive_confidence(0.9, 0.5, temperature=2.0) < base  # softer -> less confident
-    assert derive_confidence(0.9, 0.5, temperature=0.5) > base  # sharper -> more confident
-    assert derive_confidence(0.9, 0.5, temperature=1.0) == pytest.approx(base)
+    out = contract_outputs(logits, calibration)
+
+    assert np.allclose(
+        derive_confidence(out["pump_prob"].numpy(), out["rug_prob"].numpy()),
+        out["confidence"].numpy(),
+        atol=1e-4,
+    )
 
 
-def test_temperature_must_be_positive():
-    with pytest.raises(ValueError, match="temperature must be > 0"):
-        derive_confidence(0.9, 0.1, temperature=0.0)
+def test_derive_confidence_takes_no_calibration_of_its_own():
+    with pytest.raises(TypeError):
+        derive_confidence(0.9, 0.1, temperature=2.0)  # calibrate the logits, not the probabilities
 
 
 # --------------------------------------------------------------------------- checkpoints
@@ -325,9 +340,8 @@ def test_predictor_serves_calibrated_probabilities_consistent_with_confidence():
 
     for before, after in zip(raw.predictions, calibrated.predictions, strict=True):
         # the served probabilities themselves are temperature-scaled...
-        assert float(derive_confidence(after.pump_prob, 0.5)) == pytest.approx(
-            float(derive_confidence(before.pump_prob, 0.5, temperature=0.5)), abs=1e-4
-        )
+        logit = torch.logit(torch.tensor(before.pump_prob, dtype=torch.float64))
+        assert after.pump_prob == pytest.approx(float(torch.sigmoid(logit / 0.5)), abs=1e-4)
         # ...and the confidence is exactly the documented formula over them
         assert after.confidence == pytest.approx(
             float(derive_confidence(after.pump_prob, after.rug_prob)), abs=1e-4
@@ -655,3 +669,113 @@ def test_min_seq_len_defaults_to_seq_len_when_the_model_config_omits_it():
 
 def test_min_seq_len_is_one_without_recorded_hyperparams():
     assert Predictor(tiny(), model_version="v").min_seq_len == 1
+
+
+# ------------------------------------------------------------------- per-horizon calibration
+
+
+def per_horizon_calibration(horizons=HORIZONS) -> Calibration:
+    n = len(horizons)
+    return Calibration(
+        tuple(horizons),
+        tuple(0.5 + 0.5 * i for i in range(n)),
+        tuple(-0.5 + 0.4 * i for i in range(n)),
+        tuple(2.0 - 0.3 * i for i in range(n)),
+        tuple(0.3 * i for i in range(n)),
+        "platt",
+    )
+
+
+def _calibrated_checkpoint(tmp_path, calibration):
+    cfg = small_config()
+    model = SoliaTransformer.from_config(cfg)
+    model.fit_normalizer(np.random.default_rng(1).normal(size=(64, N_FEATURES)).astype("f4"))
+    checkpoint = build_checkpoint(
+        model, cfg, version="cal", calibration=calibration, calibration_end_ts=123
+    )
+    path = tmp_path / "cal.pt"
+    save_checkpoint(checkpoint, path)
+    return model.eval(), path
+
+
+def test_predictor_applies_the_checkpoints_calibration_per_horizon(tmp_path):
+    horizons = tuple(small_config()["horizons"])
+    calibration = per_horizon_calibration(horizons)
+    model, path = _calibrated_checkpoint(tmp_path, calibration)
+    rows = window(model.seq_len, seed=21)
+
+    predictor = Predictor.from_checkpoint(path)
+    got = predictor.predict(rows)
+
+    assert predictor.calibration == calibration
+    x, mask = pad_window(rows, model.seq_len)
+    with torch.no_grad():
+        logits = model(torch.from_numpy(x[None]), torch.from_numpy(mask[None]))
+    for h, entry in enumerate(got.predictions):
+        pump = torch.sigmoid(
+            logits["pump_logits"][0, h] / calibration.pump_temperature[h] + calibration.pump_bias[h]
+        )
+        rug = torch.sigmoid(
+            logits["rug_logits"][0, h] / calibration.rug_temperature[h] + calibration.rug_bias[h]
+        )
+        assert entry.pump_prob == pytest.approx(float(pump), abs=1e-6)
+        assert entry.rug_prob == pytest.approx(float(rug), abs=1e-6)
+
+
+def test_an_old_checkpoint_without_calibration_serves_the_identity(tmp_path):
+    model, path = saved_checkpoint(tmp_path)
+    checkpoint = load_checkpoint(path)
+    for key in ("calibration", "calibration_end_ts"):
+        checkpoint.pop(key, None)  # as written before calibration existed
+    legacy = tmp_path / "legacy.pt"
+    torch.save(checkpoint, legacy)
+    rows = window(model.seq_len, seed=22)
+
+    predictor = Predictor.from_checkpoint(legacy)
+
+    assert predictor.calibration.is_identity
+    assert predictor.predict(rows) == Predictor(model, model_version="solia-test").predict(rows)
+
+
+def test_a_temperature_override_replaces_the_checkpoints_calibration(tmp_path):
+    horizons = tuple(small_config()["horizons"])
+    _, path = _calibrated_checkpoint(tmp_path, per_horizon_calibration(horizons))
+
+    predictor = Predictor.from_checkpoint(path, temperature=0.8)
+
+    assert predictor.calibration == Calibration.uniform(horizons, 0.8)
+
+
+def test_predictor_refuses_an_ambiguous_or_mismatched_calibration():
+    with pytest.raises(ValueError, match="not both"):
+        Predictor(tiny(), model_version="v", calibration=per_horizon_calibration(), temperature=0.5)
+    with pytest.raises(ValueError, match="model predicts"):
+        Predictor(tiny(), model_version="v", calibration=per_horizon_calibration(("30s", "1m")))
+
+
+def test_onnx_bakes_in_a_per_horizon_calibration(tmp_path):
+    model = tiny()
+    calibration = per_horizon_calibration()
+    path = export_onnx(model, tmp_path / "per-h.onnx", calibration=calibration)  # parity-checked
+    rows = window(model.seq_len, seed=23)
+
+    out = _run_onnx(path, rows[None], np.zeros((1, model.seq_len), dtype=bool))
+
+    expected = Predictor(model, model_version="v", calibration=calibration).predict(rows)
+    assert out["pump_prob"][0] == pytest.approx(_field(expected, "pump_prob"), abs=1e-4)
+    assert out["rug_prob"][0] == pytest.approx(_field(expected, "rug_prob"), abs=1e-4)
+    metadata = _metadata(path)
+    assert Calibration.from_dict(json.loads(metadata["calibration"]), HORIZONS) == calibration
+    assert metadata["temperature"] == PER_HORIZON  # kept, but there is no single temperature
+
+
+def test_cli_exports_the_checkpoints_calibration(tmp_path):
+    horizons = tuple(small_config()["horizons"])
+    calibration = per_horizon_calibration(horizons)
+    _, path = _calibrated_checkpoint(tmp_path, calibration)
+    out = tmp_path / "cli.onnx"
+
+    main(["--checkpoint", str(path), "--out", str(out)])
+
+    recorded = json.loads(_metadata(out)["calibration"])
+    assert Calibration.from_dict(recorded, horizons) == calibration

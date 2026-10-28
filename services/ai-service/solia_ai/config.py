@@ -25,6 +25,13 @@ _DRIVER = "postgresql+psycopg"
 _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 _DEV_PASSWORD = "change_me"
 
+# solia_ai.calibration's methods and default; defined here so validation stays torch-free.
+CALIBRATION_METHODS = ("none", "temperature", "platt")
+CALIBRATION_DEFAULT_METHOD = "platt"
+# The largest BCE pos_weight (neg/pos ratio) ever applied: ``auto`` clips to it, a fixed
+# ``loss.pos_weight`` above it is rejected rather than silently clipped.
+MAX_POS_WEIGHT = 1000.0
+
 Lookup = Callable[[str], str | None]
 
 
@@ -129,6 +136,42 @@ def _validate(config: Any, source: str) -> None:
         fail("'loss.alpha' must be in [0, 1] (L = alpha*BCE + (1-alpha)*Focal)")
     for key in ("focal_gamma", "strategy_weight", "regression_weight"):
         number("loss", key)
+
+    def positive_weight(name: str, value: Any) -> None:
+        if isinstance(value, bool) or not isinstance(value, int | float) or not value > 0:
+            fail(f"'{name}' must be a positive number, got {value!r}")
+        if value > MAX_POS_WEIGHT:
+            fail(f"'{name}' must be at most {MAX_POS_WEIGHT:g}, got {value!r}")
+
+    if "pos_weight" in section("loss"):
+        spec = section("loss")["pos_weight"]
+        if isinstance(spec, dict):
+            unknown = [str(k) for k in spec if k not in ("pump", "rug")]
+            if unknown:
+                fail(f"'loss.pos_weight' has unknown head(s): {', '.join(unknown)} (pump, rug)")
+            for head, value in spec.items():
+                positive_weight(f"loss.pos_weight.{head}", value)
+        elif spec not in ("auto", "none"):
+            positive_weight("loss.pos_weight", spec)
+        if balanced and spec != "none":
+            fail(
+                "'loss.pos_weight' needs 'training.balanced_sampling: false': balanced batches "
+                "already correct the class imbalance, weighting on top would correct it twice"
+            )
+
+    if "calibration" in config:
+        calibration = section("calibration")
+        method = calibration.get("method", CALIBRATION_DEFAULT_METHOD)
+        if method not in CALIBRATION_METHODS:
+            fail(
+                f"'calibration.method' must be one of {', '.join(CALIBRATION_METHODS)}, "
+                f"got {method!r}"
+            )
+        if "fraction" in calibration and not 0 < number("calibration", "fraction") < 1:
+            fail("'calibration.fraction' must be in (0, 1)")
+        for key in ("min_samples", "min_class_samples"):
+            if key in calibration:
+                number("calibration", key, positive=True, integer=True)
 
     horizons = config["horizons"]
     if (

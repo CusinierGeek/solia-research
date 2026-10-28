@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -10,7 +12,8 @@ import torch
 import solia_ai.db
 import solia_ai.registry
 import solia_ai.train as train_module
-from solia_ai.dataset import make_datasets
+from solia_ai.calibration import Calibration
+from solia_ai.dataset import SequenceDataset, make_datasets, positive_weights
 from solia_ai.features import BASELINE_GROUPS, FEATURE_COLUMNS
 from solia_ai.loss import SoliaLoss
 from solia_ai.model import SoliaTransformer
@@ -18,8 +21,11 @@ from solia_ai.train import (
     TrainResult,
     _cosine_warmup,
     _validate,
+    calibration_split,
     default_version,
+    fit_calibration_window,
     main,
+    resolve_pos_weight,
     train,
     training_feature_rows,
 )
@@ -374,3 +380,137 @@ def test_checkpoint_records_the_last_training_window_end(tmp_path):
 
     assert checkpoint["train_end_ts"] == int(train_ds.samples.end_ts[train_ds.indices].max())
     assert checkpoint["train_end_ts"] < int(val_ds.samples.end_ts[val_ds.indices].min())
+
+
+# --- calibration & class weighting ---
+
+
+def test_checkpoint_records_a_calibration_fit_before_the_evaluated_windows(tmp_path):
+    cfg = small_config()
+    cfg["calibration"] = {
+        "method": "platt",
+        "fraction": 0.5,
+        "min_samples": 5,
+        "min_class_samples": 2,
+    }
+    df = make_features_df()
+
+    result = train(df, cfg, model_dir=tmp_path, register=False)
+
+    checkpoint = torch.load(result.checkpoint_path, weights_only=True)
+    _, val_ds = make_datasets(df, cfg, val_fraction=0.2)
+    val_ends = val_ds.samples.end_ts[val_ds.indices]
+    calibration = Calibration.from_checkpoint(checkpoint, cfg["horizons"])
+    assert calibration.method == "platt"
+    assert checkpoint["train_end_ts"] < checkpoint["calibration_end_ts"] < int(val_ends.max())
+    assert checkpoint["hyperparams"]["calibration"] == cfg["calibration"]
+
+
+def test_calibration_method_none_saves_no_calibration(tmp_path):
+    cfg = small_config()
+    cfg["calibration"] = {"method": "none"}
+
+    result = train(make_features_df(), cfg, model_dir=tmp_path, register=False)
+
+    checkpoint = torch.load(result.checkpoint_path, weights_only=True)
+    assert checkpoint["calibration"] is None and checkpoint["calibration_end_ts"] is None
+
+
+def test_calibration_split_is_the_earliest_share_of_the_validation_windows():
+    _, val_ds = make_datasets(make_features_df(), small_config(), val_fraction=0.3)
+
+    cal_ds = calibration_split(val_ds, 0.5)
+
+    ends = val_ds.samples.end_ts
+    rest = np.setdiff1d(val_ds.indices, cal_ds.indices)
+    assert 0 < len(cal_ds) < len(val_ds)
+    assert set(cal_ds.indices) <= set(val_ds.indices)
+    assert ends[cal_ds.indices].max() < ends[rest].min()
+    with pytest.raises(ValueError, match="calibration fraction"):
+        calibration_split(val_ds, 1.0)
+
+
+def _windows_ending_at(*ends: int) -> SequenceDataset:
+    return SequenceDataset(SimpleNamespace(end_ts=np.array(ends)), np.arange(len(ends)))
+
+
+def test_calibration_split_leaves_windows_tied_on_the_cutoff_out_of_a_whole_split():
+    # The median end is the latest one: "<= cutoff" would take every window and leave nothing
+    # after the calibration window to evaluate.
+    val_ds = _windows_ending_at(100, 200, 200, 200)
+
+    cal_ds = calibration_split(val_ds, 0.5)
+
+    assert cal_ds.indices.tolist() == [0]
+
+
+@pytest.mark.parametrize("ends", [(100,), (100, 100, 100)])
+def test_calibration_split_refuses_a_split_with_a_single_end_time(ends):
+    with pytest.raises(ValueError, match="too short to hold a calibration window"):
+        calibration_split(_windows_ending_at(*ends), 0.5)
+
+
+def test_a_too_short_validation_split_keeps_the_identity_with_a_warning():
+    cfg = small_config()
+    cfg["calibration"] = {"method": "platt"}
+    model = SoliaTransformer.from_config(cfg)
+
+    with pytest.warns(UserWarning, match="calibration skipped"):
+        result = fit_calibration_window(model, _windows_ending_at(100, 100), cfg)
+
+    assert result == (None, None)
+
+
+def test_fitting_the_calibration_leaves_the_model_untouched():
+    cfg = small_config()
+    cfg["calibration"] = {"method": "platt", "min_samples": 5, "min_class_samples": 2}
+    _, val_ds = make_datasets(make_features_df(), cfg, val_fraction=0.3)
+    model = SoliaTransformer.from_config(cfg).train()
+    before = {k: v.clone() for k, v in model.state_dict().items() if torch.is_tensor(v)}
+
+    calibration, end_ts = fit_calibration_window(model, val_ds, cfg)
+
+    assert calibration is not None and end_ts is not None
+    assert model.training
+    after = model.state_dict()
+    assert all(torch.equal(before[k], after[k]) for k in before)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA device")
+def test_fitting_the_calibration_keeps_a_gpu_model_on_its_device():
+    cfg = small_config()
+    _, val_ds = make_datasets(make_features_df(), cfg, val_fraction=0.3)
+    model = SoliaTransformer.from_config(cfg).cuda()
+
+    fit_calibration_window(model, val_ds, cfg)
+
+    assert all(p.device.type == "cuda" for p in model.parameters())
+
+
+def _natural(pos_weight=None) -> dict:
+    cfg = small_config()
+    cfg["training"]["balanced_sampling"] = False
+    if pos_weight is not None:
+        cfg["loss"]["pos_weight"] = pos_weight
+    return cfg
+
+
+def test_resolve_pos_weight_follows_the_config():
+    train_ds, _ = make_datasets(make_features_df(), small_config(), val_fraction=0.2)
+    n_h = len(small_config()["horizons"])
+
+    assert resolve_pos_weight(train_ds, small_config()) is None  # balanced: corrected once
+    auto = resolve_pos_weight(train_ds, _natural())  # natural sampling defaults to auto
+    measured = positive_weights(train_ds)
+    assert all(torch.equal(auto[h], measured[h]) for h in ("pump", "rug"))
+    assert resolve_pos_weight(train_ds, _natural("none")) is None
+    fixed = resolve_pos_weight(train_ds, _natural(3.0))
+    assert torch.equal(fixed["pump"], torch.full((n_h,), 3.0))
+    assert torch.equal(fixed["rug"], torch.full((n_h,), 3.0))
+    per_head = resolve_pos_weight(train_ds, _natural({"pump": 5.0}))
+    assert torch.equal(per_head["pump"], torch.full((n_h,), 5.0))
+    assert torch.equal(per_head["rug"], torch.ones(n_h))
+    # applied as configured, never silently clipped (validation bounds it instead)
+    assert torch.equal(
+        resolve_pos_weight(train_ds, _natural(1000))["pump"], torch.full((n_h,), 1000.0)
+    )
