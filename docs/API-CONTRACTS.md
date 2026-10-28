@@ -196,7 +196,7 @@ Base: `/`
 // a window keeps its latest `seq_len` rows; one shorter than the champion's training `min_seq_len`
 // is rejected.
 // errors: 400 invalid_features / invalid_request, 422 invalid_request (malformed body),
-//         422 window_too_short, 503 no_champion / champion_unavailable, 500 internal_error
+//         422 window_too_short, 503 no_champion / champion_incompatible / champion_unavailable, 500 internal_error
 ```
 
 ### `GET /model/status`

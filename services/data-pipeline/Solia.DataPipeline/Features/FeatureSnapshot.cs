@@ -44,6 +44,21 @@ public sealed record FeatureSnapshot
     public double? Rsi { get; init; }
     public double? PriceDerivative { get; init; }
 
+    // SOL-weighted buy pressure over the window: only SOL-quoted trades count, so a whale buy and
+    // ten dust buys no longer look alike. Amounts in SOL; null where undefined (no SOL trade/buy).
+
+    /// <summary>Buy minus sell SOL volume (negative under net selling).</summary>
+    public decimal? NetSolFlow { get; init; }
+
+    /// <summary>Buy SOL volume / total SOL volume, in [0, 1].</summary>
+    public double? BuyVolumeRatio { get; init; }
+
+    public decimal? AvgBuySol { get; init; }
+    public decimal? MaxBuySol { get; init; }
+
+    /// <summary>Buys of at least <c>PipelineOptions.LargeBuySol</c>.</summary>
+    public int LargeBuyCount { get; init; }
+
     public IReadOnlyDictionary<string, object?> OnchainSignals { get; init; } =
         new Dictionary<string, object?>();
 

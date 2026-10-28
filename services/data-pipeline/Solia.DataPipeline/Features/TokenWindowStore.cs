@@ -68,7 +68,7 @@ public sealed class TokenWindowStore
         }
 
         MakeRoom(e.Timestamp);
-        var state = new TokenState(e.Mint, _options.WindowSeconds, _options.EmaSpan, _options.RsiPeriod, e.Timestamp);
+        var state = new TokenState(e.Mint, _options.WindowSeconds, _options.EmaSpan, _options.RsiPeriod, e.Timestamp, _options.LargeBuySol);
         state.Apply(e);
         _tokens[e.Mint] = _byRecency.AddLast(state);
     }

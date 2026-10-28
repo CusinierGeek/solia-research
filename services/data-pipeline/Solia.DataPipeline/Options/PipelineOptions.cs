@@ -31,6 +31,12 @@ public sealed class PipelineOptions
     [Range(2, 1000)]
     public int RsiPeriod { get; set; } = 14;
 
+    /// <summary>A buy of at least this many SOL counts towards the large-buy count feature.</summary>
+    [Range(0.000001, 1_000_000)]
+    public decimal LargeBuySol { get; set; } = DefaultLargeBuySol;
+
+    public const decimal DefaultLargeBuySol = 1m;
+
     /// <summary>
     /// When false (default), holders are approximated from unique traders seen in the
     /// stream (free). When true, a paid Get Token Info enrichment may be used.

@@ -183,11 +183,17 @@ internal sealed class SoliaAiClient(HttpClient http) : ISoliaAiClient
     internal static bool IsUnreadableBody(Exception ex) =>
         ex is JsonException or NotSupportedException or InvalidOperationException;
 
+    /// <summary>
+    /// The 503 codes meaning "no usable champion" until a model is (re)trained and promoted: none registered
+    /// (<c>no_champion</c>) or one trained on another feature spec (<c>champion_incompatible</c>).
+    /// </summary>
+    internal static bool IsNoChampionCode(string? code) => code is "no_champion" or "champion_incompatible";
+
     internal static AiServiceErrorKind Classify(HttpStatusCode status, string? code) => status switch
     {
         HttpStatusCode.UnprocessableEntity when code == "window_too_short" => AiServiceErrorKind.InsufficientHistory,
         HttpStatusCode.BadRequest or HttpStatusCode.UnprocessableEntity => AiServiceErrorKind.InvalidRequest,
-        HttpStatusCode.ServiceUnavailable when code == "no_champion" => AiServiceErrorKind.NoChampion,
+        HttpStatusCode.ServiceUnavailable when IsNoChampionCode(code) => AiServiceErrorKind.NoChampion,
         HttpStatusCode.ServiceUnavailable
             or HttpStatusCode.RequestTimeout
             or HttpStatusCode.TooManyRequests

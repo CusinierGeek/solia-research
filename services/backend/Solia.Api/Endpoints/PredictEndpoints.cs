@@ -127,6 +127,11 @@ public static class PredictEndpoints
                 f.Ema,
                 f.Rsi,
                 f.PriceDerivative,
+                f.NetSolFlow,
+                f.BuyVolumeRatio,
+                f.AvgBuySol,
+                f.MaxBuySol,
+                f.LargeBuyCount,
                 f.IsMigrated,
             })
             .ToListAsync(cancellationToken);
@@ -152,6 +157,11 @@ public static class PredictEndpoints
             ["ema"] = f.Ema,
             ["rsi"] = f.Rsi,
             ["price_derivative"] = f.PriceDerivative,
+            ["net_sol_flow"] = (double?)f.NetSolFlow,
+            ["buy_volume_ratio"] = f.BuyVolumeRatio,
+            ["avg_buy_sol"] = (double?)f.AvgBuySol,
+            ["max_buy_sol"] = (double?)f.MaxBuySol,
+            ["large_buy_count"] = f.LargeBuyCount,
             ["is_migrated"] = f.IsMigrated ? 1 : 0,
         }).ToList();
     }

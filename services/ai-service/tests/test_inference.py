@@ -30,7 +30,7 @@ from solia_ai.inference import (
     onnx_parity,
     resolve_checkpoint_path,
 )
-from solia_ai.model import SoliaTransformer
+from solia_ai.model import IncompatibleCheckpointError, SoliaTransformer
 from solia_ai.train import build_checkpoint, save_checkpoint
 
 N_FEATURES = len(FEATURE_COLUMNS)
@@ -150,6 +150,28 @@ def test_build_model_refuses_a_checkpoint_from_another_horizon_set(tmp_path):
     checkpoint["hyperparams"]["horizons"] = ["1m", "30s"]  # reordered vs the trained weights
 
     with pytest.raises(ValueError, match="horizons"):
+        build_model(checkpoint)
+
+
+def test_build_model_refuses_a_champion_trained_on_the_previous_feature_spec(tmp_path):
+    _, path = saved_checkpoint(tmp_path)
+    checkpoint = load_checkpoint(path)
+    old = FEATURE_COLUMNS[:19]  # before the buy_pressure columns
+    checkpoint["feature_columns"] = old
+    checkpoint["model_state"]["_extra_state"]["feature_columns"] = old
+    del checkpoint["model_state"]["feature_mask"]
+
+    with pytest.raises(IncompatibleCheckpointError, match="19 feature columns.*new: net_sol_flow"):
+        build_model(checkpoint)
+
+
+def test_a_mismatched_spec_in_the_state_dict_alone_is_still_incompatible(tmp_path):
+    _, path = saved_checkpoint(tmp_path)
+    checkpoint = load_checkpoint(path)
+    del checkpoint["feature_columns"]  # an older checkpoint layout without the top-level copy
+    checkpoint["model_state"]["_extra_state"]["feature_columns"] = list(reversed(FEATURE_COLUMNS))
+
+    with pytest.raises(IncompatibleCheckpointError, match="feature_columns"):
         build_model(checkpoint)
 
 

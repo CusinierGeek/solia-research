@@ -52,10 +52,11 @@ public sealed class PostgresTokenSink(NpgsqlDataSource dataSource) : ITokenSink
         "(mint, ts, venue, is_migrated, pool_address, price, volume, market_cap, holders, liquidity, " +
         "buy_events, sell_events, buy_sell_ratio, token_age_sec, trending_score, social_mentions, " +
         "holders_growth_rate, volume_growth_rate, tx_creation_rate, volatility, ema, rsi, price_derivative, " +
+        "net_sol_flow, buy_volume_ratio, avg_buy_sol, max_buy_sol, large_buy_count, " +
         "onchain_signals, behavioral_signals) " +
         "SELECT * FROM unnest(@mint, @ts, @venue, @migrated, @pool, @price, @volume, @mc, @holders, @liq, " +
         "@buys, @sells, @ratio, @age, @trending, @social, @hgrowth, @vgrowth, @txrate, @vol, @ema, @rsi, @deriv, " +
-        "@onchain, @behavioral) " +
+        "@netflow, @buyvolratio, @avgbuy, @maxbuy, @largebuys, @onchain, @behavioral) " +
         "ON CONFLICT (mint, ts) DO NOTHING";
 
     public async Task WriteAsync(FlushBatch batch, CancellationToken cancellationToken)
@@ -126,6 +127,11 @@ public sealed class PostgresTokenSink(NpgsqlDataSource dataSource) : ITokenSink
                 Array("ema", NpgsqlDbType.Double, Column(s, x => x.Ema)),
                 Array("rsi", NpgsqlDbType.Double, Column(s, x => x.Rsi)),
                 Array("deriv", NpgsqlDbType.Double, Column(s, x => x.PriceDerivative)),
+                Array("netflow", NpgsqlDbType.Numeric, Column(s, x => x.NetSolFlow)),
+                Array("buyvolratio", NpgsqlDbType.Double, Column(s, x => x.BuyVolumeRatio)),
+                Array("avgbuy", NpgsqlDbType.Numeric, Column(s, x => x.AvgBuySol)),
+                Array("maxbuy", NpgsqlDbType.Numeric, Column(s, x => x.MaxBuySol)),
+                Array("largebuys", NpgsqlDbType.Integer, Column(s, x => x.LargeBuyCount)),
                 Array("onchain", NpgsqlDbType.Jsonb, Column(s, x => JsonSerializer.Serialize(x.OnchainSignals))),
                 Array("behavioral", NpgsqlDbType.Jsonb, Column(s, x => JsonSerializer.Serialize(x.BehavioralSignals)))));
         }

@@ -41,6 +41,7 @@ from torch.utils.data import DataLoader
 
 from .config import load_config
 from .dataset import SequenceDataset, make_datasets, make_loaders, positive_weights
+from .features import BASELINE_GROUPS
 from .loss import SoliaLoss
 from .model import SoliaTransformer
 
@@ -68,12 +69,14 @@ def default_version(now: datetime | None = None) -> str:
 
 
 def hyperparams_snapshot(config: Mapping[str, Any]) -> dict[str, Any]:
-    """The config knobs worth recording with a checkpoint (model + training + loss + horizons)."""
+    """The config knobs worth recording with a checkpoint (model + training + loss + horizons +
+    the enabled feature groups, so the model is rebuilt with the mask it trained with)."""
     return {
         "model": dict(config["model"]),
         "training": dict(config["training"]),
         "loss": dict(config["loss"]),
         "horizons": list(config["horizons"]),
+        "features": {"groups": list(config.get("features", {}).get("groups", BASELINE_GROUPS))},
     }
 
 

@@ -1,4 +1,5 @@
 using Solia.DataPipeline.Ingestion;
+using Solia.DataPipeline.Options;
 
 namespace Solia.DataPipeline.Features;
 
@@ -12,20 +13,23 @@ namespace Solia.DataPipeline.Features;
 /// as new as the latest one seen updates the "latest" facts (price, market cap, venue, ...).
 /// Prices are series in one quote currency: when the quote mint changes (e.g. a migration to a
 /// USDC pool) the price series and EMA restart, volume only sums trades in the current quote
-/// currency, and growth rates aren't computed across the change.
+/// currency, and growth rates aren't computed across the change. The SOL buy-pressure features
+/// only ever count SOL-quoted trades, whatever the current quote currency.
 /// </para>
 /// </summary>
 internal sealed class TokenState
 {
     private const int MaxPriceHistory = 512; // per-window cap (memory bound)
 
-    private readonly record struct Observation(DateTimeOffset Ts, EventKind Kind, decimal QuoteAmount, string? QuoteMint);
+    // QuoteAmount is null when the frame didn't report it: counted as a trade, never as an amount.
+    private readonly record struct Observation(DateTimeOffset Ts, EventKind Kind, decimal? QuoteAmount, string? QuoteMint);
 
     private readonly record struct PricePoint(DateTimeOffset Ts, double Price);
 
     private readonly int _windowSeconds;
     private readonly int _emaSpan;
     private readonly int _rsiPeriod;
+    private readonly decimal _largeBuySol;
 
     private readonly List<Observation> _window = []; // sorted by Ts
     private readonly Queue<PricePoint> _prices = new(); // in Ts order (late prices are not appended)
@@ -52,12 +56,14 @@ internal sealed class TokenState
     private decimal? _prevPrice;
     private string? _prevQuoteMint;
 
-    public TokenState(string mint, int windowSeconds, int emaSpan, int rsiPeriod, DateTimeOffset firstSeen)
+    public TokenState(string mint, int windowSeconds, int emaSpan, int rsiPeriod, DateTimeOffset firstSeen,
+        decimal largeBuySol = PipelineOptions.DefaultLargeBuySol)
     {
         Mint = mint;
         _windowSeconds = windowSeconds;
         _emaSpan = emaSpan;
         _rsiPeriod = rsiPeriod;
+        _largeBuySol = largeBuySol;
         _firstSeen = firstSeen;
         _createdAt = firstSeen;
         LastActivity = firstSeen;
@@ -99,7 +105,7 @@ internal sealed class TokenState
 
         if (e.Kind is EventKind.Buy or EventKind.Sell)
         {
-            Insert(new Observation(e.Timestamp, e.Kind, e.QuoteAmount ?? 0, e.QuoteMint));
+            Insert(new Observation(e.Timestamp, e.Kind, e.QuoteAmount, e.QuoteMint));
         }
 
         // A late event's facts are already stale: keep only what's newest.
@@ -160,6 +166,11 @@ internal sealed class TokenState
         int buys = 0;
         int sells = 0;
         decimal volume = 0;
+        int solBuys = 0;
+        decimal buySol = 0;
+        decimal sellSol = 0;
+        decimal maxBuySol = 0;
+        int largeBuys = 0;
         foreach (Observation o in _window)
         {
             if (o.Ts > now)
@@ -179,13 +190,36 @@ internal sealed class TokenState
             // Only amounts in the current quote currency can be summed.
             if (o.QuoteMint is null || _quoteMint is null || o.QuoteMint == _quoteMint)
             {
-                volume += o.QuoteAmount;
+                volume += o.QuoteAmount ?? 0;
+            }
+
+            // SOL-weighted features: a USDC (or unknown-quote) amount isn't SOL, and a trade with
+            // no reported amount would drag the averages towards 0.
+            if (o.QuoteMint != RawEvent.WrappedSolMint || o.QuoteAmount is not { } sol)
+            {
+                continue;
+            }
+
+            if (o.Kind == EventKind.Buy)
+            {
+                solBuys++;
+                buySol += sol;
+                maxBuySol = Math.Max(maxBuySol, sol);
+                if (sol >= _largeBuySol)
+                {
+                    largeBuys++;
+                }
+            }
+            else
+            {
+                sellSol += sol;
             }
         }
 
         int trades = buys + sells;
         double buySellRatio = trades == 0 ? 0 : (double)buys / trades;
         int holders = _holders.Count;
+        decimal solVolume = buySol + sellSol;
 
         // Trades are only seen since first sight, so a token younger than the window is rated over its observed span.
         double observedSeconds = Math.Clamp((now - _firstSeen).TotalSeconds, 1, _windowSeconds);
@@ -240,6 +274,11 @@ internal sealed class TokenState
             Ema = _ema,
             Rsi = rsi,
             PriceDerivative = priceDerivative,
+            NetSolFlow = buySol - sellSol,
+            BuyVolumeRatio = solVolume == 0 ? null : (double)(buySol / solVolume),
+            AvgBuySol = solBuys == 0 ? null : buySol / solBuys,
+            MaxBuySol = solBuys == 0 ? null : maxBuySol,
+            LargeBuyCount = largeBuys,
             OnchainSignals = new Dictionary<string, object?>
             {
                 ["burnedLiquidityPercent"] = _burned,

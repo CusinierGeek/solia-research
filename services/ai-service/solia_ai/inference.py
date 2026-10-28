@@ -39,7 +39,8 @@ import torch
 from torch import nn
 
 from .dataset import pad_window
-from .model import SoliaTransformer
+from .features import FEATURE_COLUMNS
+from .model import IncompatibleCheckpointError, SoliaTransformer
 
 # Pinned so the pipeline's ONNXRuntime always sees the same operator set the export was tested
 # against; bump deliberately (and re-check parity) rather than tracking torch's default. 18 is the
@@ -147,7 +148,20 @@ def build_model(checkpoint: dict[str, Any]) -> SoliaTransformer:
     The architecture comes from the checkpoint's recorded ``hyperparams``; loading the state dict
     re-checks (via the model's extra state) that its horizons and feature spec match the code —
     a checkpoint trained against a different feature set is refused rather than silently mis-fed.
+
+    Raises:
+        IncompatibleCheckpointError: the checkpoint's feature spec isn't the code's (e.g. a
+            champion trained before columns were added): it needs a retrain, not a reload.
     """
+    recorded = checkpoint.get("feature_columns")
+    if recorded is not None and list(recorded) != FEATURE_COLUMNS:
+        added = [c for c in FEATURE_COLUMNS if c not in recorded]
+        raise IncompatibleCheckpointError(
+            f"checkpoint {checkpoint.get('version', '?')} was trained on {len(recorded)} feature "
+            f"columns, the code now has {len(FEATURE_COLUMNS)}"
+            + (f" (new: {', '.join(added)})" if added else "")
+            + ": retrain on the current spec and promote the result"
+        )
     model = SoliaTransformer.from_config(checkpoint["hyperparams"])
     model.load_state_dict(checkpoint["model_state"])
     return model.eval()

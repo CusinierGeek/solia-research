@@ -42,9 +42,16 @@ public sealed record RawEvent
     /// <summary>
     /// Mint of the quote currency that <see cref="Price"/>, <see cref="MarketCap"/>,
     /// <see cref="QuoteAmount"/> and the quote reserves are expressed in. The wSOL mint for
-    /// SOL-quoted pools; another token (e.g. USDC) otherwise. Null when the event has no prices.
+    /// SOL-quoted pools (<see cref="WrappedSolMint"/>, whatever the source calls native SOL);
+    /// another token (e.g. USDC) otherwise. Null when the event has no prices.
     /// </summary>
     public string? QuoteMint { get; init; }
+
+    /// <summary>
+    /// The wSOL mint: every <see cref="IDataSource"/> reports a SOL-quoted event's
+    /// <see cref="QuoteMint"/> as this, so SOL-denominated features stay source-agnostic.
+    /// </summary>
+    public const string WrappedSolMint = "So11111111111111111111111111111111111111112";
 
     /// <summary>Price in quote currency (<see cref="QuoteMint"/>) per token.</summary>
     public decimal? Price { get; init; }

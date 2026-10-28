@@ -3,12 +3,15 @@
 The single source of truth for *which* columns of the ``features`` table (written by the .NET
 pipeline) feed the model, and in what order. Parity tests check this list against the schema the
 migrations produce, so the two can never drift silently. NULLs are imputed to 0 (absence of
-signal); a missing column or a non-numeric value is an error, never silently zeroed.
+signal) unless :data:`NULL_FILL` gives the column a neutral value; a missing column or a
+non-numeric value is an error, never silently zeroed. Rows written before a group's migration
+(NULL where the pipeline now always writes a value) are refused for that group, see
+:func:`check_group_coverage`.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
 import numpy as np
 import pandas as pd
@@ -35,6 +38,11 @@ FEATURE_COLUMNS: list[str] = [
     "rsi",
     "price_derivative",
     "is_migrated",
+    "net_sol_flow",
+    "buy_volume_ratio",
+    "avg_buy_sol",
+    "max_buy_sol",
+    "large_buy_count",
 ]
 
 # Feature groups for ablation (solia_ai.ablation): every model input belongs to exactly one group
@@ -53,9 +61,19 @@ FEATURE_GROUPS: dict[str, tuple[str, ...]] = {
     ),
     "holders": ("holders", "holders_growth_rate"),
     "context": ("token_age_sec", "trending_score", "social_mentions"),
+    # FE-T2 (#111): SOL-weighted buy pressure, SOL-quoted trades only.
+    "buy_pressure": (
+        "net_sol_flow",
+        "buy_volume_ratio",
+        "avg_buy_sol",
+        "max_buy_sol",
+        "large_buy_count",
+    ),
 }
 
-# The groups making up the baseline model: today's 19 columns. Groups outside it are candidates.
+# The groups making up the baseline model: the original 19 columns. Groups outside it are
+# candidates, disabled (zeroed) by default until their ablation lift clears the margin — the
+# model trains on ``features.groups`` from the config, which defaults to this baseline.
 BASELINE_GROUPS: tuple[str, ...] = ("price", "liquidity", "flow", "holders", "context")
 
 
@@ -76,11 +94,52 @@ def group_columns(groups: Iterable[str]) -> list[str]:
     return [col for col in FEATURE_COLUMNS if col in wanted]
 
 
+def column_mask(columns: Sequence[str], enabled: Iterable[str]) -> np.ndarray:
+    """A ``[len(columns)]`` boolean mask: ``True`` where the column is in ``enabled``.
+
+    Raises:
+        ValueError: on an enabled column that isn't one of ``columns``.
+    """
+    enabled = set(enabled)
+    if unknown := sorted(enabled - set(columns)):
+        raise ValueError(f"enabled column(s) not in the feature spec: {', '.join(unknown)}")
+    return np.array([col in enabled for col in columns], dtype=bool)
+
+
 def group_mask(groups: Iterable[str]) -> np.ndarray:
     """A ``[F]`` boolean mask over :data:`FEATURE_COLUMNS`: ``True`` where the column is in an
-    enabled group. Disabled columns are zeroed by the ablation harness (no signal)."""
-    enabled = set(group_columns(groups))
-    return np.array([col in enabled for col in FEATURE_COLUMNS], dtype=bool)
+    enabled group. The model zeroes disabled columns (no signal)."""
+    return column_mask(FEATURE_COLUMNS, group_columns(groups))
+
+
+# NULL imputation where 0 would mean something: no SOL trade in the window is "no pressure either
+# way" (0.5), not "only sells" (0.0).
+NULL_FILL: dict[str, float] = {"buy_volume_ratio": 0.5}
+
+# Per group, the columns the pipeline always writes since the group's migration: a NULL there
+# means the row predates it (never computed), not "no signal" — such rows must be re-replayed
+# before the group is trained or ablated on, or they'd teach the model a fake zero.
+ALWAYS_WRITTEN: dict[str, tuple[str, ...]] = {
+    "buy_pressure": ("net_sol_flow", "large_buy_count"),  # migration 0005
+}
+
+
+def check_group_coverage(df: pd.DataFrame, groups: Iterable[str]) -> None:
+    """Refuse ``df`` if an enabled group has rows written before its migration.
+
+    Raises:
+        ValueError: naming the group and how many rows lack it (re-replay them first).
+    """
+    for group in dict.fromkeys(groups):
+        cols = [c for c in ALWAYS_WRITTEN.get(group, ()) if c in df.columns]
+        if not cols:
+            continue
+        uncomputed = int(df[cols].isna().any(axis=1).sum())
+        if uncomputed:
+            raise ValueError(
+                f"{uncomputed} of {len(df)} feature rows predate the '{group}' group "
+                f"(NULL {', '.join(cols)}): re-replay them before enabling it"
+            )
 
 
 # Columns of the `features` table that are deliberately NOT model inputs (identity, bookkeeping,
@@ -103,7 +162,8 @@ def build_feature_matrix(df: pd.DataFrame) -> np.ndarray:
     """Project ``features`` rows onto :data:`FEATURE_COLUMNS` as a ``float32`` matrix.
 
     Columns are taken in canonical order; booleans and ``NUMERIC``/``Decimal`` values are coerced
-    to numbers. NULLs and non-finite values (±inf, or magnitudes beyond float32) become ``0.0``.
+    to numbers. NULLs become their :data:`NULL_FILL` value (default ``0.0``); non-finite values
+    (±inf, or magnitudes beyond float32) become ``0.0``.
 
     Raises:
         ValueError: if a feature column is missing (e.g. a frame from another table, or a renamed
@@ -121,7 +181,7 @@ def build_feature_matrix(df: pd.DataFrame) -> np.ndarray:
         if invalid.any():
             sample = values[invalid].iloc[0]
             raise ValueError(f"feature column '{col}' holds a non-numeric value: {sample!r}")
-        numeric[col] = coerced.astype("float64")
+        numeric[col] = coerced.astype("float64").fillna(NULL_FILL.get(col, 0.0))
 
     with np.errstate(over="ignore"):  # out-of-range values become inf here, then imputed below
         matrix = pd.DataFrame(numeric, columns=FEATURE_COLUMNS).to_numpy(dtype=np.float32)

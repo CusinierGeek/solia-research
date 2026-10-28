@@ -28,7 +28,7 @@ import torch
 from torch import nn
 
 from .config import load_config, model_shape_error
-from .features import FEATURE_COLUMNS
+from .features import BASELINE_GROUPS, FEATURE_COLUMNS, column_mask, group_columns
 
 
 def _sinusoidal_encoding(seq_len: int, d_model: int) -> torch.Tensor:
@@ -55,6 +55,15 @@ def _head(d_model: int, n_out: int, dropout: float) -> nn.Sequential:
 def signed_log1p(x: torch.Tensor) -> torch.Tensor:
     """``sign(x) * log(1 + |x|)``: monotonic, keeps sign and zero, compresses huge magnitudes."""
     return torch.sign(x) * torch.log1p(torch.abs(x))
+
+
+class IncompatibleCheckpointError(ValueError):
+    """A checkpoint trained against another feature spec (or horizons) than this code's.
+
+    Not a corrupt file: the model is fine, the code moved on. Serving it would mis-feed every
+    column, so it is refused; the fix is a retrain on the current spec (re-replaying the features
+    first when columns were added) and a promotion.
+    """
 
 
 class FeatureNormalizer(nn.Module):
@@ -106,6 +115,7 @@ class SoliaTransformer(nn.Module):
         dropout: float = 0.1,
         seq_len: int = 64,
         feature_columns: Sequence[str] | None = None,
+        enabled_columns: Sequence[str] | None = None,
     ) -> None:
         super().__init__()
         horizons = tuple(horizons)
@@ -118,12 +128,16 @@ class SoliaTransformer(nn.Module):
         columns = tuple(FEATURE_COLUMNS if feature_columns is None else feature_columns)
         if len(columns) != n_features:
             raise ValueError(f"{len(columns)} feature columns for n_features={n_features}")
+        mask = column_mask(columns, columns if enabled_columns is None else enabled_columns)
 
         self.n_features = n_features
         self.horizons = horizons
         self.feature_columns = columns
         self.seq_len = seq_len
 
+        # Disabled columns (feature groups not enabled) are zeroed before anything else, in training
+        # and inference alike: no signal. Persisted, so a checkpoint keeps the mask it trained with.
+        self.register_buffer("feature_mask", torch.from_numpy(mask))
         self.normalizer = FeatureNormalizer(n_features)
         self.input_proj = nn.Linear(n_features, d_model)
         self.register_buffer(
@@ -159,7 +173,7 @@ class SoliaTransformer(nn.Module):
         for key, mine in (("horizons", self.horizons), ("feature_columns", self.feature_columns)):
             theirs = tuple(state.get(key, ()))
             if theirs != mine:
-                raise ValueError(
+                raise IncompatibleCheckpointError(
                     f"checkpoint {key} {list(theirs)} don't match the model's {list(mine)}"
                 )
 
@@ -203,7 +217,10 @@ class SoliaTransformer(nn.Module):
         """
         length = x.shape[1]
         # Right-aligned positions: the most recent row always gets the last encoding.
-        hidden = self.input_proj(self.normalizer(x)) + self.positional_encoding[-length:]
+        hidden = (
+            self.input_proj(self.normalizer(self.mask_features(x)))
+            + self.positional_encoding[-length:]
+        )
         if padding_mask is not None:
             hidden = hidden.masked_fill(padding_mask.unsqueeze(-1), 0.0)
         encoded = self.encoder(hidden, src_key_padding_mask=padding_mask)
@@ -239,8 +256,14 @@ class SoliaTransformer(nn.Module):
 
     def fit_normalizer(self, rows: torch.Tensor | np.ndarray) -> SoliaTransformer:
         """Fit the input normalization on ``[R, F]`` training rows (call before training)."""
-        self.normalizer.fit(rows)
+        self.normalizer.fit(self.mask_features(torch.as_tensor(rows, dtype=torch.float32)))
         return self
+
+    def mask_features(self, x: torch.Tensor) -> torch.Tensor:
+        """``x`` (``[..., F]``) with disabled columns set to 0 — whatever they held, NaN/inf
+        included (a product with the mask would keep them: ``nan * 0`` is NaN)."""
+        mask = self.feature_mask.to(x.device)
+        return torch.where(mask, x, torch.zeros((), dtype=x.dtype, device=x.device))
 
     @property
     def n_params(self) -> int:
@@ -250,6 +273,7 @@ class SoliaTransformer(nn.Module):
     def from_config(cls, config: Mapping[str, Any] | None = None) -> SoliaTransformer:
         cfg = load_config() if config is None else config
         m = cfg["model"]
+        groups = cfg.get("features", {}).get("groups", BASELINE_GROUPS)
         return cls(
             n_features=len(FEATURE_COLUMNS),
             horizons=cfg["horizons"],
@@ -259,4 +283,5 @@ class SoliaTransformer(nn.Module):
             ff_dim=m.get("ff_dim"),
             dropout=m["dropout"],
             seq_len=m["seq_len"],
+            enabled_columns=group_columns(groups),
         )

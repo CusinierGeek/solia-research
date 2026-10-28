@@ -212,10 +212,12 @@ public class SoliaAiClientTests
         Assert.Equal(AiServiceErrorKind.UpstreamError, ex.Kind);
     }
 
-    [Fact]
-    public async Task No_champion_is_neither_retried_nor_counted_by_the_breaker()
+    [Theory]
+    [InlineData("no_champion")]
+    [InlineData("champion_incompatible")]
+    public async Task No_champion_is_neither_retried_nor_counted_by_the_breaker(string code)
     {
-        var handler = new StubHandler(Error(HttpStatusCode.ServiceUnavailable, "no_champion"));
+        var handler = new StubHandler(Error(HttpStatusCode.ServiceUnavailable, code));
         using ServiceProvider provider = AiClientTestHost.Build(handler, new Dictionary<string, string?>
         {
             ["AiService:CircuitBreakerMinimumThroughput"] = "2",
@@ -280,6 +282,7 @@ public class SoliaAiClientTests
     [InlineData(HttpStatusCode.UnprocessableEntity, "invalid_request", AiServiceErrorKind.InvalidRequest, 400, ApiErrorCodes.InvalidRequest)]
     [InlineData(HttpStatusCode.UnprocessableEntity, "window_too_short", AiServiceErrorKind.InsufficientHistory, 422, ApiErrorCodes.InsufficientHistory)]
     [InlineData(HttpStatusCode.ServiceUnavailable, "no_champion", AiServiceErrorKind.NoChampion, 503, ApiErrorCodes.Unavailable)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, "champion_incompatible", AiServiceErrorKind.NoChampion, 503, ApiErrorCodes.Unavailable)]
     [InlineData(HttpStatusCode.ServiceUnavailable, "champion_unavailable", AiServiceErrorKind.Unavailable, 503, ApiErrorCodes.Unavailable)]
     [InlineData(HttpStatusCode.InternalServerError, "internal_error", AiServiceErrorKind.UpstreamError, 502, ApiErrorCodes.InternalError)]
     [InlineData(HttpStatusCode.NotFound, "http_error", AiServiceErrorKind.UpstreamError, 502, ApiErrorCodes.InternalError)]

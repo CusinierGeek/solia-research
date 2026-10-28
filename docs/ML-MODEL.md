@@ -135,8 +135,22 @@ as the promotion gate: predictive metrics primary, reference-policy P&L secondar
 and seeds.
 
 - **Feature groups** are declared once in `features.py` (`FEATURE_GROUPS`: group → columns of
-  `FEATURE_COLUMNS`; every column in exactly one group). `BASELINE_GROUPS` = today's 19 columns. An
-  enrichment task adds its columns *and* a new group.
+  `FEATURE_COLUMNS`; every column in exactly one group). `BASELINE_GROUPS` = the original 19 columns. An
+  enrichment task adds its columns *and* a new group, outside the baseline.
+- **Candidate groups stay disabled by default.** The model only sees the groups listed in the config's
+  `features.groups` (default: `BASELINE_GROUPS`); the other columns are zeroed by a mask stored in the
+  model (`feature_mask`, same in training, inference and the ONNX graph, and saved with the checkpoint).
+  A group is enabled there only once its ablation lift clears the margin.
+- **Candidates so far:** `buy_pressure` (FE-T2, #111) — `net_sol_flow`, `buy_volume_ratio`,
+  `avg_buy_sol`, `max_buy_sol`, `large_buy_count`.
+- **Rows predating a group are refused, not zero-filled.** A NULL in a column the pipeline always writes
+  since the group's migration (`ALWAYS_WRITTEN`, e.g. `net_sol_flow`/`large_buy_count` for
+  `buy_pressure`) means "never computed": training, evaluation and ablation raise if an enabled (or
+  ablated) group has such rows — re-replay them first. Other NULLs are imputed per `NULL_FILL`
+  (`buy_volume_ratio` → 0.5, "no pressure either way"; else 0).
+- **Adding columns invalidates every checkpoint.** A champion trained on another `FEATURE_COLUMNS` is
+  refused at load (`IncompatibleCheckpointError`): `/predict` answers 503 `champion_incompatible`
+  (the backend treats it like `no_champion`: not retried) until a retrain on the new spec is promoted.
 - **Variants**: the baseline, plus one per group under test — a non-baseline group is **added**
   (`+group`), a baseline group is **dropped** (`-group`). A disabled group's columns are zeroed in
   the input; architecture, labels and hyperparameters are identical.

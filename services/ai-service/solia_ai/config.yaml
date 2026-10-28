@@ -34,6 +34,12 @@ loss:
   # horizon_weights:
   #   "1h": 1.5
 
+# Feature groups the model sees (solia_ai/features.py FEATURE_GROUPS); the columns of every other
+# group are zeroed. Omitted = the baseline (BASELINE_GROUPS). A candidate group is enabled only once
+# its ablation lift clears the margin (docs/ML-MODEL.md "Ablation"), e.g.:
+# features:
+#   groups: [price, liquidity, flow, holders, context, buy_pressure]
+
 # Prediction horizons.
 horizons: ["30s", "1m", "5m", "15m", "1h"]
 

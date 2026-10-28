@@ -5,8 +5,8 @@ module trains the model with feature groups (:data:`solia_ai.features.FEATURE_GR
 disabled and scores every variant on the **same** held-out, most-recent windows, so the only thing
 that differs between two runs is the feature set:
 
-* **Variants** — the baseline (:data:`BASELINE_GROUPS`, today's 19 columns), plus one variant per
-  group under test: a group outside the baseline is *added* to it, a baseline group is *dropped*
+* **Variants** — the baseline (:data:`BASELINE_GROUPS`, the original 19 columns), plus one variant
+  per group under test: a group outside the baseline is *added* to it, a baseline group is *dropped*
   from it. A disabled group's columns are zeroed in the input (no signal); the architecture and
   everything else stay identical.
 * **Windows** — walk-forward: the most recent ``eval_fraction`` of the labeled windows is cut into
@@ -34,7 +34,7 @@ import json
 import math
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -42,9 +42,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .dataset import Samples, SequenceDataset, config_samples, embargo_seconds, temporal_split
+from .dataset import SequenceDataset, config_samples, embargo_seconds, temporal_split
 from .evaluate import EvaluationReport, ReferencePolicy, evaluate, fmt, json_safe
-from .features import BASELINE_GROUPS, FEATURE_GROUPS, group_mask
+from .features import BASELINE_GROUPS, FEATURE_GROUPS, check_group_coverage
 from .train import fit
 
 HEADS = ("pump", "rug")
@@ -114,12 +114,6 @@ def check_variants(variants: Sequence[Variant]) -> None:
     duplicates = sorted({n for n in names if names.count(n) > 1})
     if duplicates:
         raise ValueError(f"duplicate variant name(s): {', '.join(duplicates)}")
-
-
-def mask_samples(samples: Samples, groups: Iterable[str]) -> Samples:
-    """``samples`` with every column outside ``groups`` zeroed (same windows, same labels)."""
-    keep = group_mask(groups).astype(np.float32)
-    return replace(samples, features=samples.features * keep)
 
 
 # --------------------------------------------------------------------------- windows
@@ -387,6 +381,8 @@ def run_ablation(
     variants = list(plan_variants() if variants is None else variants)
     check_variants(variants)
 
+    # Every variant's groups, not just the config's: a candidate group needs re-replayed rows too.
+    check_group_coverage(df, [g for v in variants for g in v.groups])
     samples = config_samples(df, config)
     horizons = list(samples.horizons)
     policy = policy or ReferencePolicy(horizon=horizons[0])
@@ -402,11 +398,10 @@ def run_ablation(
     runs: list[RunResult] = []
     total = len(windows) * len(seeds) * len(variants)
     for variant in variants:
-        masked = mask_samples(samples, variant.groups)
         for window in windows:
-            train_ds = SequenceDataset(masked, window.train_idx)
-            val_ds = SequenceDataset(masked, window.val_idx)
-            eval_ds = SequenceDataset(masked, window.eval_idx)
+            train_ds = SequenceDataset(samples, window.train_idx)
+            val_ds = SequenceDataset(samples, window.val_idx)
+            eval_ds = SequenceDataset(samples, window.eval_idx)
             for seed in seeds:
                 if progress:
                     progress(
@@ -415,6 +410,7 @@ def run_ablation(
                     )
                 cfg = copy.deepcopy(dict(config))
                 cfg["training"] = {**cfg["training"], "seed": seed}
+                cfg["features"] = {"groups": list(variant.groups)}  # the model masks the rest
                 fitted = fit(train_ds, val_ds, cfg, device=device)
                 report = evaluate(
                     fitted.model.cpu(), eval_ds, model_version=variant.name, policy=policy

@@ -6,7 +6,7 @@ import torch
 
 from solia_ai.config import CONFIG_ENV, load_config
 from solia_ai.dataset import pad_window
-from solia_ai.features import FEATURE_COLUMNS
+from solia_ai.features import BASELINE_GROUPS, FEATURE_COLUMNS, FEATURE_GROUPS, group_columns
 from solia_ai.model import FeatureNormalizer, SoliaTransformer, signed_log1p
 
 N_FEATURES = len(FEATURE_COLUMNS)
@@ -47,6 +47,127 @@ def test_from_config_builds_from_the_packaged_config(monkeypatch):
     assert model.horizons == ("30s", "1m", "5m", "15m", "1h")
     assert model.encoder.layers[0].linear1.out_features == load_config()["model"]["ff_dim"]
     assert model(torch.randn(2, model.seq_len, N_FEATURES))["pump_logits"].shape == (2, 5)
+
+
+# --- feature-group mask (disabled groups are zeroed) ---
+
+BUY_PRESSURE = [FEATURE_COLUMNS.index(c) for c in FEATURE_GROUPS["buy_pressure"]]
+
+
+def test_from_config_disables_candidate_groups_by_default(monkeypatch):
+    monkeypatch.delenv(CONFIG_ENV, raising=False)
+    model = SoliaTransformer.from_config(load_config()).eval()
+
+    enabled = [c for c, on in zip(FEATURE_COLUMNS, model.feature_mask.tolist(), strict=True) if on]
+    assert enabled == group_columns(BASELINE_GROUPS)
+    x = torch.randn(2, 8, N_FEATURES)
+    noisy = x.clone()
+    noisy[..., BUY_PRESSURE] = 1e6  # a disabled group carries no signal at all
+    assert torch.equal(model(x)["pump_logits"], model(noisy)["pump_logits"])
+
+
+def test_from_config_enables_the_configured_groups(monkeypatch):
+    monkeypatch.delenv(CONFIG_ENV, raising=False)
+    cfg = {**load_config(), "features": {"groups": [*BASELINE_GROUPS, "buy_pressure"]}}
+    model = SoliaTransformer.from_config(cfg).eval()
+
+    assert model.feature_mask.all()
+    x = torch.randn(2, 8, N_FEATURES)
+    noisy = x.clone()
+    noisy[..., BUY_PRESSURE] = 1e3
+    assert not torch.equal(model(x)["pump_logits"], model(noisy)["pump_logits"])
+
+
+def test_normalizer_is_fitted_on_masked_rows():
+    model = SoliaTransformer(
+        n_features=N_FEATURES,
+        horizons=HORIZONS,
+        d_model=16,
+        n_heads=2,
+        n_layers=1,
+        enabled_columns=group_columns(BASELINE_GROUPS),
+    )
+    model.fit_normalizer(np.full((10, N_FEATURES), 5.0, np.float32))
+
+    assert torch.all(model.normalizer.mean[BUY_PRESSURE] == 0)  # saw zeros, not the 5.0s
+    assert torch.all(model.normalizer.mean[: len(group_columns(BASELINE_GROUPS))] > 0)
+
+
+def baseline_only() -> SoliaTransformer:
+    return SoliaTransformer(
+        n_features=N_FEATURES,
+        horizons=HORIZONS,
+        d_model=16,
+        n_heads=2,
+        n_layers=1,
+        ff_dim=32,
+        seq_len=8,
+        enabled_columns=group_columns(BASELINE_GROUPS),
+    ).eval()
+
+
+@pytest.mark.parametrize("poison", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_values_in_a_disabled_group_never_reach_the_output(poison):
+    model = baseline_only()
+    x = torch.randn(2, 8, N_FEATURES)
+    poisoned = x.clone()
+    poisoned[..., BUY_PRESSURE] = poison  # nan * 0 would still be nan
+
+    out = model(poisoned)["pump_logits"]
+
+    assert torch.isfinite(out).all()
+    assert torch.equal(out, model(x)["pump_logits"])
+
+
+def test_normalizer_ignores_non_finite_values_in_a_disabled_group():
+    rows = np.random.default_rng(0).normal(size=(10, N_FEATURES)).astype(np.float32)
+    rows[:, BUY_PRESSURE] = np.inf
+
+    model = baseline_only().fit_normalizer(rows)  # no "non-finite values" error
+
+    assert torch.isfinite(model.normalizer.mean).all()
+    assert torch.all(model.normalizer.mean[BUY_PRESSURE] == 0)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA device")
+def test_normalizer_fits_on_rows_from_another_device():
+    model = baseline_only()  # stays on the CPU
+    model.fit_normalizer(torch.randn(10, N_FEATURES, device="cuda"))
+
+    assert bool(model.normalizer.fitted)
+
+
+def test_feature_mask_follows_the_input_device():
+    model = baseline_only()
+    x = torch.randn(2, N_FEATURES, dtype=torch.float64)
+
+    masked = model.mask_features(x)
+
+    assert masked.dtype == torch.float64
+    assert not masked[:, BUY_PRESSURE].any()
+    assert torch.equal(masked[:, : len(group_columns(BASELINE_GROUPS))], x[:, :19])
+
+
+def test_checkpoint_round_trip_keeps_the_feature_mask():
+    trained = SoliaTransformer(
+        n_features=N_FEATURES,
+        horizons=HORIZONS,
+        d_model=16,
+        n_heads=2,
+        n_layers=1,
+        ff_dim=32,
+        seq_len=8,
+        enabled_columns=group_columns(["price"]),
+    )
+    restored = tiny()
+    restored.load_state_dict(trained.state_dict())
+
+    assert torch.equal(restored.feature_mask, trained.feature_mask)
+
+
+def test_unknown_enabled_column_is_rejected():
+    with pytest.raises(ValueError, match="not in the feature spec: nope"):
+        SoliaTransformer(n_features=N_FEATURES, horizons=HORIZONS, enabled_columns=["nope"])
 
 
 def test_from_config_rejects_an_empty_mapping_instead_of_loading_the_global_config():

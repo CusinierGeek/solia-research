@@ -48,6 +48,7 @@ from starlette.exceptions import HTTPException
 
 from .features import FEATURE_COLUMNS, build_feature_matrix
 from .inference import NO_CHAMPION, Predictor
+from .model import IncompatibleCheckpointError
 
 logger = logging.getLogger(__name__)
 
@@ -194,6 +195,11 @@ def create_app(
                 if current is None:
                     raise ApiError(503, "no_champion", str(exc)) from exc
                 logger.warning("champion refresh found no champion; keeping %s", current.version)
+            except IncompatibleCheckpointError as exc:
+                if current is None:
+                    logger.error("the registered champion is incompatible: %s", exc)
+                    raise ApiError(503, "champion_incompatible", str(exc)) from exc
+                logger.warning("champion refresh: %s; keeping %s", exc, current.version)
             except Exception as exc:
                 if current is None:
                     logger.exception("loading the champion failed")

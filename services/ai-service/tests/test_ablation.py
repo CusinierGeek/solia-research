@@ -16,7 +16,6 @@ from solia_ai.ablation import (
     AblationReport,
     Variant,
     decide,
-    mask_samples,
     paired_lifts,
     plan_variants,
     run_ablation,
@@ -24,22 +23,24 @@ from solia_ai.ablation import (
     summarize,
     walk_forward_windows,
 )
-from solia_ai.dataset import config_samples
 from solia_ai.evaluate import EvaluationReport, ReferencePolicy
 from solia_ai.features import BASELINE_GROUPS, FEATURE_COLUMNS, FEATURE_GROUPS
 
 # --- variants & masking ---
 
 
-def test_default_plan_is_baseline_then_one_drop_per_baseline_group():
+def test_default_plan_is_baseline_then_one_variant_per_declared_group():
     variants = plan_variants()
 
     assert variants[0] == Variant("baseline", BASELINE_GROUPS)
-    assert [v.name for v in variants[1:]] == [f"-{g}" for g in FEATURE_GROUPS]
+    assert [v.group for v in variants[1:]] == list(FEATURE_GROUPS)
     for v in variants[1:]:
-        assert v.mode == "drop"
-        assert v.group not in v.groups
-        assert set(v.groups) == set(BASELINE_GROUPS) - {v.group}
+        if v.group in BASELINE_GROUPS:  # baseline group: dropped
+            assert (v.name, v.mode) == (f"-{v.group}", "drop")
+            assert set(v.groups) == set(BASELINE_GROUPS) - {v.group}
+        else:  # candidate group (e.g. buy_pressure): added
+            assert (v.name, v.mode) == (f"+{v.group}", "add")
+            assert v.groups == (*BASELINE_GROUPS, v.group)
 
 
 def test_a_group_outside_the_baseline_is_added_to_it():
@@ -76,21 +77,27 @@ def test_duplicate_baseline_groups_are_kept_once():
     assert variants[1].groups == ("price", "flow")
 
 
-def test_mask_samples_zeroes_only_the_disabled_columns():
-    samples = config_samples(make_features_df(n_tokens=2, n_rows=40), small_config())
+def test_rows_predating_a_tested_group_are_refused_before_any_training(monkeypatch):
+    df = make_features_df()
+    df.loc[df.index[:5], "net_sol_flow"] = None  # rows written before migration 0005
 
-    masked = mask_samples(samples, ["holders"])
+    def no_fit(*args, **kwargs):
+        raise AssertionError("nothing should train")
 
-    kept = [FEATURE_COLUMNS.index(c) for c in FEATURE_GROUPS["holders"]]
-    dropped = [i for i in range(len(FEATURE_COLUMNS)) if i not in kept]
-    np.testing.assert_array_equal(masked.features[:, kept], samples.features[:, kept])
-    assert not masked.features[:, dropped].any()
-    assert samples.features[:, dropped].any()  # the original is untouched
-    np.testing.assert_array_equal(masked.pump, samples.pump)  # same windows, same labels
-    np.testing.assert_array_equal(masked.end_ts, samples.end_ts)
+    monkeypatch.setattr(ablation, "fit", no_fit)
+    with pytest.raises(ValueError, match="5 of .* predate the 'buy_pressure' group"):
+        run_ablation(df, small_config(), variants=plan_variants(["buy_pressure"]))
 
 
-# --- windows ---
+def test_rows_predating_an_untested_group_dont_block_the_ablation(no_registry):
+    df = make_features_df()
+    df["net_sol_flow"] = None  # buy_pressure isn't in any variant
+
+    report = run_ablation(
+        df, small_config(), variants=plan_variants(["context"]), n_windows=1, seeds=[0]
+    )
+
+    assert len(report.runs) == 2  # baseline and -context both trained
 
 
 def test_walk_forward_windows_score_the_most_recent_slices_without_leakage():
@@ -265,6 +272,31 @@ def test_run_ablation_scores_every_variant_on_the_same_windows(no_registry, tmp_
     assert json.loads(report.to_json())["settings"]["seeds"] == [0, 1]
     assert "-holders" in report.render() and "pump/30s/roc_auc" in report.render()
     assert not list(tmp_path.iterdir())  # no checkpoint saved
+
+
+def test_each_variant_trains_a_model_masking_its_own_groups(no_registry, monkeypatch):
+    masks: dict[tuple[str, ...], list[float]] = {}
+    real_fit = ablation.fit
+
+    def spy(train_ds, val_ds, cfg, **kwargs):
+        fitted = real_fit(train_ds, val_ds, cfg, **kwargs)
+        masks[tuple(cfg["features"]["groups"])] = fitted.model.feature_mask.tolist()
+        return fitted
+
+    monkeypatch.setattr(ablation, "fit", spy)
+    run_ablation(
+        make_features_df(),
+        small_config(),
+        variants=plan_variants(["buy_pressure"]),
+        n_windows=1,
+        seeds=[0],
+    )
+
+    with_group = (*BASELINE_GROUPS, "buy_pressure")
+    assert set(masks) == {BASELINE_GROUPS, with_group}
+    for groups, mask in masks.items():
+        enabled = {c for g in groups for c in FEATURE_GROUPS[g]}
+        assert mask == [float(c in enabled) for c in FEATURE_COLUMNS]
 
 
 def test_run_ablation_is_reproducible_for_the_same_seeds(no_registry):

@@ -108,6 +108,13 @@ def test_missing_sections_are_named(tmp_path):
         ),
         ({"horizons": []}, "'horizons' must be a non-empty list"),
         ({"horizons": ["30s", 5]}, "'horizons' must be a non-empty list of strings"),
+        ({"features": []}, "'features' must be a mapping"),
+        ({"features": {"groups": []}}, "'features.groups' must be a non-empty list"),
+        ({"features": {"groups": "price"}}, "'features.groups' must be a non-empty list"),
+        (
+            {"features": {"groups": ["price", "nope"]}},
+            r"'features.groups' has unknown group\(s\): nope",
+        ),
     ],
 )
 def test_invalid_values_are_rejected_with_the_key_named(tmp_path, sections, message):

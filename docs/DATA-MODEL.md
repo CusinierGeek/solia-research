@@ -89,6 +89,11 @@ Time-series feature snapshots per token. The model's input unit.
 | ema | DOUBLE PRECISION | |
 | rsi | DOUBLE PRECISION | |
 | price_derivative | DOUBLE PRECISION | first time-derivative |
+| net_sol_flow | NUMERIC(28,12) | buy − sell SOL volume in window (SOL-quoted trades only) |
+| buy_volume_ratio | DOUBLE PRECISION | buy SOL volume / total SOL volume; NULL without SOL trades |
+| avg_buy_sol | NUMERIC(28,12) | mean buy size (SOL); NULL without SOL buys |
+| max_buy_sol | NUMERIC(28,12) | largest buy (SOL); NULL without SOL buys |
+| large_buy_count | INT | buys ≥ `Pipeline:LargeBuySol` (default 1 SOL) |
 | onchain_signals | JSONB | Pump.fun-specific signals |
 | behavioral_signals | JSONB | pump/rug pattern flags |
 | raw | JSONB | nullable debug payload |

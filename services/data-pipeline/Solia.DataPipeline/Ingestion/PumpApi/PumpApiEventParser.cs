@@ -12,7 +12,7 @@ namespace Solia.DataPipeline.Ingestion.PumpApi;
 /// </summary>
 public static class PumpApiEventParser
 {
-    internal const string WrappedSolMint = "So11111111111111111111111111111111111111112";
+    private const string WrappedSolMint = RawEvent.WrappedSolMint;
 
     // pumpapi's native-SOL marker in transfers[] (not a real mint, flagged isSolana).
     private const string NativeSolMint = "So11111111111111111111111111111111111111111";

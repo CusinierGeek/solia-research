@@ -196,4 +196,173 @@ public class TokenStateTests
         Assert.Equal(1, s.BuyEvents);        // the T0 trade is outside the 60s window
         Assert.Equal(7m, s.Volume!.Value);
     }
+
+    // --- SOL-volume buy pressure (#111) ---
+
+    private static RawEvent Sol(EventKind kind, decimal sol, int offsetSec) => Quoted(kind, 1m, sol, Wsol, offsetSec);
+
+    [Fact]
+    public void Buy_pressure_weights_trades_by_their_SOL_size()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0, largeBuySol: 1m);
+        state.Apply(Sol(EventKind.Buy, 0.5m, 0));
+        state.Apply(Sol(EventKind.Buy, 3m, 1));   // the whale
+        state.Apply(Sol(EventKind.Buy, 1m, 2));   // exactly the threshold: counts as large
+        state.Apply(Sol(EventKind.Sell, 1.5m, 3));
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(4));
+
+        Assert.Equal(3m, s.NetSolFlow);                     // 4.5 bought - 1.5 sold
+        Assert.Equal(0.75, s.BuyVolumeRatio!.Value, 10);    // 4.5 / 6
+        Assert.Equal(1.5m, s.AvgBuySol);                    // 4.5 / 3 buys
+        Assert.Equal(3m, s.MaxBuySol);
+        Assert.Equal(2, s.LargeBuyCount);
+    }
+
+    [Fact]
+    public void One_whale_and_ten_dust_buys_no_longer_look_alike()
+    {
+        var whale = new TokenState("M", 300, 20, 14, T0);
+        whale.Apply(Sol(EventKind.Buy, 5m, 0));
+        var dust = new TokenState("M", 300, 20, 14, T0);
+        for (int i = 0; i < 10; i++)
+        {
+            dust.Apply(Sol(EventKind.Buy, 0.01m, i));
+        }
+
+        FeatureSnapshot w = whale.Snapshot(T0.AddSeconds(10));
+        FeatureSnapshot d = dust.Snapshot(T0.AddSeconds(10));
+
+        Assert.Equal(w.BuySellRatio, d.BuySellRatio);       // count-based: identical
+        Assert.Equal(5m, w.NetSolFlow);
+        Assert.Equal(0.1m, d.NetSolFlow);
+        Assert.Equal(1, w.LargeBuyCount);
+        Assert.Equal(0, d.LargeBuyCount);
+    }
+
+    [Fact]
+    public void Empty_window_has_no_buy_pressure()
+    {
+        var state = new TokenState("M", 60, 20, 14, T0);
+        state.Apply(Sol(EventKind.Buy, 2m, 0));
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(120)); // the buy has left the window
+
+        Assert.Equal(0m, s.NetSolFlow);
+        Assert.Null(s.BuyVolumeRatio);
+        Assert.Null(s.AvgBuySol);
+        Assert.Null(s.MaxBuySol);
+        Assert.Equal(0, s.LargeBuyCount);
+    }
+
+    [Fact]
+    public void SOL_trades_without_an_amount_count_as_trades_but_not_as_SOL()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(Sol(EventKind.Buy, 2m, 0));
+        state.Apply(Sol(EventKind.Buy, 0m, 1) with { QuoteAmount = null });
+        state.Apply(Sol(EventKind.Sell, 0m, 2) with { QuoteAmount = null });
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(3));
+
+        Assert.Equal(2, s.BuyEvents);
+        Assert.Equal(2m, s.NetSolFlow);
+        Assert.Equal(1.0, s.BuyVolumeRatio!.Value, 10);
+        Assert.Equal(2m, s.AvgBuySol);                      // not 1: the amount-less buy is skipped
+        Assert.Equal(2m, s.MaxBuySol);
+    }
+
+    [Fact]
+    public void Only_amountless_SOL_buys_leave_buy_sizes_null()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(Sol(EventKind.Buy, 0m, 0) with { QuoteAmount = null });
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(1));
+
+        Assert.Equal(1, s.BuyEvents);
+        Assert.Null(s.BuyVolumeRatio);
+        Assert.Null(s.AvgBuySol);
+        Assert.Null(s.MaxBuySol);
+        Assert.Equal(0, s.LargeBuyCount);
+    }
+
+    [Fact]
+    public void Wsol_mint_is_the_shared_ingestion_constant() => Assert.Equal(Wsol, RawEvent.WrappedSolMint);
+
+    [Fact]
+    public void Sells_only_window_has_negative_flow_and_no_buy_sizes()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(Sol(EventKind.Sell, 2m, 0));
+        state.Apply(Sol(EventKind.Sell, 0.5m, 1));
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(2));
+
+        Assert.Equal(-2.5m, s.NetSolFlow);
+        Assert.Equal(0.0, s.BuyVolumeRatio);
+        Assert.Null(s.AvgBuySol);
+        Assert.Null(s.MaxBuySol);
+        Assert.Equal(0, s.LargeBuyCount);
+    }
+
+    [Fact]
+    public void Buys_only_window_has_a_full_buy_volume_ratio()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(Sol(EventKind.Buy, 0.2m, 0));
+        state.Apply(Sol(EventKind.Buy, 0.4m, 1));
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(2));
+
+        Assert.Equal(0.6m, s.NetSolFlow);
+        Assert.Equal(1.0, s.BuyVolumeRatio);
+        Assert.Equal(0.3m, s.AvgBuySol);
+        Assert.Equal(0.4m, s.MaxBuySol);
+    }
+
+    [Fact]
+    public void Non_SOL_and_unknown_quote_trades_are_left_out_of_buy_pressure()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0, largeBuySol: 1m);
+        state.Apply(Sol(EventKind.Buy, 0.5m, 0));
+        state.Apply(Quoted(EventKind.Buy, 1m, 500m, Usdc, 1));  // 500 USDC is not 500 SOL
+        state.Apply(Quoted(EventKind.Sell, 1m, 200m, Usdc, 2));
+        state.Apply(Trade(EventKind.Buy, 1m, 9m, "T", 3));      // no quote mint: unknown currency
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(4));
+
+        Assert.Equal(4, s.BuyEvents + s.SellEvents);            // still counted as trades
+        Assert.Equal(0.5m, s.NetSolFlow);
+        Assert.Equal(1.0, s.BuyVolumeRatio);
+        Assert.Equal(0.5m, s.AvgBuySol);
+        Assert.Equal(0.5m, s.MaxBuySol);
+        Assert.Equal(0, s.LargeBuyCount);
+    }
+
+    [Fact]
+    public void Buy_pressure_keeps_counting_SOL_trades_after_a_switch_to_another_quote()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(Sol(EventKind.Buy, 2m, 0));
+        state.Apply(Quoted(EventKind.Buy, 1m, 100m, Usdc, 1)); // current quote is now USDC
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(2));
+
+        Assert.Equal(100m, s.Volume);        // volume follows the current quote currency...
+        Assert.Equal(2m, s.NetSolFlow);      // ...SOL features stay in SOL
+    }
+
+    [Fact]
+    public void Late_trades_inside_the_window_count_towards_buy_pressure()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(Sol(EventKind.Buy, 1m, 10));
+        state.Apply(Sol(EventKind.Sell, 0.25m, 5)); // out of order
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(11));
+
+        Assert.Equal(0.75m, s.NetSolFlow);
+        Assert.Equal(0.8, s.BuyVolumeRatio!.Value, 10);
+    }
 }

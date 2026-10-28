@@ -132,7 +132,8 @@ but invalid (bad port, `ENRICH_HOLDERS=maybe`) fails startup with the variable's
 | `POSTGRES_HOST/PORT/DB/USER/PASSWORD` | `localhost/5432/solia/solia/change_me` | DB parts |
 
 `Pipeline` section knobs: `SnapshotCadenceSeconds` (1–3600), `WindowSeconds` (1–86400, and
-≥ the cadence), `MaxTrackedTokens` (1–1,000,000), `EnrichHolders`, `StreamProbe`. `PumpApi` URLs
+≥ the cadence), `MaxTrackedTokens` (1–1,000,000), `LargeBuySol` (0.000001–1,000,000, default 1: a buy of
+at least this many SOL counts towards the `large_buy_count` feature), `EnrichHolders`, `StreamProbe`. `PumpApi` URLs
 must be absolute (`ws(s)://` for the stream, `http(s)://` for replay); reconnect backoff is
 `ReconnectBaseDelaySeconds` (1–300) doubling up to `ReconnectMaxDelaySeconds` (1–3600), reset only
 after a connection that delivered data. `ReceiveIdleTimeoutSeconds` (5–3600, default 60) drops a

@@ -151,6 +151,23 @@ def _validate(config: Any, source: str) -> None:
                     f"'loss.horizon_weights.{horizon}' must be a non-negative number, got {value!r}"
                 )
 
+    if "features" in config:
+        groups = section("features").get("groups")
+        if (
+            not isinstance(groups, list)
+            or not groups
+            or not all(isinstance(g, str) for g in groups)
+        ):
+            fail("'features.groups' must be a non-empty list of feature group names")
+        from .features import FEATURE_GROUPS  # lazy: keeps this module import-light
+
+        unknown = [g for g in groups if g not in FEATURE_GROUPS]
+        if unknown:
+            fail(
+                f"'features.groups' has unknown group(s): {', '.join(unknown)} "
+                f"(known: {', '.join(FEATURE_GROUPS)})"
+            )
+
     labeling = section("labeling")
     if "max_gap_fraction" in labeling and not 0 < number("labeling", "max_gap_fraction") <= 1:
         fail("'labeling.max_gap_fraction' must be in (0, 1]")

@@ -14,7 +14,10 @@ public enum AiServiceErrorKind
     /// </summary>
     InsufficientHistory,
 
-    /// <summary>No champion model is registered yet (503 <c>no_champion</c>).</summary>
+    /// <summary>
+    /// No usable champion: none registered yet (503 <c>no_champion</c>) or one trained on another feature
+    /// spec (503 <c>champion_incompatible</c>) — both last until a retrain and promotion.
+    /// </summary>
     NoChampion,
 
     /// <summary>

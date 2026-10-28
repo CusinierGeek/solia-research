@@ -58,6 +58,17 @@ public sealed class Feature
 
     public double? PriceDerivative { get; set; }
 
+    /// <summary>Buy minus sell SOL volume over the window (SOL-quoted trades only).</summary>
+    public decimal? NetSolFlow { get; set; }
+
+    public double? BuyVolumeRatio { get; set; }
+
+    public decimal? AvgBuySol { get; set; }
+
+    public decimal? MaxBuySol { get; set; }
+
+    public int? LargeBuyCount { get; set; }
+
     /// <summary>Pump.fun-specific signals (JSONB).</summary>
     public string? OnchainSignals { get; set; }
 

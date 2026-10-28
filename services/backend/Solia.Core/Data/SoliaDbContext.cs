@@ -126,6 +126,11 @@ public sealed class SoliaDbContext(DbContextOptions<SoliaDbContext> options) : D
             e.Property(x => x.Ema).HasColumnName("ema");
             e.Property(x => x.Rsi).HasColumnName("rsi");
             e.Property(x => x.PriceDerivative).HasColumnName("price_derivative");
+            e.Property(x => x.NetSolFlow).HasColumnName("net_sol_flow").HasColumnType(AmountType);
+            e.Property(x => x.BuyVolumeRatio).HasColumnName("buy_volume_ratio");
+            e.Property(x => x.AvgBuySol).HasColumnName("avg_buy_sol").HasColumnType(AmountType);
+            e.Property(x => x.MaxBuySol).HasColumnName("max_buy_sol").HasColumnType(AmountType);
+            e.Property(x => x.LargeBuyCount).HasColumnName("large_buy_count");
             e.Property(x => x.OnchainSignals).HasColumnName("onchain_signals").HasColumnType("jsonb");
             e.Property(x => x.BehavioralSignals).HasColumnName("behavioral_signals").HasColumnType("jsonb");
             e.Property(x => x.Raw).HasColumnName("raw").HasColumnType("jsonb");

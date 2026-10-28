@@ -17,7 +17,7 @@ import solia_ai.registry
 from solia_ai.api import LoadedChampion, check_model_dir_writable, create_app, registry_loader
 from solia_ai.features import FEATURE_COLUMNS
 from solia_ai.inference import Predictor
-from solia_ai.model import SoliaTransformer
+from solia_ai.model import IncompatibleCheckpointError, SoliaTransformer
 
 HORIZONS = ("30s", "1m", "5m")
 N_FEATURES = len(FEATURE_COLUMNS)
@@ -284,6 +284,41 @@ def test_a_failed_champion_load_is_a_503_with_the_error_shape(failure):
     ):
         assert response.status_code == 503
         assert response.json()["error"]["code"] == "champion_unavailable"
+
+
+def test_an_incompatible_champion_is_a_503_naming_the_retrain():
+    def loader(current):
+        raise IncompatibleCheckpointError("trained on 19 feature columns: retrain")
+
+    client = _client(loader)
+
+    for response in (
+        client.get("/model/status"),
+        client.post("/predict", json={"features": _list_rows()}),
+    ):
+        assert response.status_code == 503
+        error = response.json()["error"]
+        assert error["code"] == "champion_incompatible"
+        assert "retrain" in error["message"]
+
+
+def test_an_incompatible_new_champion_keeps_the_cached_one_serving():
+    now = [0.0]
+    calls = 0
+
+    def loader(current):
+        nonlocal calls
+        calls += 1
+        if current is None:
+            return _champion()
+        raise IncompatibleCheckpointError("trained on 19 feature columns")
+
+    client = _client(loader, clock=lambda: now[0])
+    assert client.get("/model/status").status_code == 200
+    now[0] += 3600  # past the refresh interval
+
+    assert client.get("/model/status").status_code == 200
+    assert calls == 2
 
 
 def test_the_champion_is_cached_between_refreshes():

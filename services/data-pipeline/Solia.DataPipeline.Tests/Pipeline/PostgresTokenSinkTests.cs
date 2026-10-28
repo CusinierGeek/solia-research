@@ -121,6 +121,32 @@ public sealed class PostgresTokenSinkTests(PostgresFixture db) : IClassFixture<P
     }
 
     [Fact]
+    public async Task Buy_pressure_columns_are_persisted()
+    {
+        FeatureSnapshot snap = Snap("BUYP1", T0, 1m) with
+        {
+            NetSolFlow = -1.234567890123m,
+            BuyVolumeRatio = 0.25,
+            AvgBuySol = 0.5m,
+            MaxBuySol = 2m,
+            LargeBuyCount = 3,
+        };
+        await Sink.WriteAsync(Batch(T0, [snap, Snap("BUYP2", T0, 1m)]), default);
+
+        Assert.Equal(-1.234567890123m, await Feature<decimal>("net_sol_flow", "BUYP1"));
+        Assert.Equal(0.25, await Feature<double>("buy_volume_ratio", "BUYP1"));
+        Assert.Equal(0.5m, await Feature<decimal>("avg_buy_sol", "BUYP1"));
+        Assert.Equal(2m, await Feature<decimal>("max_buy_sol", "BUYP1"));
+        Assert.Equal(3, await Feature<int>("large_buy_count", "BUYP1"));
+        Assert.Equal(1L, await db.ScalarAsync<long>(
+            "SELECT count(*) FROM features WHERE mint = 'BUYP2' AND net_sol_flow IS NULL AND avg_buy_sol IS NULL " +
+            "AND max_buy_sol IS NULL AND buy_volume_ratio IS NULL AND large_buy_count = 0"));
+    }
+
+    private Task<T> Feature<T>(string column, string mint) =>
+        db.ScalarAsync<T>($"SELECT {column} FROM features WHERE mint = @m", ("m", mint));
+
+    [Fact]
     public async Task Empty_batch_is_a_no_op()
     {
         await Sink.WriteAsync(Batch(T0, []), default); // must not even need a connection

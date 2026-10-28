@@ -93,7 +93,8 @@ public static class AiClientServiceCollectionExtensions
     /// <summary>
     /// Whether an attempt failed because the ai-service could not serve it (transport error, timeout, 408,
     /// 429, 502, 503, 504) — the only failures worth retrying or counting toward the breaker. A 503
-    /// <c>no_champion</c>, a 4xx or a 500 is a deterministic answer: retrying it only multiplies the load.
+    /// <c>no_champion</c>/<c>champion_incompatible</c>, a 4xx or a 500 is a deterministic answer: retrying it
+    /// only multiplies the load.
     /// </summary>
     internal static async ValueTask<bool> IsAvailabilityFailureAsync(Outcome<HttpResponseMessage> outcome)
     {
@@ -109,7 +110,7 @@ public static class AiClientServiceCollectionExtensions
 
         return response.StatusCode switch
         {
-            HttpStatusCode.ServiceUnavailable => await ReadErrorCodeAsync(response).ConfigureAwait(false) != "no_champion",
+            HttpStatusCode.ServiceUnavailable => !SoliaAiClient.IsNoChampionCode(await ReadErrorCodeAsync(response).ConfigureAwait(false)),
             HttpStatusCode.RequestTimeout
                 or HttpStatusCode.TooManyRequests
                 or HttpStatusCode.BadGateway

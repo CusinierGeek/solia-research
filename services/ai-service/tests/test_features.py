@@ -13,6 +13,8 @@ from solia_ai.features import (
     FEATURE_GROUPS,
     NON_FEATURE_COLUMNS,
     build_feature_matrix,
+    check_group_coverage,
+    column_mask,
     group_columns,
     group_mask,
 )
@@ -229,10 +231,23 @@ def test_every_feature_column_is_in_exactly_one_group():
     assert len(grouped) == len(set(grouped))
 
 
-def test_baseline_groups_are_the_current_19_columns():
+def test_baseline_groups_are_the_original_19_columns():
     assert set(BASELINE_GROUPS) <= set(FEATURE_GROUPS)
-    assert group_columns(BASELINE_GROUPS) == FEATURE_COLUMNS
-    assert len(FEATURE_COLUMNS) == 19
+    assert group_columns(BASELINE_GROUPS) == FEATURE_COLUMNS[:19]
+    assert len(group_columns(BASELINE_GROUPS)) == 19
+
+
+def test_buy_pressure_is_a_candidate_group_outside_the_baseline():
+    # FE-T2 (#111): stays disabled by default until its ablation lift clears the margin.
+    assert "buy_pressure" not in BASELINE_GROUPS
+    assert FEATURE_GROUPS["buy_pressure"] == (
+        "net_sol_flow",
+        "buy_volume_ratio",
+        "avg_buy_sol",
+        "max_buy_sol",
+        "large_buy_count",
+    )
+    assert FEATURE_COLUMNS[19:] == list(FEATURE_GROUPS["buy_pressure"])
 
 
 def test_group_columns_keep_canonical_order():
@@ -259,3 +274,69 @@ def test_unknown_group_is_an_error():
         group_columns(["price", "nope"])
     with pytest.raises(ValueError, match="unknown feature group"):
         group_mask(["nope"])
+
+
+# --- NULL semantics of the buy-pressure columns ---
+
+
+def _frame(**overrides) -> pd.DataFrame:
+    row = {col: 1.0 for col in FEATURE_COLUMNS}
+    row.update(overrides)
+    return pd.DataFrame([row])
+
+
+def test_null_buy_volume_ratio_is_neutral_not_all_sells():
+    no_sol_trades = build_feature_matrix(_frame(buy_volume_ratio=None))
+    all_sells = build_feature_matrix(_frame(buy_volume_ratio=0.0))
+
+    col = FEATURE_COLUMNS.index("buy_volume_ratio")
+    assert no_sol_trades[0, col] == 0.5
+    assert all_sells[0, col] == 0.0
+
+
+def test_other_nulls_still_impute_to_zero():
+    matrix = build_feature_matrix(_frame(avg_buy_sol=None, rsi=None))
+
+    assert matrix[0, FEATURE_COLUMNS.index("avg_buy_sol")] == 0.0
+    assert matrix[0, FEATURE_COLUMNS.index("rsi")] == 0.0
+
+
+@pytest.mark.parametrize("column", ["net_sol_flow", "large_buy_count"])
+def test_rows_predating_buy_pressure_are_refused_when_it_is_enabled(column):
+    df = pd.concat([_frame(), _frame(**{column: None})], ignore_index=True)
+
+    with pytest.raises(ValueError, match="1 of 2 feature rows predate the 'buy_pressure' group"):
+        check_group_coverage(df, [*BASELINE_GROUPS, "buy_pressure"])
+
+
+def test_rows_predating_buy_pressure_are_fine_while_it_is_disabled():
+    df = _frame(net_sol_flow=None, large_buy_count=None)
+
+    check_group_coverage(df, BASELINE_GROUPS)  # no error
+
+
+def test_null_buy_sizes_alone_are_legitimate_not_uncomputed():
+    # No SOL buy in the window: the pipeline writes NULL avg/max but always writes the flow.
+    df = _frame(avg_buy_sol=None, max_buy_sol=None, buy_volume_ratio=None)
+
+    check_group_coverage(df, ["buy_pressure"])  # no error
+
+
+def test_config_samples_refuses_uncomputed_rows_for_an_enabled_group():
+    from test_train import make_features_df, small_config
+
+    from solia_ai.dataset import config_samples
+
+    df = make_features_df()
+    df.loc[df.index[0], "net_sol_flow"] = None
+    cfg = {**small_config(), "features": {"groups": [*BASELINE_GROUPS, "buy_pressure"]}}
+
+    with pytest.raises(ValueError, match="re-replay"):
+        config_samples(df, cfg)
+    config_samples(df, small_config())  # the baseline doesn't need them
+
+
+def test_column_mask_rejects_unknown_columns():
+    assert column_mask(["a", "b"], ["b"]).tolist() == [False, True]
+    with pytest.raises(ValueError, match="not in the feature spec: c"):
+        column_mask(["a", "b"], ["c"])

@@ -207,4 +207,19 @@ public class TokenWindowStoreTests
         Assert.Empty(snapshots);
         Assert.Equal(0, store.TrackedCount); // idle beyond the window -> pruned
     }
+
+    [Fact]
+    public void Tracked_tokens_use_the_configured_large_buy_threshold()
+    {
+        var store = new TokenWindowStore(new PipelineOptions { LargeBuySol = 0.5m });
+        store.Apply(Ev("M", EventKind.Buy, 0) with
+        {
+            QuoteAmount = 0.6m,
+            QuoteMint = "So11111111111111111111111111111111111111112",
+        });
+
+        FeatureSnapshot s = Assert.Single(store.SnapshotActive(T0.AddSeconds(1)));
+
+        Assert.Equal(1, s.LargeBuyCount); // 0.6 SOL >= 0.5 (not large under the 1 SOL default)
+    }
 }

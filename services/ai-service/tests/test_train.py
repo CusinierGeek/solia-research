@@ -11,7 +11,7 @@ import solia_ai.db
 import solia_ai.registry
 import solia_ai.train as train_module
 from solia_ai.dataset import make_datasets
-from solia_ai.features import FEATURE_COLUMNS
+from solia_ai.features import BASELINE_GROUPS, FEATURE_COLUMNS
 from solia_ai.loss import SoliaLoss
 from solia_ai.model import SoliaTransformer
 from solia_ai.train import (
@@ -160,6 +160,8 @@ def test_checkpoint_is_self_describing_and_reloads(tmp_path):
     assert isinstance(checkpoint["train_end_ts"], int)  # evaluation's held-out boundary
     assert checkpoint["horizons"] == ["30s", "1m"]
     assert checkpoint["feature_columns"] == FEATURE_COLUMNS
+    # The enabled groups travel with the checkpoint: candidates stay masked by default.
+    assert checkpoint["hyperparams"]["features"] == {"groups": list(BASELINE_GROUPS)}
 
     shape = checkpoint["hyperparams"]["model"]
     model = SoliaTransformer(

@@ -44,7 +44,12 @@ import torch
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 from .config import load_config
-from .features import FEATURE_COLUMNS, build_feature_matrix
+from .features import (
+    BASELINE_GROUPS,
+    FEATURE_COLUMNS,
+    build_feature_matrix,
+    check_group_coverage,
+)
 
 _HORIZON_UNITS = {"s": 1, "m": 60, "h": 3600}
 
@@ -408,6 +413,8 @@ def embargo_seconds(horizons: Sequence[str]) -> int:
 
 
 def config_samples(df: pd.DataFrame, cfg: Mapping[str, Any]) -> Samples:
+    """The windows of ``df`` per ``cfg``; refuses rows predating an enabled feature group."""
+    check_group_coverage(df, cfg.get("features", {}).get("groups", BASELINE_GROUPS))
     labeling = cfg["labeling"]
     return build_samples(
         df,

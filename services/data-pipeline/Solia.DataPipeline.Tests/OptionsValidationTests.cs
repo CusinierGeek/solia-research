@@ -28,6 +28,17 @@ public class OptionsValidationTests
     }
 
     [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("2000000")]
+    public void Out_of_range_large_buy_threshold_is_rejected(string sol)
+    {
+        var o = new PipelineOptions { LargeBuySol = decimal.Parse(sol, System.Globalization.CultureInfo.InvariantCulture) };
+
+        Assert.False(IsValid(o));
+    }
+
+    [Theory]
     [InlineData(0, 300, 5000)]
     [InlineData(-1, 300, 5000)]
     [InlineData(10, 0, 5000)]

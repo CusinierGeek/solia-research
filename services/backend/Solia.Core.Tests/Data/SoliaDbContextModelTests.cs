@@ -59,6 +59,8 @@ public class SoliaDbContextModelTests
         Assert.Equal("last_market_cap", Column<TokenLive>(ctx, nameof(TokenLive.LastMarketCap)));
         Assert.Equal("buy_sell_ratio", Column<Feature>(ctx, nameof(Feature.BuySellRatio)));
         Assert.Equal("holders_growth_rate", Column<Feature>(ctx, nameof(Feature.HoldersGrowthRate)));
+        Assert.Equal("net_sol_flow", Column<Feature>(ctx, nameof(Feature.NetSolFlow)));
+        Assert.Equal("large_buy_count", Column<Feature>(ctx, nameof(Feature.LargeBuyCount)));
         Assert.Equal("pump_prob", Column<Prediction>(ctx, nameof(Prediction.PumpProb)));
         Assert.Equal("features_snapshot", Column<Trade>(ctx, nameof(Trade.FeaturesSnapshot)));
         Assert.Equal("candidate_model_id", Column<TrainingEvent>(ctx, nameof(TrainingEvent.CandidateModelId)));
@@ -100,7 +102,7 @@ public class SoliaDbContextModelTests
             .Where(p => (Nullable.GetUnderlyingType(p.ClrType) ?? p.ClrType) == typeof(decimal))
             .ToArray();
 
-        Assert.Equal(14, decimals.Length);
+        Assert.Equal(17, decimals.Length);
         Assert.All(decimals, p => Assert.Matches(@"^numeric\(28,(12|24)\)$", p.GetColumnType()));
     }
 
