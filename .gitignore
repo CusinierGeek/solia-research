@@ -2,9 +2,13 @@
 .env
 *.env.local
 *.pem
-# Secrets: only the encrypted secrets/secrets.enc is ever committed (docs/SECRETS.md)
-secrets/*
-!secrets/secrets.enc
+# Secrets: nothing under a secrets/ folder is committed, encrypted or not — it's mounted at runtime
+# (docs/SECRETS.md). Scoped to secrets/ (any depth) + the canonical name: other *.enc files (e.g. test
+# fixtures) stay committable.
+**/secrets/
+secrets.enc
+# Per-service compose overrides (docker-compose.yml: config/<service>.env)
+config/*.env
 secrets.plain.json
 *.plain.json
 *.key

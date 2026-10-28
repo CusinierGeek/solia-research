@@ -16,6 +16,7 @@
 **/.env.*
 !**/.env.example
 **/*.env.local
+**/*.env
 **/secrets/
 **/*.pem
 **/*.key

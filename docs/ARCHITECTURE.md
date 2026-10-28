@@ -151,9 +151,11 @@ backend and the dashboard are published on the host.
   compose so cold starts don't flap). The data-pipeline ingests (`INGEST=true` by default).
 - Service hosts are pinned in compose (`POSTGRES_HOST=postgres`, `AI_SERVICE_URL=http://ai-service:8000`,
   `BACKEND_URL=http://backend:8080`) and `SOLIA_DB_CONNECTION` is blanked (it would win over
-  `POSTGRES_*`); every container runs as `ASPNETCORE_ENVIRONMENT=Production`. Everything else comes
-  from `.env`.
-- Requires Docker Engine 25+ (healthcheck `start_interval`) and Docker Compose 2.24+ (optional `env_file`).
+  `POSTGRES_*`); every container runs as `ASPNETCORE_ENVIRONMENT=Production`. Each service gets only
+  the `.env` keys `docker-compose.yml` lists for it: a new `.env` key reaches no container until it is
+  listed there. Other per-service settings (nested .NET keys like `Logging__LogLevel__Default`,
+  `Bot__*`) go in the optional, gitignored `config/<service>.env`, loaded by that service only.
+- Requires Docker Engine 25+ (healthcheck `start_interval`) and Docker Compose 2.24+. Config: `.env` via compose interpolation, per-service variable lists (`SOLIA_MASTER_KEY` → backend only), plus optional `config/<service>.env`.
 - Local dev: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres` publishes
   Postgres on `127.0.0.1:5432` for `dotnet run` / pytest (`POSTGRES_HOST=localhost`).
 

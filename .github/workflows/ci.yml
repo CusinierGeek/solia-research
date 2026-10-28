@@ -131,9 +131,73 @@ jobs:
                      == [{"host_ip":"127.0.0.1","target":5432,"published":"5432"}]' \
             > /dev/null || fail "dev override must publish 127.0.0.1:5432"
           echo ok
+      # .env reaches the containers by interpolation: each service gets exactly its own keys
+      # (SOLIA_MASTER_KEY: backend only), `.env.example` covers every interpolated key and works as-is.
+      # The only env_file is the optional config/<service>.env, loaded by that service alone.
+      - name: Assert env injection
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          docker compose config --format json > compose.json
+          check() { jq -e "$1" compose.json > /dev/null || fail "$2"; }
+          # `config` inlines env_file, so check the source: a service may only load its own optional file.
+          bad=$(yq -o=json '.services' docker-compose.yml | jq -c '[to_entries[] | .key as $s
+            | (.value.env_file // [])[] | select(. != {"path": "config/\($s).env", "required": false})]')
+          [ "$bad" = "[]" ] || fail "env_file must be the service's own optional config/<service>.env: $bad"
+          pg='"ASPNETCORE_ENVIRONMENT","POSTGRES_DB","POSTGRES_HOST","POSTGRES_PASSWORD","POSTGRES_PORT","POSTGRES_USER","SOLIA_DB_CONNECTION"'
+          envs() { check ".services[\"$1\"].environment | keys == ([$2] | sort)" \
+            "$1 env: $(jq -c ".services[\"$1\"].environment | keys" compose.json)"; }
+          envs postgres '"POSTGRES_DB","POSTGRES_PASSWORD","POSTGRES_USER"'
+          envs db-migrate "$pg"
+          envs data-pipeline "$pg"',"ENRICH_HOLDERS","INGEST","PUMPAPI_REPLAY_BASE_URL","PUMPAPI_WS_URL","STREAM_PROBE"'
+          envs ai-service "$pg"',"MODEL_DIR","SOLIA_AI_CONFIG"'
+          envs backend "$pg"',"AI_SERVICE_URL","PAPER_BOT_ENABLED","PAPER_MAX_CONCURRENT_POSITIONS","PAPER_STARTING_BALANCE","RETRAIN_EVERY_N_TRADES","SOLIA_MASTER_KEY"'
+          envs dashboard '"ASPNETCORE_ENVIRONMENT","BACKEND_URL"'
+          # Every interpolated key, in both compose files, `${VAR…}` or bare `$VAR` (`$$` is an escape), is
+          # documented in .env.example (uncommented, so `cp` sets it).
+          keys=$(grep -vhE '^\s*#' docker-compose.yml docker-compose.dev.yml \
+            | sed 's/\$\$//g' | grep -oE '\$\{?[A-Za-z_][A-Za-z0-9_]*' | tr -d '${' | sort -u)
+          [ -n "$keys" ] || fail "no interpolated key found (broken extraction?)"
+          for k in $keys; do
+            grep -qE "^$k=" .env.example || fail ".env.example is missing $k"
+          done
+          # Out of the box: `cp .env.example .env` validates; the master key lands in the backend only.
+          cp .env.example .env
+          docker compose config -q
+          canary="ci-master-key-canary"
+          SOLIA_MASTER_KEY="$canary" docker compose config --format json \
+            | jq -e --arg c "$canary" '[.services | to_entries[] | select(tostring | contains($c)) | .key] == ["backend"]' \
+            > /dev/null || fail "SOLIA_MASTER_KEY must reach the backend only"
+          # Pinned values win over a local-dev .env.
+          docker compose config --format json | jq -e '.services.backend.environment.POSTGRES_HOST == "postgres"' \
+            > /dev/null || fail ".env must not override the pinned POSTGRES_HOST"
+          # config/<service>.env reaches that service only, and can't override a pinned value.
+          mkdir -p config
+          printf 'Logging__LogLevel__Default=Debug\nPOSTGRES_HOST=localhost\n' > config/backend.env
+          docker compose config --format json | jq -e '([.services | to_entries[]
+              | select(.value.environment.Logging__LogLevel__Default) | .key] == ["backend"])
+              and .services.backend.environment.POSTGRES_HOST == "postgres"' \
+            > /dev/null || fail "config/backend.env must reach the backend only, under the pinned values"
+          rm config/backend.env
+          echo ok
+      - name: Assert .env and secrets stay out of git and images
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          mkdir -p secrets config && touch .env secrets/secrets.enc secrets/other.enc config/backend.env
+          for f in .env secrets/secrets.enc secrets/other.enc services/backend/secrets/x.enc config/backend.env; do
+            git check-ignore -q "$f" || fail "$f is not gitignored"
+          done
+          git check-ignore -q .env.example && fail ".env.example must stay tracked"
+          # Only secrets/ folders are ignored, not every .enc: a test fixture must stay committable.
+          git check-ignore -q services/backend/Solia.Secrets.Tests/fixtures/sample.enc \
+            && fail "*.enc outside secrets/ must not be gitignored"
+          # The root .dockerignore applies to every image (build context = repo root).
+          printf 'FROM busybox:1.36\nCOPY . /ctx\nRUN test ! -e /ctx/.env && test ! -e /ctx/secrets && test ! -e /ctx/config/backend.env && test -e /ctx/.env.example\n' \
+            | docker build -q -f - . > /dev/null || fail ".env, secrets/ or config/*.env reached the build context"
+          echo ok
 
-  # Starts the real stack from a fresh volume (no .env, INGEST=false: no pumpapi traffic from CI) and
-  # waits for the ordered startup: db-migrate exits 0, every long-running service turns healthy.
+  # Starts the real stack from .env.example on a fresh volume (INGEST=false: no pumpapi traffic from CI),
+  # waits for the ordered startup (db-migrate exits 0, every long-running service turns healthy), then
+  # checks the secrets path: wrong key ⇒ the backend fails fast without leaking; right key ⇒ healthy.
   compose-up:
     name: Docker Compose up (smoke)
     runs-on: ubuntu-latest
@@ -142,8 +206,13 @@ jobs:
       INGEST: "false"
     steps:
       - uses: actions/checkout@v4
+      # Out of the box, as documented: the template as-is (INGEST from the job env wins over .env).
       - name: Start the stack
-        run: docker compose up -d --build
+        run: |
+          cp .env.example .env
+          # Created by us, not by the bind mount (Docker would make it root-owned: unwritable later).
+          mkdir -p secrets
+          docker compose up -d --build
       - name: Wait for healthy
         run: |
           fail() { echo "::error::$1"; exit 1; }
@@ -169,6 +238,51 @@ jobs:
         run: |
           curl -fsS http://localhost:8080/health/ready
           curl -fsS -o /dev/null http://localhost:8081/health/live
+          echo ok
+      - name: Secrets (wrong key fails fast, no leak; right key healthy)
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          # No .NET SDK in this job: keys from openssl, and secrets.enc written with the documented envelope
+          # (base64(nonce | ciphertext | tag), AES-256-GCM, docs/SECRETS.md) in python:3.11-slim, which the
+          # ai-service build already pulled. The .NET CLI itself is covered by the .NET job's tests.
+          good=$(openssl rand -base64 32); wrong=$(openssl rand -base64 32); value="ci-secret-canary-$RANDOM$RANDOM"
+          echo "::add-mask::$good"; echo "::add-mask::$wrong"; echo "::add-mask::$value"
+          cat > "$RUNNER_TEMP/encrypt.py" <<'PY'
+          import base64, os, sys
+          from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+          nonce = os.urandom(12)
+          sealed = AESGCM(base64.b64decode(os.environ["KEY"])).encrypt(nonce, sys.stdin.buffer.read(), None)
+          print(base64.b64encode(nonce + sealed).decode())
+          PY
+          mkdir -p secrets
+          printf '{"ci_canary":"%s"}' "$value" | KEY="$good" docker run --rm -i -e KEY \
+            -v "$RUNNER_TEMP/encrypt.py:/encrypt.py:ro" python:3.11-slim sh -c \
+            'pip install -q --disable-pip-version-check --root-user-action=ignore cryptography >&2 && python /encrypt.py' \
+            > secrets/secrets.enc
+          [ -s secrets/secrets.enc ] || fail "could not write secrets/secrets.enc"
+          chmod 644 secrets/secrets.enc
+          backend() { docker compose ps -aq backend; }
+          leaks() { docker compose logs --no-color backend > "$RUNNER_TEMP/backend.log" 2>&1
+            for s in "$good" "$wrong" "$value"; do grep -qF "$s" "$RUNNER_TEMP/backend.log" && fail "backend logs leak a secret"; done; true; }
+          # Wrong key: the container exits non-zero (restart loop), visible in ps and logs.
+          SOLIA_MASTER_KEY="$wrong" docker compose up -d --no-deps backend
+          deadline=$((SECONDS + 120))
+          # Sampled between runs (restarting/exited): once running again, State.ExitCode resets to 0.
+          until state=$(docker inspect -f '{{.State.Status}} {{.State.ExitCode}}' "$(backend)"); \
+                case "$state" in restarting*|exited*) true ;; *) false ;; esac; do
+            [ $SECONDS -lt $deadline ] || fail "backend kept running with a wrong master key ($state)"; sleep 0.2
+          done
+          [ "${state#* }" != 0 ] || fail "backend exited 0 with a wrong key"
+          docker compose ps -a backend
+          leaks
+          grep -q "failed authentication" "$RUNNER_TEMP/backend.log" || fail "backend logs don't explain the failure"
+          # Right key: back to healthy, still without leaking.
+          SOLIA_MASTER_KEY="$good" docker compose up -d --no-deps backend
+          deadline=$((SECONDS + 180))
+          until [ "$(docker inspect -f '{{.State.Health.Status}}' "$(backend)")" = healthy ]; do
+            [ $SECONDS -lt $deadline ] || fail "backend not healthy with the right key"; sleep 3
+          done
+          leaks
           echo ok
       - name: Logs on failure
         if: failure()

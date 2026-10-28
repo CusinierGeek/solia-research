@@ -2,7 +2,7 @@
 #
 #   cp .env.example .env && docker compose up -d --build
 #
-# Requires Docker Engine 25+ (healthcheck start_interval) and Docker Compose 2.24+ (optional env_file).
+# Requires Docker Engine 25+ (healthcheck start_interval) and Docker Compose 2.24+.
 #
 # Startup order (depends_on conditions):
 #   postgres (healthy) → db-migrate (exited 0) → data-pipeline + ai-service (healthy)
@@ -15,21 +15,29 @@
 #
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres
 #
-# Config comes from .env (.env.example keys). Values that must point at the other containers
-# (service hosts, in-container ports and paths) are pinned below, so a .env written for local
-# `dotnet run` (POSTGRES_HOST=localhost, SOLIA_DB_CONNECTION=Host=localhost;…) can't misroute the
-# containers, and every container runs as Production. Healthcheck commands come from each image's
-# HEALTHCHECK (infra/docker); compose only tunes their timing.
+# Config comes from .env (.env.example keys) by compose **interpolation**: each service lists exactly
+# the variables it reads, so a key reaches only the containers that need it (SOLIA_MASTER_KEY: backend
+# only). A .env key that isn't listed below reaches no container. Compose reads .env from the project
+# directory; host env vars win over it. Every `${VAR:-default}` has a default, so the stack also starts
+# without a .env (CI).
+# Anything else for ONE service (nested .NET keys such as Logging__LogLevel__Default or Bot__*, ...)
+# goes in the optional, gitignored config/<service>.env, loaded by that service only (env_file,
+# required: false). The pinned values below win over it.
+# Values that must point at the other containers (service hosts, in-container ports and paths) are
+# pinned below, so a .env written for local `dotnet run` (POSTGRES_HOST=localhost, SOLIA_DB_CONNECTION=
+# Host=localhost;…) can't misroute the containers, and every container runs as Production.
+# Healthcheck commands come from each image's HEALTHCHECK (infra/docker); compose only tunes their timing.
 
-x-env-file: &env-file
-  # Optional so `docker compose config` validates without a .env (CI); every key has a default.
-  env_file:
-    - path: .env
-      required: false
+# Credentials (from .env), shared by the postgres server and its clients: one copy, so they can't drift.
+x-postgres-credentials: &postgres-credentials
+  POSTGRES_USER: ${POSTGRES_USER:-solia}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+  POSTGRES_DB: ${POSTGRES_DB:-solia}
 
 x-postgres-env: &postgres-env
-  # SOLIA_DB_CONNECTION wins over POSTGRES_* in every service: blanked (empty = unset) so a .env
-  # connection string can't override the compose host. Credentials still come from POSTGRES_*.
+  <<: *postgres-credentials
+  # SOLIA_DB_CONNECTION wins over POSTGRES_*: blanked (empty = unset) so the compose host is used even
+  # if an image or override sets one.
   SOLIA_DB_CONNECTION: ""
   POSTGRES_HOST: postgres
   POSTGRES_PORT: "5432"
@@ -41,9 +49,7 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-solia}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
-      POSTGRES_DB: ${POSTGRES_DB:-solia}
+      <<: *postgres-credentials
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -61,7 +67,6 @@ services:
     build:
       context: .
       dockerfile: infra/docker/db-migrator.Dockerfile
-    <<: *env-file
     environment:
       <<: *postgres-env
     restart: "no"
@@ -74,11 +79,17 @@ services:
     build:
       context: .
       dockerfile: infra/docker/data-pipeline.Dockerfile
-    <<: *env-file
+    env_file:
+      - path: config/data-pipeline.env
+        required: false
     environment:
       <<: *postgres-env
+      PUMPAPI_WS_URL: ${PUMPAPI_WS_URL:-wss://stream.pumpapi.io/}
+      PUMPAPI_REPLAY_BASE_URL: ${PUMPAPI_REPLAY_BASE_URL:-https://replay.pumpapi.io}
+      ENRICH_HOLDERS: ${ENRICH_HOLDERS:-false}
       # The pipeline's job in the stack is to ingest; set INGEST=false in .env to run it idle.
       INGEST: ${INGEST:-true}
+      STREAM_PROBE: ${STREAM_PROBE:-false}
     restart: unless-stopped
     healthcheck:
       # /health needs the database; a dropped pumpapi stream is Degraded, not unhealthy.
@@ -96,10 +107,14 @@ services:
     build:
       context: .
       dockerfile: infra/docker/ai-service.Dockerfile
-    <<: *env-file
+    env_file:
+      - path: config/ai-service.env
+        required: false
     environment:
       <<: *postgres-env
       MODEL_DIR: /app/models
+      # Empty = the packaged config.yaml. Point it at a file in the models volume (/app/models/...).
+      SOLIA_AI_CONFIG: ${SOLIA_AI_CONFIG:-}
     restart: unless-stopped
     healthcheck:
       # Cold start imports torch: a longer grace period than the .NET services.
@@ -119,10 +134,20 @@ services:
     build:
       context: .
       dockerfile: infra/docker/backend.Dockerfile
-    <<: *env-file
+    env_file:
+      - path: config/backend.env
+        required: false
     environment:
       <<: *postgres-env
       AI_SERVICE_URL: http://ai-service:8000
+      RETRAIN_EVERY_N_TRADES: ${RETRAIN_EVERY_N_TRADES:-500}
+      PAPER_BOT_ENABLED: ${PAPER_BOT_ENABLED:-false}
+      PAPER_STARTING_BALANCE: ${PAPER_STARTING_BALANCE:-10}
+      PAPER_MAX_CONCURRENT_POSITIONS: ${PAPER_MAX_CONCURRENT_POSITIONS:-5}
+      # The only container that gets the master key (docs/SECRETS.md). Empty = unset: fine without a
+      # secrets.enc, fail fast with one. SOLIA_SECRETS_FILE isn't passed: the file is the default path,
+      # i.e. the read-only mount below.
+      SOLIA_MASTER_KEY: ${SOLIA_MASTER_KEY:-}
     restart: unless-stopped
     healthcheck:
       interval: 30s
@@ -133,8 +158,9 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      # secrets.enc only (docs/SECRETS.md); SOLIA_MASTER_KEY comes from the environment. The backend runs
-      # as UID 1654: secrets.enc must be readable by it (e.g. chmod 644). No secrets.enc ⇒ plaintext config.
+      # secrets.enc only (docs/SECRETS.md), read from the default path /app/secrets/secrets.enc. The
+      # backend runs as UID 1654: secrets.enc must be readable by it (e.g. chmod 644). No secrets.enc ⇒
+      # plaintext config; a secrets.enc with a missing/wrong key ⇒ the backend exits non-zero.
       - ./secrets:/app/secrets:ro
     depends_on:
       db-migrate:
@@ -147,7 +173,9 @@ services:
     build:
       context: .
       dockerfile: infra/docker/dashboard.Dockerfile
-    <<: *env-file
+    env_file:
+      - path: config/dashboard.env
+        required: false
     environment:
       # Containers always run as Production (the image default), whatever .env says: no developer exception page.
       ASPNETCORE_ENVIRONMENT: Production

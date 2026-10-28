@@ -39,8 +39,15 @@ Docker & orchestration assets. See the root [`docker-compose.yml`](../docker-com
 
 ## Compose
 
-- Requires **Docker Engine 25+** (healthcheck `start_interval`) and **Docker Compose 2.24+**
-  (`env_file` with `required: false`).
+- Requires **Docker Engine 25+** (healthcheck `start_interval`) and **Docker Compose 2.24+**.
+- **Config = `.env` via compose interpolation**: each service lists exactly the variables it reads
+  (`${VAR:-default}`), so a key reaches only the containers that need it — `SOLIA_MASTER_KEY` goes to
+  the backend alone. A `.env` key that compose doesn't list reaches **no** container. For anything
+  else (nested .NET keys such as `Logging__LogLevel__Default`, `Bot__*`, `Pipeline__*`), create the
+  optional, gitignored `config/<service>.env` (e.g. `config/backend.env`): `env_file` with
+  `required: false`, loaded by that service only; the values pinned in compose win over it. `cp .env.example .env` works as-is; host env vars win
+  over `.env`; without a `.env` every default applies. `.env.example` marks each key `[compose]` or
+  `[local dev]`.
 - `docker compose up -d --build` — the whole stack, in order: postgres → `db-migrate` (one-shot) →
   data-pipeline + ai-service → backend → dashboard (the backend waits for db-migrate and ai-service,
   not the pipeline). Only `8080` (backend) and `8081` (dashboard) are
@@ -48,13 +55,16 @@ Docker & orchestration assets. See the root [`docker-compose.yml`](../docker-com
 - `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres` — local dev:
   Postgres alone, published on `127.0.0.1:5432` for `dotnet run` / pytest.
 - Compose healthchecks only tune timing; the probe command is each image's `HEALTHCHECK`.
-- `.env` can't misroute the containers: service hosts are pinned, `SOLIA_DB_CONNECTION` is blanked
-  (it wins over `POSTGRES_*`) and every container runs as Production.
+- `.env` can't misroute the containers: service hosts, in-container URLs/paths are pinned,
+  `SOLIA_DB_CONNECTION` is blanked (it wins over `POSTGRES_*`) and every container runs as Production.
 - **Secrets mount**: `./secrets` → `/app/secrets` (ro). The backend runs as UID 1654, so
   `secrets/secrets.enc` must be readable by it (`chmod 644 secrets/secrets.enc`, or
   `chown 1654 secrets/secrets.enc` to keep mode 600). Create `./secrets` yourself: if it's missing
   Docker creates it root-owned on the host (the backend then just runs on plaintext config).
+  Creating the file and injecting the key: [`docs/SECRETS.md` § Docker](../docs/SECRETS.md#docker-compose).
 - The `compose` job in [`ci.yml`](../.github/workflows/ci.yml) validates both files and asserts the
-  topology (services, published ports, startup conditions, restart policies, volumes, service hosts);
-  `compose-up` starts the real stack from a fresh volume (`INGEST=false`) and waits until db-migrate
-  exits 0 and every service is healthy.
+  topology (services, published ports, startup conditions, restart policies, volumes, service hosts,
+  the exact variable set of each service, `.env.example` coverage, optional `config/<service>.env` per service only, git/docker ignore of `.env`/`secrets/`/`config/*.env`);
+  `compose-up` starts the real stack from `.env.example` on a fresh volume (`INGEST=false`), waits
+  until db-migrate exits 0 and every service is healthy, then checks the secrets path: a wrong key
+  makes the backend exit non-zero without leaking the key or a value, the right key brings it back.

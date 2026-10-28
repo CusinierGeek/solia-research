@@ -80,7 +80,7 @@ Each sprint = one milestone = one (or more) PR, reviewed before merge. See [`CON
 Requires Docker Engine 25+ and Docker Compose 2.24+.
 
 ```bash
-cp .env.example .env              # fill in values
+cp .env.example .env              # works as-is; change POSTGRES_PASSWORD for anything shared
 docker compose up -d --build      # whole stack: backend on :8080, dashboard on :8081
 ```
 
