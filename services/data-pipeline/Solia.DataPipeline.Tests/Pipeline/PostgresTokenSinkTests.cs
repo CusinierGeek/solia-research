@@ -143,6 +143,36 @@ public sealed class PostgresTokenSinkTests(PostgresFixture db) : IClassFixture<P
             "AND max_buy_sol IS NULL AND buy_volume_ratio IS NULL AND large_buy_count = 0"));
     }
 
+    [Fact]
+    public async Task Momentum_columns_are_persisted()
+    {
+        FeatureSnapshot snap = Snap("MOM1", T0, 1m) with
+        {
+            ReturnShort = 0.1,
+            ReturnMedium = 0.2,
+            ReturnLong = -0.3,
+            PriceAcceleration = 0.05,
+            EmaSlope = 0.01,
+            VolumeAcceleration = 2.5,
+            VolumeBurstRatio = 3,
+            PriceHistorySec = 42.5,
+        };
+        await Sink.WriteAsync(Batch(T0, [snap, Snap("MOM2", T0, 1m)]), default);
+
+        Assert.Equal(0.1, await Feature<double>("return_short", "MOM1"));
+        Assert.Equal(0.2, await Feature<double>("return_medium", "MOM1"));
+        Assert.Equal(-0.3, await Feature<double>("return_long", "MOM1"));
+        Assert.Equal(0.05, await Feature<double>("price_acceleration", "MOM1"));
+        Assert.Equal(0.01, await Feature<double>("ema_slope", "MOM1"));
+        Assert.Equal(2.5, await Feature<double>("volume_acceleration", "MOM1"));
+        Assert.Equal(3.0, await Feature<double>("volume_burst_ratio", "MOM1"));
+        Assert.Equal(42.5, await Feature<double>("price_history_sec", "MOM1"));
+        Assert.Equal(1L, await db.ScalarAsync<long>(
+            "SELECT count(*) FROM features WHERE mint = 'MOM2' AND return_short IS NULL AND return_medium IS NULL " +
+            "AND return_long IS NULL AND price_acceleration IS NULL AND ema_slope IS NULL " +
+            "AND volume_acceleration IS NULL AND volume_burst_ratio = 1 AND price_history_sec = 0"));
+    }
+
     private Task<T> Feature<T>(string column, string mint) =>
         db.ScalarAsync<T>($"SELECT {column} FROM features WHERE mint = @m", ("m", mint));
 

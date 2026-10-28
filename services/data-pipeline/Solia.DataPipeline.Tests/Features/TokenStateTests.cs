@@ -365,4 +365,248 @@ public class TokenStateTests
         Assert.Equal(0.75m, s.NetSolFlow);
         Assert.Equal(0.8, s.BuyVolumeRatio!.Value, 10);
     }
+
+    // --- Momentum & acceleration (default windows 10/30/60 s) ---
+
+    /// <summary>One buy per second over [0, seconds], with the given price and quote-amount curves.</summary>
+    private static TokenState Curve(Func<int, double> price, Func<int, decimal> quote, int seconds,
+        MomentumWindows? windows = null)
+    {
+        var state = new TokenState("M", 300, 20, 14, T0, momentum: windows);
+        for (int t = 0; t <= seconds; t++)
+        {
+            state.Apply(Trade(EventKind.Buy, (decimal)price(t), quote(t), "A", t));
+        }
+
+        return state;
+    }
+
+    [Fact]
+    public void Flat_curve_has_no_momentum()
+    {
+        FeatureSnapshot s = Curve(_ => 1, _ => 1m, 60).Snapshot(T0.AddSeconds(60));
+
+        Assert.Equal(0, s.ReturnShort!.Value, 12);
+        Assert.Equal(0, s.ReturnMedium!.Value, 12);
+        Assert.Equal(0, s.ReturnLong!.Value, 12);
+        Assert.Equal(0, s.PriceAcceleration!.Value, 12);
+        Assert.Equal(0, s.VolumeAcceleration!.Value, 12);
+        Assert.Equal(1, s.VolumeBurstRatio, 12); // 10 trades / 10 s vs 60 trades / 60 s
+    }
+
+    [Fact]
+    public void Linear_curve_returns_and_accelerations()
+    {
+        // price 1 + 0.1 t -> p(60) = 7, p(50) = 6, p(40) = 5, p(30) = 4, p(0) = 1; volume t per second.
+        FeatureSnapshot s = Curve(t => 1 + (0.1 * t), t => t, 60).Snapshot(T0.AddSeconds(60));
+
+        Assert.Equal((7.0 / 6) - 1, s.ReturnShort!.Value, 10);
+        Assert.Equal(0.75, s.ReturnMedium!.Value, 10);
+        Assert.Equal(6, s.ReturnLong!.Value, 10);
+        Assert.Equal((1.0 / 6) - (1.0 / 5), s.PriceAcceleration!.Value, 10); // a constant slope decelerates relatively
+        Assert.Equal(1, s.VolumeAcceleration!.Value, 10);                     // (sum 51..60 - sum 41..50) / 10 / 10
+        Assert.Equal(55.5 / 30.5, s.VolumeBurstRatio, 10);                    // 555 / 10 vs 1830 / 60
+    }
+
+    [Fact]
+    public void Exponential_price_has_constant_returns_and_no_acceleration()
+    {
+        FeatureSnapshot s = Curve(t => Math.Pow(2, t / 10.0), _ => 1m, 60).Snapshot(T0.AddSeconds(60));
+
+        Assert.Equal(1, s.ReturnShort!.Value, 9); // doubles every 10 s
+        Assert.Equal(7, s.ReturnMedium!.Value, 9);
+        Assert.Equal(0, s.PriceAcceleration!.Value, 9);
+    }
+
+    [Fact]
+    public void Accelerating_curve_has_positive_accelerations_and_a_burst()
+    {
+        // price exp(t^2 / 1000): r(50->60) = e^1.1 - 1 vs r(40->50) = e^0.9 - 1; volume t^2.
+        FeatureSnapshot s = Curve(t => Math.Exp(t * t / 1000.0), t => t * t, 60).Snapshot(T0.AddSeconds(60));
+
+        Assert.Equal(Math.Exp(1.1) - Math.Exp(0.9), s.PriceAcceleration!.Value, 9);
+        Assert.True(s.PriceAcceleration > 0);
+        Assert.True(s.VolumeAcceleration > 0);
+        Assert.True(s.VolumeBurstRatio > 1);
+    }
+
+    [Fact]
+    public void Single_trade_has_no_momentum_history()
+    {
+        FeatureSnapshot s = Curve(_ => 1, _ => 1m, 0).Snapshot(T0);
+
+        Assert.Null(s.ReturnShort);
+        Assert.Null(s.ReturnMedium);
+        Assert.Null(s.ReturnLong);
+        Assert.Null(s.PriceAcceleration);
+        Assert.Null(s.EmaSlope);
+        Assert.Null(s.VolumeAcceleration);
+        Assert.Equal(1, s.VolumeBurstRatio); // a lone trade is both windows' whole volume
+    }
+
+    [Fact]
+    public void Insufficient_history_leaves_the_longer_look_backs_null()
+    {
+        FeatureSnapshot s = Curve(t => 1 + (0.1 * t), _ => 1m, 15).Snapshot(T0.AddSeconds(15));
+
+        Assert.Equal((2.5 / 1.5) - 1, s.ReturnShort!.Value, 10); // p(15) / p(5)
+        Assert.Null(s.ReturnMedium);
+        Assert.Null(s.ReturnLong);
+        Assert.Null(s.PriceAcceleration);  // needs p(-5)
+        Assert.Null(s.VolumeAcceleration); // 15 s observed < two short windows
+        Assert.Equal(15.0 / 16, s.VolumeBurstRatio, 10); // 10 trades / 10 s vs 16 trades over 15 observed s
+    }
+
+    [Fact]
+    public void No_volume_over_the_long_window_is_a_neutral_burst_ratio()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(Trade(EventKind.Buy, 1m, 5m, "A", 0));
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(100)); // last trade is older than the 60 s long window
+
+        Assert.Equal(1, s.VolumeBurstRatio);
+        Assert.Equal(0, s.VolumeAcceleration!.Value);
+    }
+
+    [Fact]
+    public void A_long_look_back_of_the_whole_window_survives_pruning()
+    {
+        // Rolling window = long window = 60 s: the price in force at now - 60 is older than the cutoff.
+        var state = new TokenState("M", windowSeconds: 60, emaSpan: 20, rsiPeriod: 14, firstSeen: T0);
+        for (int t = 0; t <= 120; t += 7)
+        {
+            state.Apply(Trade(EventKind.Buy, 1 + (0.1m * t), 1m, "A", t)); // no trade exactly at 60
+        }
+
+        for (int now = 70; now <= 120; now += 10)
+        {
+            state.Snapshot(T0.AddSeconds(now)); // prunes as the live cadence would
+        }
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(120));
+
+        Assert.Equal((12.9 / 6.6) - 1, s.ReturnLong!.Value, 10);          // p(119) / p(56)
+        Assert.Equal((12.9 / 11.5) - 1, s.ReturnShort!.Value, 10);        // p(119) / p(105)
+        Assert.NotNull(s.PriceAcceleration);
+        Assert.Equal(60, s.PriceHistorySec);
+    }
+
+    [Fact]
+    public void A_busy_token_keeps_its_long_look_back_beyond_the_volatility_point_cap()
+    {
+        // 20 prices per second for 60 s = 1220 points, past the 512-point volatility series cap.
+        var state = new TokenState("M", 300, 20, 14, T0);
+        for (int i = 0; i <= 1200; i++)
+        {
+            var e = Trade(EventKind.Buy, 1 + (0.001m * i), 1m, "A", 0) with { Timestamp = T0.AddMilliseconds(50 * i) };
+            state.Apply(e);
+        }
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(60));
+
+        Assert.Equal((2.2 / 1.0) - 1, s.ReturnLong!.Value, 10);           // p(60 s) = 1 + 1.2, p(0) = 1
+        Assert.Equal((2.2 / 2.0) - 1, s.ReturnShort!.Value, 10);          // p(50 s) = 1 + 1.0
+        Assert.Equal(60, s.PriceHistorySec);
+    }
+
+    [Fact]
+    public void Ema_and_its_slope_ignore_prices_after_the_snapshot_time()
+    {
+        var withFuture = new TokenState("M", 300, 20, 14, T0);
+        var without = new TokenState("M", 300, 20, 14, T0);
+        foreach (TokenState state in new[] { withFuture, without })
+        {
+            state.Apply(Trade(EventKind.Buy, 1m, 1m, "A", 0));
+            state.Snapshot(T0);
+            state.Apply(Trade(EventKind.Buy, 2m, 1m, "A", 5));
+        }
+
+        withFuture.Apply(Trade(EventKind.Buy, 100m, 1m, "A", 15)); // applied before the 10 s snapshot
+
+        FeatureSnapshot leaked = withFuture.Snapshot(T0.AddSeconds(10));
+        FeatureSnapshot expected = without.Snapshot(T0.AddSeconds(10));
+
+        Assert.Equal(expected.Ema, leaked.Ema);
+        Assert.Equal(expected.EmaSlope!.Value, leaked.EmaSlope!.Value, 12);
+        Assert.Equal(expected.ReturnShort, leaked.ReturnShort);
+    }
+
+    [Fact]
+    public void Price_history_tells_a_young_token_apart_from_a_flat_price()
+    {
+        FeatureSnapshot young = Curve(_ => 1, _ => 1m, 15).Snapshot(T0.AddSeconds(15));
+        FeatureSnapshot flat = Curve(_ => 1, _ => 1m, 90).Snapshot(T0.AddSeconds(90));
+        FeatureSnapshot none = new TokenState("M", 300, 20, 14, T0).Snapshot(T0);
+
+        Assert.Null(young.ReturnLong);
+        Assert.Equal(15, young.PriceHistorySec);
+        Assert.Equal(0, flat.ReturnLong!.Value, 12);
+        Assert.Equal(60, flat.PriceHistorySec); // capped at the long window
+        Assert.Equal(0, none.PriceHistorySec);
+    }
+
+    [Fact]
+    public void Volume_momentum_only_spans_the_current_quote_currency()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        for (int t = 0; t <= 50; t++)
+        {
+            state.Apply(Quoted(EventKind.Buy, 1m, 1m, Wsol, t));
+        }
+
+        for (int t = 51; t <= 60; t++)
+        {
+            state.Apply(Quoted(EventKind.Buy, 1m, 1m, Usdc, t)); // migrated to a USDC pool at 51 s
+        }
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(60));
+
+        Assert.Null(s.VolumeAcceleration);               // 9 s in USDC < two short windows
+        Assert.Equal(1, s.VolumeBurstRatio, 12);         // 10 USDC / 9 s on both sides: steady
+        Assert.Null(s.ReturnLong);                       // the price history restarted too
+        Assert.Equal(9, s.PriceHistorySec);
+    }
+
+    [Fact]
+    public void Momentum_windows_are_configurable()
+    {
+        FeatureSnapshot s = Curve(t => 1 + (0.1 * t), _ => 1m, 60, new MomentumWindows(5, 10, 20))
+            .Snapshot(T0.AddSeconds(60));
+
+        Assert.Equal((7.0 / 6.5) - 1, s.ReturnShort!.Value, 10);
+        Assert.Equal((7.0 / 6.0) - 1, s.ReturnMedium!.Value, 10);
+        Assert.Equal((7.0 / 5.0) - 1, s.ReturnLong!.Value, 10);
+        Assert.Equal((7.0 / 6.5) - (6.5 / 6.0), s.PriceAcceleration!.Value, 10);
+    }
+
+    [Fact]
+    public void Ema_slope_is_the_relative_per_second_ema_change()
+    {
+        var state = new TokenState("M", 300, emaSpan: 1, rsiPeriod: 14, T0); // span 1: the EMA is the price
+        state.Apply(Trade(EventKind.Buy, 1m, 1m, "A", 0));
+        Assert.Null(state.Snapshot(T0).EmaSlope);
+
+        state.Apply(Trade(EventKind.Buy, 2m, 1m, "A", 10));
+        Assert.Equal(0.1, state.Snapshot(T0.AddSeconds(10)).EmaSlope!.Value, 10); // (2 - 1) / 10 s / 1
+
+        Assert.Equal(0, state.Snapshot(T0.AddSeconds(20)).EmaSlope!.Value, 10); // flat since
+    }
+
+    [Fact]
+    public void Quote_change_restarts_the_momentum_series()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        for (int t = 0; t <= 30; t++)
+        {
+            state.Apply(Quoted(EventKind.Buy, 1m, 1m, Wsol, t));
+        }
+
+        state.Snapshot(T0.AddSeconds(30));
+        state.Apply(Quoted(EventKind.Buy, 0.00002m, 50m, Usdc, 31));
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(31));
+
+        Assert.Null(s.ReturnShort); // USDC prices don't compare with SOL ones
+        Assert.Null(s.EmaSlope);
+    }
 }

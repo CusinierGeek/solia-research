@@ -153,15 +153,43 @@ def test_build_model_refuses_a_checkpoint_from_another_horizon_set(tmp_path):
         build_model(checkpoint)
 
 
-def test_build_model_refuses_a_champion_trained_on_the_previous_feature_spec(tmp_path):
-    _, path = saved_checkpoint(tmp_path)
-    checkpoint = load_checkpoint(path)
-    old = FEATURE_COLUMNS[:19]  # before the buy_pressure columns
-    checkpoint["feature_columns"] = old
-    checkpoint["model_state"]["_extra_state"]["feature_columns"] = old
+def _legacy_checkpoint(columns: list[str]) -> dict:
+    """A checkpoint as trained on an earlier, narrower feature spec (no feature mask yet)."""
+    cfg = small_config()
+    model = SoliaTransformer.from_config(cfg, feature_columns=columns)
+    model.fit_normalizer(np.random.default_rng(1).normal(size=(64, len(columns))).astype("f4"))
+    checkpoint = build_checkpoint(model, cfg, version="legacy", metrics={})
     del checkpoint["model_state"]["feature_mask"]
+    return checkpoint
 
-    with pytest.raises(IncompatibleCheckpointError, match="19 feature columns.*new: net_sol_flow"):
+
+def test_a_champion_trained_on_an_earlier_spec_keeps_serving_on_its_own_columns():
+    old = FEATURE_COLUMNS[:19]  # before the buy_pressure and momentum columns
+    checkpoint = _legacy_checkpoint(old)
+
+    model = build_model(checkpoint)
+    predictor = Predictor(model, model_version="legacy")
+    full = window(4)  # a current-spec window, as the API builds it
+    with torch.no_grad():
+        expected = model(torch.from_numpy(full[None, :, :19]))["pump_logits"]
+
+    assert model.feature_columns == tuple(old)
+    assert model.feature_mask.all()  # no mask recorded: every column was an input
+    served = predictor.predict(full).predictions[0].pump_prob
+    assert served == pytest.approx(float(torch.sigmoid(expected)[0, 0]), abs=1e-6)
+
+
+def test_build_model_refuses_a_checkpoint_with_columns_the_code_dropped():
+    checkpoint = _legacy_checkpoint([*FEATURE_COLUMNS[:18], "retired_column"])
+
+    with pytest.raises(IncompatibleCheckpointError, match="unknown: retired_column"):
+        build_model(checkpoint)
+
+
+def test_build_model_refuses_a_checkpoint_with_reordered_columns():
+    checkpoint = _legacy_checkpoint([FEATURE_COLUMNS[1], FEATURE_COLUMNS[0]])
+
+    with pytest.raises(IncompatibleCheckpointError, match="reordered"):
         build_model(checkpoint)
 
 

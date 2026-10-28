@@ -53,10 +53,13 @@ public sealed class PostgresTokenSink(NpgsqlDataSource dataSource) : ITokenSink
         "buy_events, sell_events, buy_sell_ratio, token_age_sec, trending_score, social_mentions, " +
         "holders_growth_rate, volume_growth_rate, tx_creation_rate, volatility, ema, rsi, price_derivative, " +
         "net_sol_flow, buy_volume_ratio, avg_buy_sol, max_buy_sol, large_buy_count, " +
+        "return_short, return_medium, return_long, price_acceleration, ema_slope, volume_acceleration, volume_burst_ratio, " +
+        "price_history_sec, " +
         "onchain_signals, behavioral_signals) " +
         "SELECT * FROM unnest(@mint, @ts, @venue, @migrated, @pool, @price, @volume, @mc, @holders, @liq, " +
         "@buys, @sells, @ratio, @age, @trending, @social, @hgrowth, @vgrowth, @txrate, @vol, @ema, @rsi, @deriv, " +
-        "@netflow, @buyvolratio, @avgbuy, @maxbuy, @largebuys, @onchain, @behavioral) " +
+        "@netflow, @buyvolratio, @avgbuy, @maxbuy, @largebuys, " +
+        "@ret_s, @ret_m, @ret_l, @paccel, @emaslope, @vaccel, @burst, @pricehist, @onchain, @behavioral) " +
         "ON CONFLICT (mint, ts) DO NOTHING";
 
     public async Task WriteAsync(FlushBatch batch, CancellationToken cancellationToken)
@@ -132,6 +135,14 @@ public sealed class PostgresTokenSink(NpgsqlDataSource dataSource) : ITokenSink
                 Array("avgbuy", NpgsqlDbType.Numeric, Column(s, x => x.AvgBuySol)),
                 Array("maxbuy", NpgsqlDbType.Numeric, Column(s, x => x.MaxBuySol)),
                 Array("largebuys", NpgsqlDbType.Integer, Column(s, x => x.LargeBuyCount)),
+                Array("ret_s", NpgsqlDbType.Double, Column(s, x => x.ReturnShort)),
+                Array("ret_m", NpgsqlDbType.Double, Column(s, x => x.ReturnMedium)),
+                Array("ret_l", NpgsqlDbType.Double, Column(s, x => x.ReturnLong)),
+                Array("paccel", NpgsqlDbType.Double, Column(s, x => x.PriceAcceleration)),
+                Array("emaslope", NpgsqlDbType.Double, Column(s, x => x.EmaSlope)),
+                Array("vaccel", NpgsqlDbType.Double, Column(s, x => x.VolumeAcceleration)),
+                Array("burst", NpgsqlDbType.Double, Column(s, x => x.VolumeBurstRatio)),
+                Array("pricehist", NpgsqlDbType.Double, Column(s, x => x.PriceHistorySec)),
                 Array("onchain", NpgsqlDbType.Jsonb, Column(s, x => JsonSerializer.Serialize(x.OnchainSignals))),
                 Array("behavioral", NpgsqlDbType.Jsonb, Column(s, x => JsonSerializer.Serialize(x.BehavioralSignals)))));
         }

@@ -94,6 +94,14 @@ Time-series feature snapshots per token. The model's input unit.
 | avg_buy_sol | NUMERIC(28,12) | mean buy size (SOL); NULL without SOL buys |
 | max_buy_sol | NUMERIC(28,12) | largest buy (SOL); NULL without SOL buys |
 | large_buy_count | INT | buys ≥ `Pipeline:LargeBuySol` (default 1 SOL) |
+| return_short | DOUBLE PRECISION | p_now / p_(now−short) − 1 (`Pipeline:MomentumShortSeconds`, default 10 s); NULL if the price history doesn't reach back (see `price_history_sec`) |
+| return_medium | DOUBLE PRECISION | same over `MomentumMediumSeconds` (default 30 s) |
+| return_long | DOUBLE PRECISION | same over `MomentumLongSeconds` (default 60 s) |
+| price_acceleration | DOUBLE PRECISION | short return − the short return one short window earlier; NULL without 2 short windows of prices |
+| ema_slope | DOUBLE PRECISION | per-second change of the EMA as of the snapshot time / previous snapshot's EMA; NULL on the first snapshot or after a quote change |
+| volume_acceleration | DOUBLE PRECISION | (volume rate of the last short window − of the one before) / short, quote/s²; NULL until 2 short windows observed in the current quote currency |
+| volume_burst_ratio | DOUBLE PRECISION | short / long per-second volume rate (rated over the observed span, since the current quote currency began, when shorter); 1 when nothing traded over the long window. Always written |
+| price_history_sec | DOUBLE PRECISION | how far back (s) the momentum price history reaches, capped at `MomentumLongSeconds`; 0 without a price. A return over a longer look-back is NULL. Always written |
 | onchain_signals | JSONB | Pump.fun-specific signals |
 | behavioral_signals | JSONB | pump/rug pattern flags |
 | raw | JSONB | nullable debug payload |

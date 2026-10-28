@@ -132,6 +132,14 @@ public static class PredictEndpoints
                 f.AvgBuySol,
                 f.MaxBuySol,
                 f.LargeBuyCount,
+                f.ReturnShort,
+                f.ReturnMedium,
+                f.ReturnLong,
+                f.PriceAcceleration,
+                f.EmaSlope,
+                f.VolumeAcceleration,
+                f.VolumeBurstRatio,
+                f.PriceHistorySec,
                 f.IsMigrated,
             })
             .ToListAsync(cancellationToken);
@@ -162,6 +170,14 @@ public static class PredictEndpoints
             ["avg_buy_sol"] = (double?)f.AvgBuySol,
             ["max_buy_sol"] = (double?)f.MaxBuySol,
             ["large_buy_count"] = f.LargeBuyCount,
+            ["return_short"] = f.ReturnShort,
+            ["return_medium"] = f.ReturnMedium,
+            ["return_long"] = f.ReturnLong,
+            ["price_acceleration"] = f.PriceAcceleration,
+            ["ema_slope"] = f.EmaSlope,
+            ["volume_acceleration"] = f.VolumeAcceleration,
+            ["volume_burst_ratio"] = f.VolumeBurstRatio,
+            ["price_history_sec"] = f.PriceHistorySec,
             ["is_migrated"] = f.IsMigrated ? 1 : 0,
         }).ToList();
     }

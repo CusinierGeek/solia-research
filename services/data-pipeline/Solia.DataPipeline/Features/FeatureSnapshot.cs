@@ -59,6 +59,34 @@ public sealed record FeatureSnapshot
     /// <summary>Buys of at least <c>PipelineOptions.LargeBuySol</c>.</summary>
     public int LargeBuyCount { get; init; }
 
+    // Momentum & acceleration over the configured MomentumWindows (short/medium/long). Returns are
+    // simple (p_now / p_then - 1); null where the price series doesn't reach back far enough.
+
+    public double? ReturnShort { get; init; }
+    public double? ReturnMedium { get; init; }
+    public double? ReturnLong { get; init; }
+
+    /// <summary>Short return minus the short return one short window earlier (needs 2 short windows of prices).</summary>
+    public double? PriceAcceleration { get; init; }
+
+    /// <summary>Per-second EMA change as a fraction of the previous snapshot's EMA; null on the first snapshot.</summary>
+    public double? EmaSlope { get; init; }
+
+    /// <summary>
+    /// Change of the per-second volume rate between the last short window and the one before it,
+    /// per second (quote/s²); null until two short windows have been observed.
+    /// </summary>
+    public double? VolumeAcceleration { get; init; }
+
+    /// <summary>Short-window volume rate / long-window volume rate (&gt;1 = burst); 1 when nothing traded over the long window.</summary>
+    public double VolumeBurstRatio { get; init; } = 1;
+
+    /// <summary>
+    /// How far back (seconds, capped at the long window) the momentum price history reaches: a
+    /// return over a longer look-back is null. Tells "no history yet" apart from a flat price.
+    /// </summary>
+    public double PriceHistorySec { get; init; }
+
     public IReadOnlyDictionary<string, object?> OnchainSignals { get; init; } =
         new Dictionary<string, object?>();
 

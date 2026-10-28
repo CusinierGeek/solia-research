@@ -71,7 +71,8 @@ def test_from_config_enables_the_configured_groups(monkeypatch):
     cfg = {**load_config(), "features": {"groups": [*BASELINE_GROUPS, "buy_pressure"]}}
     model = SoliaTransformer.from_config(cfg).eval()
 
-    assert model.feature_mask.all()
+    enabled = [c for c, on in zip(FEATURE_COLUMNS, model.feature_mask.tolist(), strict=True) if on]
+    assert enabled == group_columns([*BASELINE_GROUPS, "buy_pressure"])  # momentum stays off
     x = torch.randn(2, 8, N_FEATURES)
     noisy = x.clone()
     noisy[..., BUY_PRESSURE] = 1e3

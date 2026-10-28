@@ -8,7 +8,7 @@ public class OptionsValidationTests
 {
     private static bool IsValid(PipelineOptions o) =>
         Validator.TryValidateObject(o, new ValidationContext(o), null, validateAllProperties: true)
-        && o.HasConsistentWindow();
+        && o.HasConsistentWindow() && o.HasConsistentMomentumWindows();
 
     [Fact]
     public void Defaults_are_valid()
@@ -34,6 +34,41 @@ public class OptionsValidationTests
     public void Out_of_range_large_buy_threshold_is_rejected(string sol)
     {
         var o = new PipelineOptions { LargeBuySol = decimal.Parse(sol, System.Globalization.CultureInfo.InvariantCulture) };
+
+        Assert.False(IsValid(o));
+    }
+
+    [Theory]
+    [InlineData(10, 30, 60, 60)]   // long look-back = the whole window
+    [InlineData(30, 40, 60, 60)]   // two short windows = the whole window
+    public void Momentum_windows_may_span_the_whole_rolling_window(int shortSec, int mediumSec, int longSec, int window)
+    {
+        var o = new PipelineOptions
+        {
+            MomentumShortSeconds = shortSec,
+            MomentumMediumSeconds = mediumSec,
+            MomentumLongSeconds = longSec,
+            WindowSeconds = window,
+        };
+
+        Assert.True(IsValid(o));
+    }
+
+    [Theory]
+    [InlineData(0, 30, 60, 300)]   // below range
+    [InlineData(30, 30, 60, 300)]  // not strictly increasing
+    [InlineData(10, 60, 30, 300)]
+    [InlineData(10, 30, 600, 300)] // long window beyond the rolling window
+    [InlineData(40, 50, 60, 70)]   // two short windows don't fit the rolling window
+    public void Inconsistent_momentum_windows_are_rejected(int shortSec, int mediumSec, int longSec, int window)
+    {
+        var o = new PipelineOptions
+        {
+            MomentumShortSeconds = shortSec,
+            MomentumMediumSeconds = mediumSec,
+            MomentumLongSeconds = longSec,
+            WindowSeconds = window,
+        };
 
         Assert.False(IsValid(o));
     }

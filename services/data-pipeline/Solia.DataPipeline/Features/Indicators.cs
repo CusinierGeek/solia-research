@@ -73,4 +73,15 @@ public static class Indicators
     /// <summary>Per-second rate of change between two readings. 0 when the interval is non-positive.</summary>
     public static double GrowthRate(double previous, double current, double deltaSeconds) =>
         deltaSeconds <= 0 ? 0 : (current - previous) / deltaSeconds;
+
+    /// <summary>
+    /// <see cref="GrowthRate"/> as a fraction of the previous reading (scale-free, per second).
+    /// Null when the previous reading isn't positive.
+    /// </summary>
+    public static double? RelativeGrowthRate(double previous, double current, double deltaSeconds) =>
+        previous <= 0 ? null : GrowthRate(previous, current, deltaSeconds) / previous;
+
+    /// <summary>Simple return <c>current / reference - 1</c>. Null when either is missing or the reference isn't positive.</summary>
+    public static double? Return(double? reference, double? current) =>
+        reference is > 0 && current is { } c ? (c / reference.Value) - 1 : null;
 }

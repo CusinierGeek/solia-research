@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using Solia.DataPipeline.Features;
 
 namespace Solia.DataPipeline.Options;
 
@@ -37,6 +38,20 @@ public sealed class PipelineOptions
 
     public const decimal DefaultLargeBuySol = 1m;
 
+    /// <summary>Short momentum window (seconds): short return, burst numerator, acceleration step.</summary>
+    [Range(1, 86_400)]
+    public int MomentumShortSeconds { get; set; } = MomentumWindows.Default.ShortSeconds;
+
+    /// <summary>Medium momentum window (seconds): medium return.</summary>
+    [Range(1, 86_400)]
+    public int MomentumMediumSeconds { get; set; } = MomentumWindows.Default.MediumSeconds;
+
+    /// <summary>Long momentum window (seconds): long return, burst denominator.</summary>
+    [Range(1, 86_400)]
+    public int MomentumLongSeconds { get; set; } = MomentumWindows.Default.LongSeconds;
+
+    public MomentumWindows Momentum => new(MomentumShortSeconds, MomentumMediumSeconds, MomentumLongSeconds);
+
     /// <summary>
     /// When false (default), holders are approximated from unique traders seen in the
     /// stream (free). When true, a paid Get Token Info enrichment may be used.
@@ -62,4 +77,15 @@ public sealed class PipelineOptions
 
     /// <summary>A window shorter than the snapshot cadence would compute features over no data.</summary>
     public bool HasConsistentWindow() => WindowSeconds >= SnapshotCadenceSeconds;
+
+    /// <summary>
+    /// Momentum windows must be strictly increasing and fit the rolling window, including the two
+    /// short windows the accelerations compare. A look-back of exactly the window is fine: pruning
+    /// keeps the price in force at the window's start.
+    /// </summary>
+    public bool HasConsistentMomentumWindows() =>
+        MomentumShortSeconds < MomentumMediumSeconds
+        && MomentumMediumSeconds < MomentumLongSeconds
+        && MomentumLongSeconds <= WindowSeconds
+        && 2 * MomentumShortSeconds <= WindowSeconds;
 }

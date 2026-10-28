@@ -43,6 +43,14 @@ FEATURE_COLUMNS: list[str] = [
     "avg_buy_sol",
     "max_buy_sol",
     "large_buy_count",
+    "return_short",
+    "return_medium",
+    "return_long",
+    "price_acceleration",
+    "ema_slope",
+    "volume_acceleration",
+    "volume_burst_ratio",
+    "price_history_sec",
 ]
 
 # Feature groups for ablation (solia_ai.ablation): every model input belongs to exactly one group
@@ -68,6 +76,17 @@ FEATURE_GROUPS: dict[str, tuple[str, ...]] = {
         "avg_buy_sol",
         "max_buy_sol",
         "large_buy_count",
+    ),
+    # FE-T3 (#112): momentum & acceleration over the pipeline's short/medium/long windows.
+    "momentum": (
+        "return_short",
+        "return_medium",
+        "return_long",
+        "price_acceleration",
+        "ema_slope",
+        "volume_acceleration",
+        "volume_burst_ratio",
+        "price_history_sec",  # how far back the returns can look: "no history" vs a flat price
     ),
 }
 
@@ -113,14 +132,15 @@ def group_mask(groups: Iterable[str]) -> np.ndarray:
 
 
 # NULL imputation where 0 would mean something: no SOL trade in the window is "no pressure either
-# way" (0.5), not "only sells" (0.0).
-NULL_FILL: dict[str, float] = {"buy_volume_ratio": 0.5}
+# way" (0.5), not "only sells" (0.0); a burst ratio of 1 is steady volume, 0 would be a collapse.
+NULL_FILL: dict[str, float] = {"buy_volume_ratio": 0.5, "volume_burst_ratio": 1.0}
 
 # Per group, the columns the pipeline always writes since the group's migration: a NULL there
 # means the row predates it (never computed), not "no signal" — such rows must be re-replayed
 # before the group is trained or ablated on, or they'd teach the model a fake zero.
 ALWAYS_WRITTEN: dict[str, tuple[str, ...]] = {
     "buy_pressure": ("net_sol_flow", "large_buy_count"),  # migration 0005
+    "momentum": ("volume_burst_ratio", "price_history_sec"),  # migration 0006
 }
 
 

@@ -131,6 +131,14 @@ public sealed class SoliaDbContext(DbContextOptions<SoliaDbContext> options) : D
             e.Property(x => x.AvgBuySol).HasColumnName("avg_buy_sol").HasColumnType(AmountType);
             e.Property(x => x.MaxBuySol).HasColumnName("max_buy_sol").HasColumnType(AmountType);
             e.Property(x => x.LargeBuyCount).HasColumnName("large_buy_count");
+            e.Property(x => x.ReturnShort).HasColumnName("return_short");
+            e.Property(x => x.ReturnMedium).HasColumnName("return_medium");
+            e.Property(x => x.ReturnLong).HasColumnName("return_long");
+            e.Property(x => x.PriceAcceleration).HasColumnName("price_acceleration");
+            e.Property(x => x.EmaSlope).HasColumnName("ema_slope");
+            e.Property(x => x.VolumeAcceleration).HasColumnName("volume_acceleration");
+            e.Property(x => x.VolumeBurstRatio).HasColumnName("volume_burst_ratio");
+            e.Property(x => x.PriceHistorySec).HasColumnName("price_history_sec");
             e.Property(x => x.OnchainSignals).HasColumnName("onchain_signals").HasColumnType("jsonb");
             e.Property(x => x.BehavioralSignals).HasColumnName("behavioral_signals").HasColumnType("jsonb");
             e.Property(x => x.Raw).HasColumnName("raw").HasColumnType("jsonb");

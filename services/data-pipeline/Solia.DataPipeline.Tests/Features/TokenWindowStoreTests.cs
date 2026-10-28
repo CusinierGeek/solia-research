@@ -222,4 +222,22 @@ public class TokenWindowStoreTests
 
         Assert.Equal(1, s.LargeBuyCount); // 0.6 SOL >= 0.5 (not large under the 1 SOL default)
     }
+
+    [Fact]
+    public void Tracked_tokens_use_the_configured_momentum_windows()
+    {
+        var store = new TokenWindowStore(new PipelineOptions
+        {
+            MomentumShortSeconds = 2,
+            MomentumMediumSeconds = 4,
+            MomentumLongSeconds = 8,
+        });
+        store.Apply(Ev("M", EventKind.Buy, 0) with { Price = 1m });
+        store.Apply(Ev("M", EventKind.Buy, 3) with { Price = 2m });
+
+        FeatureSnapshot s = Assert.Single(store.SnapshotActive(T0.AddSeconds(3)));
+
+        Assert.Equal(1, s.ReturnShort!.Value, 10); // p(3) / p(1) - 1: the 2 s look-back fits the history
+        Assert.Null(s.ReturnMedium);               // 4 s doesn't (default 10 s wouldn't either)
+    }
 }

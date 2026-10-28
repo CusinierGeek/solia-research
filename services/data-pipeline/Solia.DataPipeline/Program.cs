@@ -27,6 +27,8 @@ builder.Services.AddOptions<PipelineOptions>()
     .Bind(builder.Configuration.GetSection(PipelineOptions.Section))
     .ValidateDataAnnotations()
     .Validate(o => o.HasConsistentWindow(), "Pipeline:WindowSeconds must be >= Pipeline:SnapshotCadenceSeconds.")
+    .Validate(o => o.HasConsistentMomentumWindows(),
+        "Pipeline:MomentumShortSeconds < MomentumMediumSeconds < MomentumLongSeconds <= WindowSeconds, and 2 * MomentumShortSeconds <= WindowSeconds.")
     .Validate(o => o.HasExclusiveLiveConsumer(),
         "Pipeline:Ingest and Pipeline:StreamProbe (INGEST / STREAM_PROBE) can't both be enabled: each owns the single live connection.")
     .ValidateOnStart();

@@ -61,6 +61,9 @@ public class SoliaDbContextModelTests
         Assert.Equal("holders_growth_rate", Column<Feature>(ctx, nameof(Feature.HoldersGrowthRate)));
         Assert.Equal("net_sol_flow", Column<Feature>(ctx, nameof(Feature.NetSolFlow)));
         Assert.Equal("large_buy_count", Column<Feature>(ctx, nameof(Feature.LargeBuyCount)));
+        Assert.Equal("return_short", Column<Feature>(ctx, nameof(Feature.ReturnShort)));
+        Assert.Equal("volume_burst_ratio", Column<Feature>(ctx, nameof(Feature.VolumeBurstRatio)));
+        Assert.Equal("price_history_sec", Column<Feature>(ctx, nameof(Feature.PriceHistorySec)));
         Assert.Equal("pump_prob", Column<Prediction>(ctx, nameof(Prediction.PumpProb)));
         Assert.Equal("features_snapshot", Column<Trade>(ctx, nameof(Trade.FeaturesSnapshot)));
         Assert.Equal("candidate_model_id", Column<TrainingEvent>(ctx, nameof(TrainingEvent.CandidateModelId)));

@@ -247,7 +247,23 @@ def test_buy_pressure_is_a_candidate_group_outside_the_baseline():
         "max_buy_sol",
         "large_buy_count",
     )
-    assert FEATURE_COLUMNS[19:] == list(FEATURE_GROUPS["buy_pressure"])
+    assert FEATURE_COLUMNS[19:24] == list(FEATURE_GROUPS["buy_pressure"])
+
+
+def test_momentum_is_a_candidate_group_outside_the_baseline():
+    # FE-T3 (#112): stays disabled by default until its ablation lift clears the margin.
+    assert "momentum" not in BASELINE_GROUPS
+    assert FEATURE_GROUPS["momentum"] == (
+        "return_short",
+        "return_medium",
+        "return_long",
+        "price_acceleration",
+        "ema_slope",
+        "volume_acceleration",
+        "volume_burst_ratio",
+        "price_history_sec",
+    )
+    assert FEATURE_COLUMNS[24:] == list(FEATURE_GROUPS["momentum"])
 
 
 def test_group_columns_keep_canonical_order():
@@ -294,6 +310,20 @@ def test_null_buy_volume_ratio_is_neutral_not_all_sells():
     assert all_sells[0, col] == 0.0
 
 
+def test_null_volume_burst_ratio_is_steady_not_a_collapse():
+    matrix = build_feature_matrix(_frame(volume_burst_ratio=None))
+
+    assert matrix[0, FEATURE_COLUMNS.index("volume_burst_ratio")] == 1.0
+
+
+def test_null_momentum_look_backs_impute_to_zero():
+    # Too little history for a return/acceleration: no momentum signal.
+    matrix = build_feature_matrix(_frame(return_long=None, price_acceleration=None, ema_slope=None))
+
+    for col in ("return_long", "price_acceleration", "ema_slope"):
+        assert matrix[0, FEATURE_COLUMNS.index(col)] == 0.0
+
+
 def test_other_nulls_still_impute_to_zero():
     matrix = build_feature_matrix(_frame(avg_buy_sol=None, rsi=None))
 
@@ -320,6 +350,33 @@ def test_null_buy_sizes_alone_are_legitimate_not_uncomputed():
     df = _frame(avg_buy_sol=None, max_buy_sol=None, buy_volume_ratio=None)
 
     check_group_coverage(df, ["buy_pressure"])  # no error
+
+
+def test_rows_predating_momentum_are_refused_when_it_is_enabled():
+    df = pd.concat([_frame(), _frame(volume_burst_ratio=None)], ignore_index=True)
+
+    with pytest.raises(ValueError, match="1 of 2 feature rows predate the 'momentum' group"):
+        check_group_coverage(df, [*BASELINE_GROUPS, "momentum"])
+    check_group_coverage(df, BASELINE_GROUPS)  # disabled: no error
+
+
+def test_rows_without_price_history_sec_predate_momentum():
+    with pytest.raises(ValueError, match="predate the 'momentum' group.*price_history_sec"):
+        check_group_coverage(_frame(price_history_sec=None), ["momentum"])
+
+
+def test_null_momentum_look_backs_alone_are_legitimate_not_uncomputed():
+    # A young token: the pipeline writes NULL returns/accelerations but always the burst ratio.
+    df = _frame(
+        return_short=None,
+        return_medium=None,
+        return_long=None,
+        price_acceleration=None,
+        ema_slope=None,
+        volume_acceleration=None,
+    )
+
+    check_group_coverage(df, ["momentum"])  # no error
 
 
 def test_config_samples_refuses_uncomputed_rows_for_an_enabled_group():

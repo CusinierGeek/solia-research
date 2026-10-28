@@ -56,8 +56,9 @@ public sealed class AiProxyFixture : PostgresFixture, IAsyncLifetime
         for (int i = 0; i < 4; i++)
         {
             await ExecAsync(
-                "INSERT INTO features (mint, ts, price, holders, buy_sell_ratio, net_sol_flow, large_buy_count, is_migrated) " +
-                "VALUES ('a', @ts, @p, @h, 1.5, -0.25, 2, @mig)",
+                "INSERT INTO features (mint, ts, price, holders, buy_sell_ratio, net_sol_flow, large_buy_count, " +
+                "return_short, volume_burst_ratio, is_migrated) " +
+                "VALUES ('a', @ts, @p, @h, 1.5, -0.25, 2, 0.125, 3.5, @mig)",
                 ("ts", T0.AddMinutes(i)), ("p", 0.001m * (i + 1)), ("h", i == 2 ? DBNull.Value : 10 * (i + 1)), ("mig", i == 3));
         }
 
@@ -147,7 +148,11 @@ public class AiProxyIntegrationTests(AiProxyFixture api) : IClassFixture<AiProxy
         Assert.Equal(-0.25, window[0]["net_sol_flow"]);
         Assert.Equal(2.0, window[0]["large_buy_count"]);
         Assert.Null(window[0]["max_buy_sol"]);
-        Assert.Equal(24, window[0].Count); // the ai-service's FEATURE_COLUMNS
+        Assert.Equal(0.125, window[0]["return_short"]);
+        Assert.Equal(3.5, window[0]["volume_burst_ratio"]);
+        Assert.Null(window[0]["ema_slope"]);
+        Assert.Null(window[0]["price_history_sec"]);
+        Assert.Equal(32, window[0].Count); // the ai-service's FEATURE_COLUMNS
     }
 
     [Fact]

@@ -270,12 +270,20 @@ class SoliaTransformer(nn.Module):
         return sum(p.numel() for p in self.parameters())
 
     @classmethod
-    def from_config(cls, config: Mapping[str, Any] | None = None) -> SoliaTransformer:
+    def from_config(
+        cls,
+        config: Mapping[str, Any] | None = None,
+        *,
+        feature_columns: Sequence[str] | None = None,
+    ) -> SoliaTransformer:
+        """Build from a config. ``feature_columns`` (default :data:`FEATURE_COLUMNS`) rebuilds a
+        checkpoint trained on an earlier, narrower spec."""
         cfg = load_config() if config is None else config
         m = cfg["model"]
         groups = cfg.get("features", {}).get("groups", BASELINE_GROUPS)
+        columns = list(FEATURE_COLUMNS if feature_columns is None else feature_columns)
         return cls(
-            n_features=len(FEATURE_COLUMNS),
+            n_features=len(columns),
             horizons=cfg["horizons"],
             d_model=m["d_model"],
             n_heads=m["n_heads"],
@@ -283,5 +291,6 @@ class SoliaTransformer(nn.Module):
             ff_dim=m.get("ff_dim"),
             dropout=m["dropout"],
             seq_len=m["seq_len"],
-            enabled_columns=group_columns(groups),
+            feature_columns=columns,
+            enabled_columns=[c for c in group_columns(groups) if c in columns],
         )

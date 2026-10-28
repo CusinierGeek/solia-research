@@ -69,6 +69,24 @@ public sealed class Feature
 
     public int? LargeBuyCount { get; set; }
 
+    /// <summary>Simple price return over the pipeline's short momentum window.</summary>
+    public double? ReturnShort { get; set; }
+
+    public double? ReturnMedium { get; set; }
+
+    public double? ReturnLong { get; set; }
+
+    public double? PriceAcceleration { get; set; }
+
+    public double? EmaSlope { get; set; }
+
+    public double? VolumeAcceleration { get; set; }
+
+    public double? VolumeBurstRatio { get; set; }
+
+    /// <summary>Seconds of price history behind the momentum returns (capped at the long window).</summary>
+    public double? PriceHistorySec { get; set; }
+
     /// <summary>Pump.fun-specific signals (JSONB).</summary>
     public string? OnchainSignals { get; set; }
 

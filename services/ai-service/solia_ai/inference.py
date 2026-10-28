@@ -146,25 +146,38 @@ def build_model(checkpoint: dict[str, Any]) -> SoliaTransformer:
     """Rebuild the model from a checkpoint and load its weights, in eval mode.
 
     The architecture comes from the checkpoint's recorded ``hyperparams``; loading the state dict
-    re-checks (via the model's extra state) that its horizons and feature spec match the code —
-    a checkpoint trained against a different feature set is refused rather than silently mis-fed.
+    re-checks (via the model's extra state) that its horizons and feature spec match. A checkpoint
+    trained before columns were added (its spec an ordered subset of the code's) is rebuilt on its
+    own columns: :class:`Predictor` feeds it just those, so a champion keeps serving until a retrain
+    on the new spec is promoted. Any other spec is refused rather than silently mis-fed.
 
     Raises:
-        IncompatibleCheckpointError: the checkpoint's feature spec isn't the code's (e.g. a
-            champion trained before columns were added): it needs a retrain, not a reload.
+        IncompatibleCheckpointError: the checkpoint's feature spec isn't a subset of the code's, in
+            order (e.g. a column was removed or reordered): it needs a retrain, not a reload.
     """
     recorded = checkpoint.get("feature_columns")
+    columns = None
     if recorded is not None and list(recorded) != FEATURE_COLUMNS:
-        added = [c for c in FEATURE_COLUMNS if c not in recorded]
-        raise IncompatibleCheckpointError(
-            f"checkpoint {checkpoint.get('version', '?')} was trained on {len(recorded)} feature "
-            f"columns, the code now has {len(FEATURE_COLUMNS)}"
-            + (f" (new: {', '.join(added)})" if added else "")
-            + ": retrain on the current spec and promote the result"
-        )
-    model = SoliaTransformer.from_config(checkpoint["hyperparams"])
-    model.load_state_dict(checkpoint["model_state"])
+        if not _is_ordered_subset(recorded, FEATURE_COLUMNS):
+            dropped = [c for c in recorded if c not in FEATURE_COLUMNS]
+            raise IncompatibleCheckpointError(
+                f"checkpoint {checkpoint.get('version', '?')} was trained on {len(recorded)} "
+                f"feature columns that aren't the code's {len(FEATURE_COLUMNS)} in order"
+                + (f" (unknown: {', '.join(dropped)})" if dropped else " (reordered)")
+                + ": retrain on the current spec and promote the result"
+            )
+        columns = list(recorded)
+    model = SoliaTransformer.from_config(checkpoint["hyperparams"], feature_columns=columns)
+    state = dict(checkpoint["model_state"])
+    # Checkpoints from before feature groups carry no mask: every column was an input.
+    state.setdefault("feature_mask", torch.ones(model.n_features, dtype=torch.bool))
+    model.load_state_dict(state)
     return model.eval()
+
+
+def _is_ordered_subset(columns: Sequence[str], spec: Sequence[str]) -> bool:
+    remaining = iter(spec)
+    return all(any(c == s for s in remaining) for c in columns)
 
 
 # --------------------------------------------------------------------------- predictions
@@ -216,6 +229,13 @@ class Predictor:
         metadata: dict[str, Any] | None = None,
     ) -> None:
         self.model = model.eval()
+        # A model trained on an earlier spec takes its own columns out of current-spec windows.
+        self._columns = (
+            None
+            if list(model.feature_columns) == FEATURE_COLUMNS
+            or not set(model.feature_columns) <= set(FEATURE_COLUMNS)
+            else [FEATURE_COLUMNS.index(c) for c in model.feature_columns]
+        )
         self.model_version = model_version
         self.temperature = _check_temperature(temperature)
         # The checkpoint's non-weight fields (metrics, created_at, train_end_ts, ...).
@@ -292,6 +312,12 @@ class Predictor:
         xs, masks = [], []
         for window in windows:
             array = np.asarray(window, dtype=np.float32)
+            if (
+                self._columns is not None
+                and array.ndim == 2
+                and array.shape[1] == len(FEATURE_COLUMNS)
+            ):
+                array = array[:, self._columns]
             if array.ndim != 2 or array.shape[1] != self.model.n_features:
                 raise ValueError(
                     f"each window must be [L, {self.model.n_features}], got shape {array.shape}"
