@@ -6,18 +6,19 @@ using Solia.DataPipeline.Options;
 namespace Solia.DataPipeline.Health;
 
 /// <summary>
-/// Reflects the live stream's connection state. When the probe is off the stream isn't running,
-/// so it reports Healthy ("idle"). When on, it's Healthy while connected and Degraded (not
-/// Unhealthy — reconnecting is expected) while down, so a transient drop doesn't fail /health.
+/// Reflects the live stream's connection state. The stream runs in ingest mode or under the probe
+/// (mutually exclusive); with neither it isn't running, so it reports Healthy ("idle"). Otherwise it's
+/// Healthy while connected and Degraded (not Unhealthy — reconnecting is expected) while down, so a
+/// transient drop doesn't fail /health.
 /// </summary>
 public sealed class StreamHealthCheck(StreamConnectionState state, IOptions<PipelineOptions> options) : IHealthCheck
 {
     public Task<HealthCheckResult> CheckHealthAsync(
         HealthCheckContext context, CancellationToken cancellationToken = default)
     {
-        if (!options.Value.StreamProbe)
+        if (!options.Value.Ingest && !options.Value.StreamProbe)
         {
-            return Task.FromResult(HealthCheckResult.Healthy("stream idle (probe disabled)"));
+            return Task.FromResult(HealthCheckResult.Healthy("stream idle (ingest and probe disabled)"));
         }
 
         StreamStatus status = state.Current;

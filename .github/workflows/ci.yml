@@ -67,3 +67,50 @@ jobs:
       - name: Test
         if: steps.detect.outputs.found == 'true'
         run: dotnet test --no-build -c Release
+
+  # Builds every service image on each PR (never pushed) and checks it runs non-root.
+  # T2–T5 add their image as one more `include` entry.
+  docker:
+    name: Docker image (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: data-pipeline
+            dockerfile: infra/docker/data-pipeline.Dockerfile
+            # Probe the image's HEALTHCHECK against a real Postgres.
+            healthcheck: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: docker build -f ${{ matrix.dockerfile }} -t solia-${{ matrix.service }}:ci .
+      - name: Assert non-root
+        run: |
+          uid=$(docker run --rm --entrypoint id solia-${{ matrix.service }}:ci -u)
+          echo "uid=$uid"
+          if [ "$uid" = "0" ]; then
+            echo "::error::solia-${{ matrix.service }} runs as root"
+            exit 1
+          fi
+      - name: Assert healthy (with Postgres)
+        if: matrix.healthcheck
+        run: |
+          docker network create solia-ci
+          docker run -d --name postgres --network solia-ci \
+            -e POSTGRES_USER=solia -e POSTGRES_PASSWORD=change_me -e POSTGRES_DB=solia postgres:16-alpine
+          docker run -d --name app --network solia-ci -e POSTGRES_HOST=postgres solia-${{ matrix.service }}:ci
+          status=starting
+          for _ in $(seq 1 30); do
+            state=$(docker inspect -f '{{.State.Status}}' app)
+            status=$(docker inspect -f '{{.State.Health.Status}}' app)
+            echo "state=$state health=$status"
+            [ "$status" = "healthy" ] && exit 0
+            # Fail fast: an unhealthy or exited container won't recover by waiting.
+            if [ "$status" = "unhealthy" ] || [ "$state" != "running" ]; then break; fi
+            sleep 5
+          done
+          echo "::error::solia-${{ matrix.service }} did not become healthy (state=$state health=$status)"
+          docker inspect -f '{{json .State.Health}}' app
+          docker logs app
+          exit 1

@@ -21,16 +21,45 @@ public class DbConnectionSettingsTests
         Assert.Equal("solia", cs.Database);
         Assert.Equal("solia", cs.Username);
         Assert.Equal("change_me", cs.Password);
+        Assert.Equal(GssEncryptionMode.Disable, cs.GssEncryptionMode);
     }
 
     [Fact]
     public void Explicit_connection_string_wins_over_parts()
     {
-        string resolved = DbConnectionSettings.Resolve(Lookup(
-            ("SOLIA_DB_CONNECTION", "Host=db;Database=x"),
-            ("POSTGRES_HOST", "ignored")));
+        var cs = new NpgsqlConnectionStringBuilder(DbConnectionSettings.Resolve(Lookup(
+            ("SOLIA_DB_CONNECTION", " Host=db;Database=x "),
+            ("POSTGRES_HOST", "ignored"))));
 
-        Assert.Equal("Host=db;Database=x", resolved);
+        Assert.Equal("db", cs.Host);
+        Assert.Equal("x", cs.Database);
+    }
+
+    [Theory]
+    [InlineData("Host=db;Database=x")]
+    [InlineData("Host=db;Database=x;GSS Encryption Mode=Prefer")]
+    public void Explicit_connection_string_still_skips_gssapi(string explicitConn)
+    {
+        var cs = new NpgsqlConnectionStringBuilder(DbConnectionSettings.Resolve(Lookup(
+            ("SOLIA_DB_CONNECTION", explicitConn))));
+
+        Assert.Equal(GssEncryptionMode.Disable, cs.GssEncryptionMode);
+    }
+
+    [Fact]
+    public void ApplyDefaults_keeps_the_other_settings()
+    {
+        var cs = new NpgsqlConnectionStringBuilder(
+            DbConnectionSettings.ApplyDefaults("Host=h;Port=6000;Username=u;Password=p;Pooling=false"));
+
+        Assert.Equal(("h", 6000, "u", "p", false), (cs.Host, cs.Port, cs.Username, cs.Password, cs.Pooling));
+        Assert.Equal(GssEncryptionMode.Disable, cs.GssEncryptionMode);
+    }
+
+    [Fact]
+    public void ApplyDefaults_rejects_a_malformed_string()
+    {
+        Assert.ThrowsAny<ArgumentException>(() => DbConnectionSettings.ApplyDefaults("Nope=1"));
     }
 
     [Fact]

@@ -30,6 +30,9 @@ services:
       context: .
       dockerfile: infra/docker/data-pipeline.Dockerfile
     env_file: [.env]
+    environment:
+      # The pipeline's job in the stack is to ingest; set INGEST=false in .env to run it idle.
+      INGEST: ${INGEST:-true}
     depends_on:
       postgres:
         condition: service_healthy

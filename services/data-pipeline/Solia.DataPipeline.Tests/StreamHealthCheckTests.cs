@@ -8,12 +8,37 @@ namespace Solia.DataPipeline.Tests;
 
 public class StreamHealthCheckTests
 {
-    private static Task<HealthCheckResult> Check(StreamConnectionState state, bool probe) =>
-        new StreamHealthCheck(state, Microsoft.Extensions.Options.Options.Create(new PipelineOptions { StreamProbe = probe }))
+    private static Task<HealthCheckResult> Check(StreamConnectionState state, bool probe, bool ingest = false) =>
+        new StreamHealthCheck(state, Microsoft.Extensions.Options.Options.Create(
+                new PipelineOptions { StreamProbe = probe, Ingest = ingest }))
             .CheckHealthAsync(new HealthCheckContext());
 
     [Fact]
-    public async Task Idle_when_probe_disabled_even_if_disconnected()
+    public async Task Ingest_mode_reports_a_stream_drop_as_degraded()
+    {
+        var state = new StreamConnectionState();
+        state.MarkConnected();
+        state.MarkDisconnected("closed by server");
+
+        HealthCheckResult result = await Check(state, probe: false, ingest: true);
+
+        Assert.Equal(HealthStatus.Degraded, result.Status);
+        Assert.Contains("closed by server", result.Description);
+    }
+
+    [Fact]
+    public async Task Ingest_mode_is_healthy_while_connected()
+    {
+        var state = new StreamConnectionState();
+        state.MarkConnected();
+
+        HealthCheckResult result = await Check(state, probe: false, ingest: true);
+
+        Assert.Equal(HealthStatus.Healthy, result.Status);
+    }
+
+    [Fact]
+    public async Task Idle_when_ingest_and_probe_disabled_even_if_disconnected()
     {
         HealthCheckResult result = await Check(new StreamConnectionState(), probe: false);
 

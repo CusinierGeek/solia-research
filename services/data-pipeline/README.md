@@ -27,6 +27,23 @@ POSTGRES_HOST=localhost dotnet run --project services/data-pipeline/Solia.DataPi
   (HTTP 503) otherwise. The database check times out after 3 s.
 - A startup row appears in `logs` (`service = 'data-pipeline'`).
 
+### Run in Docker
+
+```bash
+docker build -f infra/docker/data-pipeline.Dockerfile -t solia-data-pipeline .   # from the repo root
+docker run --network solia_solia -e POSTGRES_HOST=postgres solia-data-pipeline
+```
+
+Non-root, Production config from env vars only (nothing baked in): a bare `docker run` like the
+one above starts **idle** (`INGEST` defaults to `false`; add `-e INGEST=true`), while
+`docker compose --profile app up` ingests (compose sets `INGEST=${INGEST:-true}`).
+`/health` is on in-container port `8080` (the base image's `ASPNETCORE_HTTP_PORTS`). The image's
+`HEALTHCHECK` runs `dotnet Solia.DataPipeline.dll --healthcheck`, which probes the port Kestrel is
+configured with (`ASPNETCORE_URLS` / `ASPNETCORE_HTTP_PORTS`, else 8080); it covers
+**liveness + database** only: `/health` is 503 only when the database is unreachable, while a
+pumpapi stream drop (with `INGEST` or `STREAM_PROBE` on) is `Degraded` (HTTP 200) — an external
+outage a container restart can't fix shouldn't mark the container unhealthy.
+
 ### Watch real events (opt-in probe)
 
 ```bash

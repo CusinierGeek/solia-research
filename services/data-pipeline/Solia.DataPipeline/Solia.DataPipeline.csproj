@@ -15,6 +15,11 @@
     <ProjectReference Include="..\..\shared\Solia.Shared\Solia.Shared.csproj" />
   </ItemGroup>
 
+  <!-- Local-dev overrides only: never published, so a container never picks up Development config. -->
+  <ItemGroup>
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="Solia.DataPipeline.Tests" />
   </ItemGroup>

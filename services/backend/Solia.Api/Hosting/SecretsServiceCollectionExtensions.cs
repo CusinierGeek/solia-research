@@ -76,7 +76,8 @@ public static class SecretsServiceCollectionExtensions
     /// <summary>
     /// Overlays the secrets on the plaintext-configured connection string: a <c>db_connection</c> secret
     /// replaces it outright; otherwise a <c>db_password</c> secret replaces its password. With neither, the
-    /// configured string is used as is.
+    /// configured string is used as is. A <c>db_connection</c> secret gets the
+    /// <see cref="DbConnectionSettings.ApplyDefaults"/> settings too (the configured string already has them).
     /// </summary>
     public static string ResolveConnectionString(string configured, ISecretsProvider secrets)
     {
@@ -84,7 +85,7 @@ public static class SecretsServiceCollectionExtensions
 
         if (secrets.TryGet(SecretNames.DbConnection, out string? connection))
         {
-            return connection;
+            return DbConnectionSettings.ApplyDefaults(connection);
         }
         if (secrets.TryGet(SecretNames.DbPassword, out string? password))
         {

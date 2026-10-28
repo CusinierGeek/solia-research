@@ -57,7 +57,12 @@ public sealed class SecretsWiringTests : IDisposable
             [SecretNames.DbPassword] = FakeSecret.New(),
         });
 
-        Assert.Equal(connection, SecretsServiceCollectionExtensions.ResolveConnectionString(Configured, secrets));
+        var resolved = new NpgsqlConnectionStringBuilder(
+            SecretsServiceCollectionExtensions.ResolveConnectionString(Configured, secrets));
+
+        Assert.Equal("secret-host", resolved.Host);
+        Assert.Equal(new NpgsqlConnectionStringBuilder(connection).Password, resolved.Password);
+        Assert.Equal(GssEncryptionMode.Disable, resolved.GssEncryptionMode);
     }
 
     [Fact]

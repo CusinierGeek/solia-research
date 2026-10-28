@@ -6,6 +6,7 @@ namespace Solia.Shared.Configuration;
 /// The project-wide database connection contract (see .env.example): SOLIA_DB_CONNECTION
 /// wins, else the POSTGRES_* parts, whose defaults suit local dev against the compose
 /// Postgres. Every service resolves its connection string here so they can't drift apart.
+/// Whatever its source, the string goes through <see cref="ApplyDefaults"/>.
 /// </summary>
 public static class DbConnectionSettings
 {
@@ -19,7 +20,7 @@ public static class DbConnectionSettings
         string? explicitConn = lookup(ConnectionKey);
         if (!string.IsNullOrWhiteSpace(explicitConn))
         {
-            return explicitConn.Trim();
+            return ApplyDefaults(explicitConn.Trim());
         }
 
         var builder = new NpgsqlConnectionStringBuilder
@@ -30,6 +31,16 @@ public static class DbConnectionSettings
             Username = FlatValues.Get(lookup, "POSTGRES_USER", "solia"),
             Password = FlatValues.Get(lookup, "POSTGRES_PASSWORD", "change_me"),
         };
-        return builder.ConnectionString;
+        return ApplyDefaults(builder.ConnectionString);
     }
+
+    /// <summary>
+    /// Forces the settings every Solia connection needs, whatever the string's source (POSTGRES_*,
+    /// SOLIA_DB_CONNECTION, a <c>db_connection</c> secret): password auth only, so the GSSAPI
+    /// negotiation — which fails loudly ("Cannot load library libgssapi_krb5.so.2") in the .NET
+    /// runtime images — is skipped. A malformed string throws <see cref="ArgumentException"/>.
+    /// </summary>
+    public static string ApplyDefaults(string connectionString) =>
+        new NpgsqlConnectionStringBuilder(connectionString) { GssEncryptionMode = GssEncryptionMode.Disable }
+            .ConnectionString;
 }

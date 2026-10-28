@@ -1,0 +1,49 @@
+# Docker build context = repo root (shared by every infra/docker/*.Dockerfile).
+# Keep it small and free of secrets: each Dockerfile COPYs only what its service needs.
+
+# ---- VCS / IDE ----
+.git/
+.github/
+.vs/
+.vscode/
+.idea/
+**/*.user
+**/*.suo
+
+# ---- Secrets & env (never in an image; injected at runtime) ----
+# `**/` so copies inside a service folder (which a Dockerfile COPYs whole) are excluded too.
+**/.env
+**/.env.*
+!**/.env.example
+**/*.env.local
+**/secrets/
+**/*.pem
+**/*.key
+**/*.plain.json
+**/master.key
+**/*.masterkey
+
+# ---- .NET build outputs & test results ----
+**/bin/
+**/obj/
+**/TestResults/
+artifacts/
+
+# ---- Python ----
+**/.venv/
+**/venv/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/*.egg-info/
+**/.coverage
+**/htmlcov/
+
+# ---- ML artifacts & data (mounted as volumes, not baked in) ----
+models/
+data/
+
+# ---- Docs (service READMEs stay: Python packaging may reference them) ----
+docs/

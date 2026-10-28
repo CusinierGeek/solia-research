@@ -9,6 +9,13 @@ using Solia.Shared.Logging;
 using Solia.DataPipeline.Options;
 using Solia.DataPipeline.Pipeline;
 using Solia.Shared.Data;
+using Solia.Shared.Hosting;
+
+// --- Container healthcheck: `--healthcheck` probes /health and exits without starting the host ---
+if (HealthProbe.IsRequested(args))
+{
+    return await HealthProbe.RunAsync(args);
+}
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -61,7 +68,8 @@ var app = builder.Build();
 app.MapHealthChecks("/health");
 app.MapGet("/", () => "Solia data-pipeline");
 
-app.Run();
+await app.RunAsync();
+return 0;
 
 // Exposed for WebApplicationFactory in Solia.DataPipeline.Tests.
 public partial class Program;
