@@ -249,7 +249,7 @@ class EvaluationReport:
 
     def as_dict(self) -> dict[str, Any]:
         """A JSON-safe dict (non-finite metrics, which JSON can't hold, become ``null``)."""
-        return _json_safe(asdict(self))
+        return json_safe(asdict(self))
 
     def to_json(self) -> str:
         return json.dumps(self.as_dict(), indent=2, sort_keys=False)
@@ -272,9 +272,9 @@ class EvaluationReport:
         for horizon in self.horizons:
             p, r, e = self.pump[horizon], self.rug[horizon], self.expected_return[horizon]
             lines.append(
-                f"{horizon:>8} | {_fmt(p['roc_auc']):>8} {_fmt(p['pr_auc']):>8} "
-                f"{_fmt(p['ece']):>8} | {_fmt(r['roc_auc']):>8} {_fmt(r['pr_auc']):>8} "
-                f"{_fmt(r['ece']):>8} | {_fmt(e['ic']):>7} {_fmt(e['mae']):>8}"
+                f"{horizon:>8} | {fmt(p['roc_auc']):>8} {fmt(p['pr_auc']):>8} "
+                f"{fmt(p['ece']):>8} | {fmt(r['roc_auc']):>8} {fmt(r['pr_auc']):>8} "
+                f"{fmt(r['ece']):>8} | {fmt(e['ic']):>7} {fmt(e['mae']):>8}"
             )
         pol = self.policy
         lines += [
@@ -282,22 +282,22 @@ class EvaluationReport:
             f"Reference policy @ {pol['horizon']} "
             f"(pump>={pol['pump_threshold']}, rug<={pol['rug_threshold']}): "
             f"{pol['n_trades']}/{pol['n_candidates']} trades, "
-            f"win-rate {_fmt(pol['win_rate'])}, avg P&L {_fmt(pol['avg_pnl'])}, "
-            f"total P&L {_fmt(pol['total_pnl'])} "
-            f"(buy-all avg {_fmt(pol['baseline_avg_return'])})",
+            f"win-rate {fmt(pol['win_rate'])}, avg P&L {fmt(pol['avg_pnl'])}, "
+            f"total P&L {fmt(pol['total_pnl'])} "
+            f"(buy-all avg {fmt(pol['baseline_avg_return'])})",
         ]
         return "\n".join(lines)
 
 
-def _fmt(value: Any) -> str:
+def fmt(value: Any) -> str:
     return "n/a" if value is None else f"{value:.4f}"
 
 
-def _json_safe(value: Any) -> Any:
+def json_safe(value: Any) -> Any:
     if isinstance(value, dict):
-        return {k: _json_safe(v) for k, v in value.items()}
+        return {k: json_safe(v) for k, v in value.items()}
     if isinstance(value, list):
-        return [_json_safe(v) for v in value]
+        return [json_safe(v) for v in value]
     if isinstance(value, float) and not np.isfinite(value):
         return None
     return value
@@ -410,8 +410,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--bins", type=int, default=DEFAULT_ECE_BINS, help="ECE bin count")
     parser.add_argument("--policy-horizon", help="reference-policy horizon (default: first)")
-    parser.add_argument("--pump-threshold", type=float, default=0.6)
-    parser.add_argument("--rug-threshold", type=float, default=0.3)
+    parser.add_argument("--pump-threshold", type=float, default=ReferencePolicy.pump_threshold)
+    parser.add_argument("--rug-threshold", type=float, default=ReferencePolicy.rug_threshold)
     args = parser.parse_args(argv)
 
     from .config import load_config

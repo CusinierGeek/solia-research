@@ -182,29 +182,33 @@ def save_checkpoint(checkpoint: Mapping[str, Any], path: Path) -> None:
         raise
 
 
-def train(
-    df: pd.DataFrame,
-    config: Mapping[str, Any] | None = None,
-    *,
-    model_dir: str | os.PathLike[str] | None = None,
-    engine: Any = None,
-    version: str | None = None,
-    register: bool = True,
-    is_champion: bool = True,
-    val_fraction: float = 0.2,
-    device: str | torch.device | None = None,
-) -> TrainResult:
-    """Train on a ``features`` frame, save a checkpoint, and optionally register it.
+@dataclass
+class FitResult:
+    """A fitted model (best epoch's weights) and its validation trace; nothing saved."""
 
-    ``register`` writes the ``models`` row; it needs an ``engine`` (skipped with a warning-free
-    no-op otherwise, e.g. in tests). The checkpoint is always written.
+    model: SoliaTransformer
+    best_epoch: int
+    metrics: dict[str, float]
+    history: list[dict[str, float]] = field(default_factory=list)
+
+
+def fit(
+    train_ds: SequenceDataset,
+    val_ds: SequenceDataset,
+    config: Mapping[str, Any],
+    *,
+    device: str | torch.device | None = None,
+) -> FitResult:
+    """The training loop alone: fit a fresh model on ``train_ds``, early-stopping on ``val_ds``.
+
+    Seeds torch from ``training.seed``. Writes nothing — :func:`train` saves and registers; the
+    ablation harness only scores the in-memory model.
     """
-    cfg = load_config() if config is None else config
+    cfg = config
     training = cfg["training"]
     device = torch.device(device) if device is not None else torch.device("cpu")
     torch.manual_seed(int(training["seed"]))
 
-    train_ds, val_ds = make_datasets(df, cfg, val_fraction=val_fraction)
     balanced = bool(training.get("balanced_sampling", True))
     train_loader, val_loader = make_loaders(
         train_ds,
@@ -270,6 +274,30 @@ def train(
         )
     model.load_state_dict(best_state)
     metrics = {f"val_{k}": v for k, v in best_metrics.items()}
+    return FitResult(model=model, best_epoch=best_epoch, metrics=metrics, history=history)
+
+
+def train(
+    df: pd.DataFrame,
+    config: Mapping[str, Any] | None = None,
+    *,
+    model_dir: str | os.PathLike[str] | None = None,
+    engine: Any = None,
+    version: str | None = None,
+    register: bool = True,
+    is_champion: bool = True,
+    val_fraction: float = 0.2,
+    device: str | torch.device | None = None,
+) -> TrainResult:
+    """Train on a ``features`` frame, save a checkpoint, and optionally register it.
+
+    ``register`` writes the ``models`` row; it needs an ``engine`` (skipped with a warning-free
+    no-op otherwise, e.g. in tests). The checkpoint is always written.
+    """
+    cfg = load_config() if config is None else config
+    train_ds, val_ds = make_datasets(df, cfg, val_fraction=val_fraction)
+    fitted = fit(train_ds, val_ds, cfg, device=device)
+    model, metrics = fitted.model, fitted.metrics
 
     version = version or default_version()
     directory = Path(
@@ -306,10 +334,10 @@ def train(
         version=version,
         checkpoint_path=checkpoint_path,
         n_params=model.n_params,
-        best_epoch=best_epoch,
+        best_epoch=fitted.best_epoch,
         metrics=metrics,
         hyperparams=hyperparams_snapshot(cfg),
-        history=history,
+        history=fitted.history,
         model_id=model_id,
     )
 

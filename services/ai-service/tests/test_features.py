@@ -7,7 +7,15 @@ import pandas as pd
 import pytest
 from conftest import strip_sql_comments
 
-from solia_ai.features import FEATURE_COLUMNS, NON_FEATURE_COLUMNS, build_feature_matrix
+from solia_ai.features import (
+    BASELINE_GROUPS,
+    FEATURE_COLUMNS,
+    FEATURE_GROUPS,
+    NON_FEATURE_COLUMNS,
+    build_feature_matrix,
+    group_columns,
+    group_mask,
+)
 
 # Lines inside CREATE TABLE that define constraints, not columns.
 _CONSTRAINT_WORDS = {"constraint", "primary", "unique", "check", "foreign", "exclude", "like"}
@@ -209,3 +217,45 @@ def test_empty_frame_gives_an_empty_matrix():
     matrix = build_feature_matrix(pd.DataFrame(columns=FEATURE_COLUMNS))
 
     assert matrix.shape == (0, len(FEATURE_COLUMNS))
+
+
+# --- feature groups (ablation) ---
+
+
+def test_every_feature_column_is_in_exactly_one_group():
+    grouped = [col for cols in FEATURE_GROUPS.values() for col in cols]
+
+    assert sorted(grouped) == sorted(FEATURE_COLUMNS)
+    assert len(grouped) == len(set(grouped))
+
+
+def test_baseline_groups_are_the_current_19_columns():
+    assert set(BASELINE_GROUPS) <= set(FEATURE_GROUPS)
+    assert group_columns(BASELINE_GROUPS) == FEATURE_COLUMNS
+    assert len(FEATURE_COLUMNS) == 19
+
+
+def test_group_columns_keep_canonical_order():
+    columns = group_columns(["holders", "price"])
+
+    assert set(columns) == set(FEATURE_GROUPS["holders"]) | set(FEATURE_GROUPS["price"])
+    assert columns == [col for col in FEATURE_COLUMNS if col in columns]
+
+
+def test_group_mask_selects_exactly_the_group_columns():
+    mask = group_mask(["liquidity"])
+
+    selected = [col for col, keep in zip(FEATURE_COLUMNS, mask, strict=True) if keep]
+    assert mask.dtype == bool and mask.shape == (len(FEATURE_COLUMNS),)
+    assert selected == ["liquidity", "is_migrated"]
+
+
+def test_no_group_masks_everything():
+    assert not group_mask([]).any()
+
+
+def test_unknown_group_is_an_error():
+    with pytest.raises(ValueError, match="unknown feature group.*nope"):
+        group_columns(["price", "nope"])
+    with pytest.raises(ValueError, match="unknown feature group"):
+        group_mask(["nope"])

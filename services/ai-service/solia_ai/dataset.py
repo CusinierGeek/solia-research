@@ -388,7 +388,7 @@ def make_datasets(
     shorter than the embargo), rather than failing later in training.
     """
     cfg = load_config() if config is None else config
-    samples = _config_samples(df, cfg)
+    samples = config_samples(df, cfg)
     embargo = embargo_seconds(samples.horizons)
     train_idx, val_idx = temporal_split(
         samples.end_ts, val_fraction=val_fraction, embargo_seconds=embargo
@@ -407,7 +407,7 @@ def embargo_seconds(horizons: Sequence[str]) -> int:
     return max(horizon_seconds(h) for h in horizons)
 
 
-def _config_samples(df: pd.DataFrame, cfg: Mapping[str, Any]) -> Samples:
+def config_samples(df: pd.DataFrame, cfg: Mapping[str, Any]) -> Samples:
     labeling = cfg["labeling"]
     return build_samples(
         df,
@@ -432,7 +432,7 @@ def make_holdout_dataset(
     Raises when nothing is left — evaluating on an empty window would report nothing.
     """
     cfg = load_config() if config is None else config
-    samples = _config_samples(df, cfg)
+    samples = config_samples(df, cfg)
     after = int(train_end_ts) + embargo_seconds(samples.horizons)
     indices = np.where(samples.end_ts > after)[0]
     if len(indices) == 0:

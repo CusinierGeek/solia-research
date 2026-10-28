@@ -8,6 +8,8 @@ signal); a missing column or a non-numeric value is an error, never silently zer
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import numpy as np
 import pandas as pd
 
@@ -34,6 +36,52 @@ FEATURE_COLUMNS: list[str] = [
     "price_derivative",
     "is_migrated",
 ]
+
+# Feature groups for ablation (solia_ai.ablation): every model input belongs to exactly one group
+# — see tests/test_features.py. An enrichment task adds its columns to FEATURE_COLUMNS *and* a new
+# group here, so its lift can be measured against the baseline before it is accepted.
+FEATURE_GROUPS: dict[str, tuple[str, ...]] = {
+    "price": ("price", "market_cap", "ema", "rsi", "price_derivative", "volatility"),
+    "liquidity": ("liquidity", "is_migrated"),
+    "flow": (
+        "volume",
+        "buy_events",
+        "sell_events",
+        "buy_sell_ratio",
+        "volume_growth_rate",
+        "tx_creation_rate",
+    ),
+    "holders": ("holders", "holders_growth_rate"),
+    "context": ("token_age_sec", "trending_score", "social_mentions"),
+}
+
+# The groups making up the baseline model: today's 19 columns. Groups outside it are candidates.
+BASELINE_GROUPS: tuple[str, ...] = ("price", "liquidity", "flow", "holders", "context")
+
+
+def group_columns(groups: Iterable[str]) -> list[str]:
+    """The columns of ``groups``, in :data:`FEATURE_COLUMNS` order.
+
+    Raises:
+        ValueError: on a group name not declared in :data:`FEATURE_GROUPS`.
+    """
+    groups = list(groups)
+    unknown = [g for g in groups if g not in FEATURE_GROUPS]
+    if unknown:
+        raise ValueError(
+            f"unknown feature group(s): {', '.join(unknown)} "
+            f"(known: {', '.join(FEATURE_GROUPS)})"
+        )
+    wanted = {col for g in groups for col in FEATURE_GROUPS[g]}
+    return [col for col in FEATURE_COLUMNS if col in wanted]
+
+
+def group_mask(groups: Iterable[str]) -> np.ndarray:
+    """A ``[F]`` boolean mask over :data:`FEATURE_COLUMNS`: ``True`` where the column is in an
+    enabled group. Disabled columns are zeroed by the ablation harness (no signal)."""
+    enabled = set(group_columns(groups))
+    return np.array([col in enabled for col in FEATURE_COLUMNS], dtype=bool)
+
 
 # Columns of the `features` table that are deliberately NOT model inputs (identity, bookkeeping,
 # categorical/JSONB we don't encode yet). `venue` encoding and the JSONB signals are future work.

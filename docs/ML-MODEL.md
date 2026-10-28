@@ -128,6 +128,37 @@ paper-trading account — a single live path has no counterfactual for the champ
   confidence interval (bootstrap, Deflated Sharpe) and require the lift to hold across **multiple
   windows / seeds**, not a single run. `seed` makes *training* reproducible, not eval-sample luck.
 
+### Ablation: every feature group must earn its place
+
+New features are accepted only on **measured lift** (`solia_ai/ablation.py`), with the same rules
+as the promotion gate: predictive metrics primary, reference-policy P&L secondary, several windows
+and seeds.
+
+- **Feature groups** are declared once in `features.py` (`FEATURE_GROUPS`: group → columns of
+  `FEATURE_COLUMNS`; every column in exactly one group). `BASELINE_GROUPS` = today's 19 columns. An
+  enrichment task adds its columns *and* a new group.
+- **Variants**: the baseline, plus one per group under test — a non-baseline group is **added**
+  (`+group`), a baseline group is **dropped** (`-group`). A disabled group's columns are zeroed in
+  the input; architecture, labels and hyperparameters are identical.
+- **Walk-forward windows**: the most recent `--eval-fraction` of labeled windows is cut into
+  `--windows` consecutive slices. Each slice is scored by a model trained only on samples ending
+  before it minus the label embargo; early stopping uses a time split of that training pool, never
+  the scored slice. Every variant is scored on the same slices.
+- **Seeds**: every (window, variant) is trained under each `--seeds` value.
+- **Lift** = metric *with group* − *without group*, paired run for run, positive = better (ECE
+  negated). Reported as mean ± std per metric (ROC-AUC / PR-AUC / ECE per head and horizon, then
+  policy `total_pnl` / `avg_pnl`). Verdict: **better** if `mean − std > margin`, **worse** if
+  `mean + std < −margin`, else **not significant**; **n/a** when the metric is undefined in every
+  run (e.g. a single-class horizon).
+- Ablation never saves a checkpoint, registers a model or touches `is_champion`.
+
+```bash
+# from services/ai-service, database from SOLIA_DB_CONNECTION / POSTGRES_* (a replayed history)
+python -m solia_ai.ablation                                   # baseline vs dropping each group
+python -m solia_ai.ablation --groups flow holders --windows 4 --seeds 0 1 2 3 \
+    --margin 0.01 --pnl-margin 0 --out reports/ablation.json  # JSON report + readable summary
+```
+
 ## Files (ai-service, built in Sprints 2 & 7)
 
 | File | Role |
@@ -136,6 +167,8 @@ paper-trading account — a single live path has no counterfactual for the champ
 | `dataset.py` | Dataset/DataLoader, sequence windowing, labeling |
 | `features.py` | Shared feature spec / parity with pipeline |
 | `train.py` | Initial training entrypoint |
+| `evaluate.py` | Held-out evaluation (predictive metrics + reference-policy P&L) |
+| `ablation.py` | Per-feature-group lift across windows & seeds |
 | `inference.py` | Load champion, run predictions (+ ONNX export) |
 | `retrain.py` | Continuous-training orchestrator (Sprint 7) |
 | `api.py` | FastAPI app (`/predict`, `/model/status`, `/model/retrain`) |
