@@ -19,6 +19,11 @@
     <ProjectReference Include="..\Solia.Secrets\Solia.Secrets.csproj" />
   </ItemGroup>
 
+  <!-- Local-dev overrides only: never published, so a container never picks up Development config. -->
+  <ItemGroup>
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="Solia.Api.Tests" />
   </ItemGroup>

@@ -11,6 +11,14 @@ using Solia.Bot.Configuration;
 using Solia.Core.Ai;
 using Solia.Core.Data;
 using Solia.Core.Http;
+using Solia.Shared.Hosting;
+
+// --- Container healthcheck: `--healthcheck` probes /health/live and exits without starting the host (no
+// secrets decrypted, no DB touched). Liveness only: /health/ready stays for readiness (DB + ai-service). ---
+if (HealthProbe.IsRequested(args))
+{
+    return await HealthProbe.RunAsync(args, path: ApiRoutes.HealthLive);
+}
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -86,6 +94,7 @@ app.MapGroup(ApiRoutes.BasePath)
     .MapModelEndpoints();
 
 app.Run();
+return 0;
 
 // Exposed for WebApplicationFactory in Solia.Api.Tests.
 public partial class Program;

@@ -31,6 +31,8 @@ services:
       dockerfile: infra/docker/data-pipeline.Dockerfile
     env_file: [.env]
     environment:
+      # Containers always run as Production (the image default), whatever .env says.
+      ASPNETCORE_ENVIRONMENT: Production
       # The pipeline's job in the stack is to ingest; set INGEST=false in .env to run it idle.
       INGEST: ${INGEST:-true}
     depends_on:
@@ -57,6 +59,9 @@ services:
       context: .
       dockerfile: infra/docker/backend.Dockerfile
     env_file: [.env]
+    environment:
+      # Containers always run as Production (the image default), whatever .env says: no OpenAPI/Swagger.
+      ASPNETCORE_ENVIRONMENT: Production
     ports:
       - "8080:8080"
     depends_on:

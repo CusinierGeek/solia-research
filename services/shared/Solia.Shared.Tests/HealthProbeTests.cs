@@ -27,7 +27,9 @@ public class HealthProbeTests
     [InlineData(new string[0], false)]
     [InlineData(new[] { "--HEALTHCHECK" }, false)]
     [InlineData(new[] { "--urls", "--healthcheck" }, false)]
-    public void IsRequested_only_when_the_flag_comes_first(string[] args, bool expected)
+    [InlineData(new[] { "--healthcheck", "--urls", "http://+:8080" }, false)]
+    [InlineData(new[] { "--healthcheck", "--environment=Production" }, false)]
+    public void IsRequested_only_for_the_exact_probe_shape(string[] args, bool expected)
     {
         Assert.Equal(expected, HealthProbe.IsRequested(args));
     }
@@ -72,6 +74,65 @@ public class HealthProbeTests
         Uri url = HealthProbe.ResolveDefaultUrl(key => env.GetValueOrDefault(key));
 
         Assert.Equal(new Uri($"http://localhost:{expected}/health"), url);
+    }
+
+    [Fact]
+    public async Task Probes_the_service_path_on_the_default_url()
+    {
+        var handler = Returning(HttpStatusCode.OK);
+
+        int code = await HealthProbe.RunAsync(["--healthcheck"], handler, error: TextWriter.Null,
+            environment: key => key == "ASPNETCORE_HTTP_PORTS" ? "9090" : null, path: "/health/live");
+
+        Assert.Equal(0, code);
+        Assert.Equal(new Uri("http://localhost:9090/health/live"), handler.LastUri);
+    }
+
+    [Fact]
+    public async Task A_url_after_the_flag_wins_over_the_service_path()
+    {
+        var handler = Returning(HttpStatusCode.OK);
+
+        await HealthProbe.RunAsync(["--healthcheck", "http://localhost:9000/ping"], handler,
+            error: TextWriter.Null, path: "/health/live");
+
+        Assert.Equal(new Uri("http://localhost:9000/ping"), handler.LastUri);
+    }
+
+    [Fact]
+    public async Task A_url_after_the_flag_ignores_an_invalid_service_path()
+    {
+        var handler = Returning(HttpStatusCode.OK);
+
+        int code = await HealthProbe.RunAsync(["--healthcheck", "http://localhost:9000/ping"], handler,
+            error: TextWriter.Null, path: "health/live");
+
+        Assert.Equal(0, code);
+        Assert.Equal(new Uri("http://localhost:9000/ping"), handler.LastUri);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("health/live")]
+    public async Task An_invalid_service_path_exits_1_without_throwing(string path)
+    {
+        var handler = Returning(HttpStatusCode.OK);
+        var error = new StringWriter();
+
+        int code = await HealthProbe.RunAsync(["--healthcheck"], handler, error: error, path: path);
+
+        Assert.Equal(1, code);
+        Assert.Contains("invalid path", error.ToString());
+        Assert.Null(handler.LastUri);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("health/live")]
+    [InlineData("http://localhost/health")]
+    public void ResolveDefaultUrl_rejects_a_relative_path(string path)
+    {
+        Assert.Throws<ArgumentException>(() => HealthProbe.ResolveDefaultUrl(_ => null, path));
     }
 
     [Fact]

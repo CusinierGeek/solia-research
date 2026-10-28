@@ -85,6 +85,10 @@ jobs:
             dockerfile: infra/docker/ai-service.Dockerfile
             # /health needs neither the database nor a champion model: healthy from a cold start.
             healthcheck: true
+          - service: backend
+            dockerfile: infra/docker/backend.Dockerfile
+            # The HEALTHCHECK probes /health/live (no dependency): healthy with or without the DB.
+            healthcheck: true
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -133,6 +137,81 @@ jobs:
           print("ok: torch", torch.__version__)
           '
           docker image ls solia-ai-service:ci --format 'image size: {{.Size}}'
+      - name: Assert image contents (backend)
+        if: matrix.service == 'backend'
+        run: |
+          docker run --rm --entrypoint sh solia-backend:ci -c '
+          set -e
+          test -f /app/Solia.Api.dll
+          if dotnet --list-sdks | grep -q .; then echo "SDK in the image"; exit 1; fi
+          test ! -e /src || { echo "build-stage sources leaked into the image"; exit 1; }
+          # No tests, no secrets CLI, no Development config, no sources, nothing secret baked in, and no
+          # execution/signing dependency (paper trading only).
+          leaked=$(find /app \( -iname "*Tests*" -o -iname "Solia.Secrets.Cli*" -o -name "appsettings.Development.json"                    -o -name "*.cs" -o -name "*.csproj" -o -name "secrets" -o -name "*.enc" -o -name ".env*"                    -o -iname "Solnet*" \) -print)
+          if [ -n "$leaked" ]; then echo "unexpected files in the image:"; echo "$leaked"; exit 1; fi
+          echo ok
+          '
+          docker image ls solia-backend:ci --format 'image size: {{.Size}}'
+      # docs/SECRETS.md startup behaviour, in the container: secrets.enc on a read-only /app/secrets mount,
+      # SOLIA_MASTER_KEY from the environment. Throwaway file and keys generated for this run only.
+      - name: Assert secrets behaviour (backend)
+        if: matrix.service == 'backend'
+        run: |
+          work=$(mktemp -d)
+          mkdir "$work/secrets"
+          # Every container started here is removed on exit, whatever the outcome.
+          trap 'docker rm -f app-fail app-secrets > /dev/null 2>&1 || true' EXIT
+          key=$(openssl rand -base64 32)
+          other=$(openssl rand -base64 32)
+          echo '{"ci_probe":"not-a-real-secret"}' > "$work/plain.json"
+          # The CLI isn't in the image: run it from the SDK image, as the runner user (every file it writes
+          # stays runner-owned), on a copy of its sources (bin/obj land in the throwaway dir, not the checkout).
+          mkdir "$work/backend"
+          cp -r services/backend/Solia.Secrets services/backend/Solia.Secrets.Cli "$work/backend/"
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e DOTNET_CLI_HOME=/tmp \
+            -v "$work:/work" -e SOLIA_MASTER_KEY="$key" \
+            mcr.microsoft.com/dotnet/sdk:10.0 \
+            dotnet run -v q --project /work/backend/Solia.Secrets.Cli -- encrypt --in /work/plain.json --out /work/secrets/secrets.enc
+          rm "$work/plain.json"
+          # Readable by the image's non-root user (UID 1654) through the read-only mount.
+          chmod -R a+rX "$work/secrets"
+          # Each misconfiguration must make the container exit non-zero on its own (no hang, no fallback),
+          # with a SecretsException as the cause.
+          fails() {
+            name=$1; shift
+            rc=0
+            timeout 60 docker run --name app-fail "$@" solia-backend:ci > "$work/log" 2>&1 || rc=$?
+            # timeout only kills the docker CLI: remove the container itself.
+            docker rm -f app-fail > /dev/null 2>&1 || true
+            if [ "$rc" -eq 0 ]; then echo "::error::$name: the backend started"; cat "$work/log"; exit 1; fi
+            if [ "$rc" -eq 124 ]; then echo "::error::$name: the backend hung instead of failing"; cat "$work/log"; exit 1; fi
+            reason=$(grep -m1 -o 'SecretsException: .*' "$work/log") || {
+              echo "::error::$name: exited $rc without a SecretsException"; cat "$work/log"; exit 1
+            }
+            echo "ok: $name -> $reason"
+          }
+          fails "explicit SOLIA_SECRETS_FILE missing" -e SOLIA_SECRETS_FILE=/app/secrets/secrets.enc
+          fails "wrong master key" -v "$work/secrets:/app/secrets:ro" -e SOLIA_MASTER_KEY="$other"
+          fails "no master key" -v "$work/secrets:/app/secrets:ro"
+          # Right key on the read-only mount: decrypted in memory, the container comes up healthy.
+          docker run -d --name app-secrets -v "$work/secrets:/app/secrets:ro" -e SOLIA_MASTER_KEY="$key" solia-backend:ci
+          status=starting
+          for _ in $(seq 1 12); do
+            state=$(docker inspect -f '{{.State.Status}}' app-secrets)
+            status=$(docker inspect -f '{{.State.Health.Status}}' app-secrets)
+            echo "state=$state health=$status"
+            [ "$status" = "healthy" ] && break
+            # Fail fast: an unhealthy or exited container won't recover by waiting.
+            if [ "$status" = "unhealthy" ] || [ "$state" != "running" ]; then break; fi
+            sleep 5
+          done
+          if [ "$status" != "healthy" ]; then
+            echo "::error::the backend did not become healthy with the right key (state=$state health=$status)"
+            docker logs app-secrets; exit 1
+          fi
+          if docker logs app-secrets 2>&1 | grep -q not-a-real-secret; then
+            echo "::error::decrypted secret value in the logs"; exit 1
+          fi
       - name: Assert healthy (with Postgres)
         if: matrix.healthcheck
         run: |
