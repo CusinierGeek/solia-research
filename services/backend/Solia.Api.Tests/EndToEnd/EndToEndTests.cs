@@ -90,8 +90,8 @@ public class EndToEndTests(EndToEndFixture e2e) : IClassFixture<EndToEndFixture>
 
         AiPredictRequest sent = PredictRequestsFor(EndToEndFixture.PredictMint).Last();
         Assert.Equal(["1m"], sent.Horizons);
-        var window = Assert.IsAssignableFrom<IEnumerable<IReadOnlyDictionary<string, double?>>>(sent.Features).ToList();
-        Assert.Equal([1.0, 2.0, 3.0], window.Select(row => row["price"])); // the seeded rows, oldest first
+        var window = Assert.IsAssignableFrom<IEnumerable<FeatureRow>>(sent.Features).ToList();
+        Assert.Equal([1.0, 2.0, 3.0], window.Select(row => row.Numeric["price"])); // the seeded rows, oldest first
     }
 
     [Fact]

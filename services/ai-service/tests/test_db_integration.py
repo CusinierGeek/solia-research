@@ -9,7 +9,12 @@ from sqlalchemy.exc import OperationalError
 
 from solia_ai.config import ConfigError
 from solia_ai.db import make_engine, read_features, read_trades
-from solia_ai.features import FEATURE_COLUMNS, NON_FEATURE_COLUMNS, build_feature_matrix
+from solia_ai.features import (
+    DB_FEATURE_COLUMNS,
+    FEATURE_COLUMNS,
+    NON_FEATURE_COLUMNS,
+    build_feature_matrix,
+)
 
 T0 = datetime(2026, 4, 20, 12, 0, 0, tzinfo=UTC)
 
@@ -49,7 +54,7 @@ def test_feature_spec_matches_the_migrated_schema(engine):
             ).scalars()
         )
 
-    assert db_columns - NON_FEATURE_COLUMNS == set(FEATURE_COLUMNS)
+    assert db_columns - NON_FEATURE_COLUMNS == set(DB_FEATURE_COLUMNS)  # venue one-hot: derived
     assert NON_FEATURE_COLUMNS <= db_columns
 
 

@@ -105,6 +105,13 @@ public sealed record FeatureSnapshot
     /// </summary>
     public double? NewTraderRatio { get; init; }
 
+    /// <summary>
+    /// Percent [0, 100] of the current pool's LP tokens burned, from the latest event of that pool that
+    /// reported it; null when unknown (none seen yet, e.g. still on the bonding curve, malformed, or
+    /// the token moved to a pool that hasn't reported it).
+    /// </summary>
+    public double? BurnedLiquidity { get; init; }
+
     public IReadOnlyDictionary<string, object?> OnchainSignals { get; init; } =
         new Dictionary<string, object?>();
 

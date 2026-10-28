@@ -176,6 +176,13 @@ internal sealed class TokenState
         _liquidity = e.QuoteInPool ?? _liquidity;
         _supply = e.Supply ?? _supply;
         _venue = e.Venue ?? _venue;
+        // Burned liquidity belongs to a pool: a move to another pool drops the old pool's reading
+        // (unknown until that pool reports its own), so a 100%-burned first pool can't vouch for it.
+        if (e.PoolId is { } poolId && _poolId is not null && poolId != _poolId)
+        {
+            _burned = null;
+        }
+
         _poolId = e.PoolId ?? _poolId;
         _burned = e.BurnedLiquidityPercent ?? _burned;
     }
@@ -381,6 +388,7 @@ internal sealed class TokenState
             TopTraderShare = topTraderShare,
             TraderHhi = traderHhi,
             NewTraderRatio = _concentration.NewTraderRatio,
+            BurnedLiquidity = _burned,
             OnchainSignals = new Dictionary<string, object?>
             {
                 ["burnedLiquidityPercent"] = _burned,

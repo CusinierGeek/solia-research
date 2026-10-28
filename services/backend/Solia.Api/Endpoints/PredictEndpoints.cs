@@ -50,7 +50,7 @@ public static class PredictEndpoints
     {
         (string mint, IReadOnlyList<string>? horizons) = Validate(body);
 
-        List<IReadOnlyDictionary<string, double?>> window = await LoadWindowAsync(
+        List<FeatureRow> window = await LoadWindowAsync(
             db, mint, options.Value.MaxFeatureWindowSize, cancellationToken);
         if (window.Count == 0)
         {
@@ -93,9 +93,10 @@ public static class PredictEndpoints
     /// <summary>
     /// The latest <paramref name="size"/> rows of <paramref name="mint"/>, oldest first, keyed by the ai-service's
     /// <c>FEATURE_COLUMNS</c> names (the <c>features</c> column names). NULLs stay null — the ai-service imputes them.
+    /// <c>venue</c> travels apart, as the raw string the ai-service one-hot encodes.
     /// With <paramref name="upTo"/>, the window ends at that snapshot time (no row after it is read).
     /// </summary>
-    internal static async Task<List<IReadOnlyDictionary<string, double?>>> LoadWindowAsync(
+    internal static async Task<List<FeatureRow>> LoadWindowAsync(
         SoliaDbContext db, string mint, int size, CancellationToken cancellationToken, DateTimeOffset? upTo = null)
     {
         IQueryable<Feature> query = db.Features.AsNoTracking().Where(f => f.Mint == mint);
@@ -144,12 +145,14 @@ public static class PredictEndpoints
                 f.TopTraderShare,
                 f.TraderHhi,
                 f.NewTraderRatio,
+                f.BurnedLiquidity,
+                f.Venue,
                 f.IsMigrated,
             })
             .ToListAsync(cancellationToken);
         rows.Reverse();
 
-        return rows.Select(f => (IReadOnlyDictionary<string, double?>)new Dictionary<string, double?>
+        return rows.Select(f => new FeatureRow(new Dictionary<string, double?>
         {
             ["price"] = (double?)f.Price,
             ["volume"] = (double?)f.Volume,
@@ -186,7 +189,8 @@ public static class PredictEndpoints
             ["top_trader_share"] = f.TopTraderShare,
             ["trader_hhi"] = f.TraderHhi,
             ["new_trader_ratio"] = f.NewTraderRatio,
+            ["burned_liquidity"] = f.BurnedLiquidity,
             ["is_migrated"] = f.IsMigrated ? 1 : 0,
-        }).ToList();
+        }, f.Venue)).ToList();
     }
 }

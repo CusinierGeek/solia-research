@@ -16,8 +16,28 @@ from collections.abc import Iterable, Sequence
 import numpy as np
 import pandas as pd
 
-# Ordered model inputs: the numeric features plus the migrated flag. Keep this list and the
-# `features` table (services/db/migrations) in lockstep — see tests/test_features.py.
+# FE-T5 (#114): the `venue` column, one-hot encoded at load time rather than in the database (no
+# schema churn when the list changes; the raw venue stays the single stored fact). Fixed category
+# list: the canonical venues the pipeline emits (PumpApiVenueMap); anything else — a new venue,
+# orca/sunrise, or NULL — falls in the `venue_other` bucket. Appending a venue appends a column.
+VENUES: tuple[str, ...] = (
+    "pumpfun",
+    "pumpswap",
+    "raydium-launchpad",
+    "raydium",
+    "meteora-launchpad",
+    "meteora",
+    "bonk",
+)
+VENUE_OTHER = "venue_other"
+VENUE_COLUMNS: tuple[str, ...] = (
+    *(f"venue_{v.replace('-', '_')}" for v in VENUES),
+    VENUE_OTHER,
+)
+
+# Ordered model inputs: the numeric features plus the migrated flag, then the venue one-hot. Keep
+# the stored ones (DB_FEATURE_COLUMNS) and the `features` table (services/db/migrations) in
+# lockstep — see tests/test_features.py.
 FEATURE_COLUMNS: list[str] = [
     "price",
     "volume",
@@ -55,7 +75,12 @@ FEATURE_COLUMNS: list[str] = [
     "top_trader_share",
     "trader_hhi",
     "new_trader_ratio",
+    "burned_liquidity",
+    *VENUE_COLUMNS,
 ]
+
+# The model inputs stored as `features` columns (the venue one-hot is derived from `venue`).
+DB_FEATURE_COLUMNS: list[str] = [col for col in FEATURE_COLUMNS if col not in VENUE_COLUMNS]
 
 # Feature groups for ablation (solia_ai.ablation): every model input belongs to exactly one group
 # — see tests/test_features.py. An enrichment task adds its columns to FEATURE_COLUMNS *and* a new
@@ -99,6 +124,10 @@ FEATURE_GROUPS: dict[str, tuple[str, ...]] = {
         "trader_hhi",
         "new_trader_ratio",
     ),
+    # FE-T5 (#114): % of the AMM pool's LP burned (rug signal), from the pool-creation event.
+    "burn": ("burned_liquidity",),
+    # FE-T5 (#114): trading venue (Pump.fun curve vs launchpads vs AMMs), one-hot.
+    "venue": VENUE_COLUMNS,
 }
 
 # The groups making up the baseline model: the original 19 columns. Groups outside it are
@@ -146,10 +175,13 @@ def group_mask(groups: Iterable[str]) -> np.ndarray:
 # way" (0.5), not "only sells" (0.0); a burst ratio of 1 is steady volume, 0 would be a collapse.
 # No recent signed trader is -1 for new_trader_ratio: 0 is a real reading ("all returning"). The
 # concentration shares live in (0, 1], so their default 0 already marks "no signed volume".
+# Unknown burned liquidity (no pool-creation event seen, e.g. still on the curve) is -1: 0% burned
+# is a real reading, and a strong rug signal.
 NULL_FILL: dict[str, float] = {
     "buy_volume_ratio": 0.5,
     "volume_burst_ratio": 1.0,
     "new_trader_ratio": -1.0,
+    "burned_liquidity": -1.0,
 }
 
 # Per group, the columns the pipeline always writes since the group's migration: a NULL there
@@ -159,6 +191,10 @@ ALWAYS_WRITTEN: dict[str, tuple[str, ...]] = {
     "buy_pressure": ("net_sol_flow", "large_buy_count"),  # migration 0005
     "momentum": ("volume_burst_ratio", "price_history_sec"),  # migration 0006
     "concentration": ("unique_traders",),  # migration 0007
+    # `burn` has none: burned_liquidity is legitimately NULL (unknown), and the database keeps it
+    # equal to onchain_signals.burnedLiquidityPercent (0008's insert trigger covers writers that
+    # omit it, 0009 backfills earlier rows), so a NULL there is never a stale row. `venue` reads a
+    # column every row has had since 0001.
 }
 
 
@@ -180,8 +216,9 @@ def check_group_coverage(df: pd.DataFrame, groups: Iterable[str]) -> None:
             )
 
 
-# Columns of the `features` table that are deliberately NOT model inputs (identity, bookkeeping,
-# categorical/JSONB we don't encode yet). `venue` encoding and the JSONB signals are future work.
+# Columns of the `features` table that are deliberately NOT model inputs as stored (identity,
+# bookkeeping, categorical/JSONB). `venue` feeds the model only through its one-hot
+# (VENUE_COLUMNS); the JSONB signals are future work.
 NON_FEATURE_COLUMNS: frozenset[str] = frozenset(
     {
         "id",
@@ -196,20 +233,51 @@ NON_FEATURE_COLUMNS: frozenset[str] = frozenset(
 )
 
 
+def encode_venue(df: pd.DataFrame) -> pd.DataFrame:
+    """One-hot :data:`VENUE_COLUMNS` from ``df["venue"]``, as 0/1 floats on ``df``'s index.
+
+    Matching is case- and whitespace-insensitive; a venue outside :data:`VENUES`, a non-string
+    value or NULL sets :data:`VENUE_OTHER`, so every row has exactly one 1.
+    """
+    # Vectorized (this runs per mint over the whole training set): the string dtype keeps NULLs as
+    # <NA>, which match no venue; a non-string becomes its repr, which matches none either.
+    venue = df["venue"].astype("string").str.strip().str.lower()
+    hot = {
+        col: (venue == name).fillna(False).astype("float64")
+        for col, name in zip(VENUE_COLUMNS[:-1], VENUES, strict=True)
+    }
+    hot[VENUE_OTHER] = (~venue.isin(VENUES)).astype("float64")
+    return pd.DataFrame(hot, index=df.index, columns=list(VENUE_COLUMNS))
+
+
 def build_feature_matrix(df: pd.DataFrame) -> np.ndarray:
     """Project ``features`` rows onto :data:`FEATURE_COLUMNS` as a ``float32`` matrix.
 
     Columns are taken in canonical order; booleans and ``NUMERIC``/``Decimal`` values are coerced
     to numbers. NULLs become their :data:`NULL_FILL` value (default ``0.0``); non-finite values
-    (±inf, or magnitudes beyond float32) become ``0.0``.
+    (±inf, or magnitudes beyond float32) become ``0.0``. The venue one-hot is encoded from the
+    ``venue`` column (:func:`encode_venue`); a frame without it must carry :data:`VENUE_COLUMNS`
+    already encoded.
 
     Raises:
         ValueError: if a feature column is missing (e.g. a frame from another table, or a renamed
-            column) or holds a value that isn't numeric.
+            column) or holds a value that isn't numeric, or if the frame carries both ``venue`` and
+            some of its one-hot columns (ambiguous: which one is the venue?).
     """
-    missing = [col for col in FEATURE_COLUMNS if col not in df.columns]
+    has_venue = "venue" in df.columns
+    if has_venue and (encoded := [col for col in VENUE_COLUMNS if col in df.columns]):
+        raise ValueError(
+            f"feature frame carries both 'venue' and its one-hot column(s): {', '.join(encoded)}"
+        )
+    required = DB_FEATURE_COLUMNS if has_venue else FEATURE_COLUMNS
+    missing = [col for col in required if col not in df.columns]
+    if not has_venue and any(col in missing for col in VENUE_COLUMNS):
+        missing = [col for col in missing if col not in VENUE_COLUMNS] + ["venue"]
     if missing:
         raise ValueError(f"feature frame is missing column(s): {', '.join(missing)}")
+
+    if has_venue:
+        df = pd.concat([df, encode_venue(df)], axis=1)
 
     numeric: dict[str, pd.Series] = {}
     for col in FEATURE_COLUMNS:

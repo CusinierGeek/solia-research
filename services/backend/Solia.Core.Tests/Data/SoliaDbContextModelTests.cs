@@ -67,6 +67,7 @@ public class SoliaDbContextModelTests
         Assert.Equal("unique_traders", Column<Feature>(ctx, nameof(Feature.UniqueTraders)));
         Assert.Equal("trader_hhi", Column<Feature>(ctx, nameof(Feature.TraderHhi)));
         Assert.Equal("new_trader_ratio", Column<Feature>(ctx, nameof(Feature.NewTraderRatio)));
+        Assert.Equal("burned_liquidity", Column<Feature>(ctx, nameof(Feature.BurnedLiquidity)));
         Assert.Equal("pump_prob", Column<Prediction>(ctx, nameof(Prediction.PumpProb)));
         Assert.Equal("features_snapshot", Column<Trade>(ctx, nameof(Trade.FeaturesSnapshot)));
         Assert.Equal("candidate_model_id", Column<TrainingEvent>(ctx, nameof(TrainingEvent.CandidateModelId)));

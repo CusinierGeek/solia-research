@@ -26,8 +26,8 @@ public class AiContractsTests
     {
         AiPredictRequest request = AiPredictRequest.ForWindow(null,
         [
-            new Dictionary<string, double?> { ["price"] = 1.0 },
-            new Dictionary<string, double?> { ["price"] = 1.1 },
+            new FeatureRow(new Dictionary<string, double?> { ["price"] = 1.0 }, "pumpfun"),
+            new FeatureRow(new Dictionary<string, double?> { ["price"] = 1.1 }, "pumpfun"),
         ]);
 
         JsonObject json = JsonSerializer.SerializeToNode(request, AiJson.Options)!.AsObject();
@@ -39,12 +39,49 @@ public class AiContractsTests
     }
 
     [Fact]
+    public void Window_rows_carry_the_raw_venue_string_beside_numbers()
+    {
+        AiPredictRequest request = AiPredictRequest.ForWindow("m",
+        [
+            new FeatureRow(new Dictionary<string, double?> { ["price"] = 1.5, ["burned_liquidity"] = null }, "pumpswap"),
+        ]);
+
+        JsonObject row = JsonSerializer.SerializeToNode(request, AiJson.Options)!["features"]![0]!.AsObject();
+
+        Assert.Equal(1.5, (double?)row["price"]);
+        Assert.True(row.ContainsKey("burned_liquidity"));
+        Assert.Null(row["burned_liquidity"]);
+        Assert.Equal("pumpswap", (string?)row["venue"]); // one-hot encoded by the ai-service
+        Assert.Equal(["price", "burned_liquidity", "venue"], row.Select(kv => kv.Key)); // one flat object
+    }
+
+    [Fact]
+    public void An_unknown_venue_is_still_sent_as_null_so_every_row_carries_it()
+    {
+        AiPredictRequest request = AiPredictRequest.ForWindow("m",
+            [new FeatureRow(new Dictionary<string, double?> { ["price"] = 1.0 }, null)]);
+
+        JsonObject row = JsonSerializer.SerializeToNode(request, AiJson.Options)!["features"]![0]!.AsObject();
+
+        Assert.True(row.ContainsKey("venue")); // null = venue_other, as in training
+        Assert.Null(row["venue"]);
+    }
+
+    [Fact]
+    public void A_feature_row_rejects_venue_among_its_numbers_and_null_numbers()
+    {
+        Assert.Throws<ArgumentException>(() => new FeatureRow(new Dictionary<string, double?> { ["venue"] = 1.0 }, "pumpfun"));
+        Assert.Throws<ArgumentNullException>(() => new FeatureRow(null!, "pumpfun"));
+    }
+
+    [Fact]
     public void Request_rejects_empty_horizons_and_empty_window()
     {
         var features = new Dictionary<string, double?> { ["price"] = 1.0 };
 
         Assert.Throws<ArgumentException>(() => AiPredictRequest.ForVector("m", features, []));
-        Assert.Throws<ArgumentException>(() => AiPredictRequest.ForWindow("m", []));
+        Assert.Throws<ArgumentException>(() => AiPredictRequest.ForWindow("m", Array.Empty<FeatureRow>()));
+        Assert.Throws<ArgumentNullException>(() => AiPredictRequest.ForWindow("m", null!));
         Assert.Throws<ArgumentNullException>(() => AiPredictRequest.ForVector("m", null!));
     }
 

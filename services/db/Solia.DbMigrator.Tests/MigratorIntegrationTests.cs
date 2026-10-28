@@ -193,4 +193,46 @@ public sealed class MigratorIntegrationTests(EmptyPostgresFixture db) : IClassFi
         Assert.True(result.Code == Migrator.Success, result.Err);
         Assert.Contains("nothing to apply", result.Out);
     }
+
+    [Fact]
+    public async Task BurnedLiquidity_IsBackfilledInBatches_AndFilledForWritersThatOmitIt()
+    {
+        // FE-T5 (#114): 0008 adds the column + a fill-on-insert trigger, 0009 backfills in batches.
+        string conn = await db.CreateDatabaseAsync();
+        string[] repo = Directory.GetFiles(PostgresFixture.FindMigrationsDir(), "*.sql").Order().ToArray();
+        foreach (string file in repo.Where(f => string.CompareOrdinal(Path.GetFileName(f), "0008") < 0))
+        {
+            File.Copy(file, Path.Combine(_dir, Path.GetFileName(file)));
+        }
+        Assert.Equal(Migrator.Success, (await RunAsync(conn, _dir)).Code);
+
+        // Rows written before 0008, ids far enough apart to span several batches.
+        await ExecuteAsync(conn, """
+            INSERT INTO tokens_history (mint) VALUES ('M');
+            INSERT INTO features (id, mint, ts, onchain_signals) VALUES
+                (1,      'M', '2026-01-01T00:00:01Z', '{"burnedLiquidityPercent": 57.5}'),
+                (120000, 'M', '2026-01-01T00:00:02Z', '{"burnedLiquidityPercent": 0}'),
+                (120001, 'M', '2026-01-01T00:00:03Z', '{"burnedLiquidityPercent": null}'),
+                (250000, 'M', '2026-01-01T00:00:04Z', '{"burnedLiquidityPercent": "lots"}');
+            """);
+        foreach (string file in repo.Where(f => string.CompareOrdinal(Path.GetFileName(f), "0008") >= 0))
+        {
+            File.Copy(file, Path.Combine(_dir, Path.GetFileName(file)));
+        }
+
+        var result = await RunAsync(conn, _dir);
+
+        Assert.True(result.Code == Migrator.Success, result.Err);
+        Assert.Equal("1=57.5;120000=0;120001=;250000=", await ScalarAsync<string>(conn,
+            "SELECT string_agg(id || '=' || coalesce(burned_liquidity::text, ''), ';' ORDER BY id) FROM features"));
+
+        // A writer that leaves the column out (a pipeline older than 0008) gets it from the JSONB;
+        // one that writes it keeps its value.
+        await ExecuteAsync(conn, """
+            INSERT INTO features (id, mint, ts, onchain_signals) VALUES (300000, 'M', '2026-01-01T00:00:05Z', '{"burnedLiquidityPercent": 100}');
+            INSERT INTO features (id, mint, ts, burned_liquidity, onchain_signals) VALUES (300001, 'M', '2026-01-01T00:00:06Z', 42, '{"burnedLiquidityPercent": 100}');
+            """);
+        Assert.Equal("300000=100;300001=42", await ScalarAsync<string>(conn,
+            "SELECT string_agg(id || '=' || burned_liquidity, ';' ORDER BY id) FROM features WHERE id >= 300000"));
+    }
 }

@@ -56,7 +56,7 @@ public sealed record AiPredictRequest
 
     /// <summary>A request scored on the token's recent window (oldest row first, non-empty).</summary>
     public static AiPredictRequest ForWindow(
-        string? mint, IReadOnlyList<IReadOnlyDictionary<string, double?>> window, IReadOnlyList<string>? horizons = null)
+        string? mint, IReadOnlyList<FeatureRow> window, IReadOnlyList<string>? horizons = null)
     {
         ArgumentNullException.ThrowIfNull(window);
         if (window.Count == 0)
@@ -65,6 +65,59 @@ public sealed record AiPredictRequest
         }
 
         return new AiPredictRequest(mint, window, horizons);
+    }
+}
+
+/// <summary>
+/// One row of a <c>/predict</c> window: the numeric model inputs, keyed by the ai-service's <c>FEATURE_COLUMNS</c>
+/// names (null = imputed server-side), plus the raw <see cref="Venue"/>, which the ai-service one-hot encodes itself.
+/// Serialized as one flat JSON object; <c>venue</c> is always written (null = the <c>venue_other</c> bucket, as in
+/// training) so every row of a window carries it.
+/// </summary>
+[JsonConverter(typeof(FeatureRowJsonConverter))]
+public sealed record FeatureRow
+{
+    public const string VenueKey = "venue";
+
+    public FeatureRow(IReadOnlyDictionary<string, double?> numeric, string? venue)
+    {
+        ArgumentNullException.ThrowIfNull(numeric);
+        if (numeric.ContainsKey(VenueKey))
+        {
+            throw new ArgumentException($"'{VenueKey}' is not numeric: pass it as the venue.", nameof(numeric));
+        }
+
+        Numeric = numeric;
+        Venue = venue;
+    }
+
+    public IReadOnlyDictionary<string, double?> Numeric { get; }
+
+    public string? Venue { get; }
+}
+
+internal sealed class FeatureRowJsonConverter : JsonConverter<FeatureRow>
+{
+    public override FeatureRow Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+        throw new NotSupportedException("Feature rows are only sent to the ai-service.");
+
+    public override void Write(Utf8JsonWriter writer, FeatureRow value, JsonSerializerOptions options)
+    {
+        writer.WriteStartObject();
+        foreach ((string name, double? number) in value.Numeric)
+        {
+            if (number is { } n)
+            {
+                writer.WriteNumber(name, n);
+            }
+            else
+            {
+                writer.WriteNull(name);
+            }
+        }
+
+        writer.WriteString(FeatureRow.VenueKey, value.Venue);
+        writer.WriteEndObject();
     }
 }
 

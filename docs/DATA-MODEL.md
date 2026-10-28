@@ -68,7 +68,7 @@ Time-series feature snapshots per token. The model's input unit.
 | id | BIGSERIAL PK | |
 | mint | TEXT | FK → tokens_history |
 | ts | TIMESTAMPTZ | snapshot time |
-| venue | TEXT | `pumpfun` / `pumpswap` / `raydium` / `meteora` / ... |
+| venue | TEXT | `pumpfun` / `pumpswap` / `raydium` / `meteora` / ... — one-hot encoded for the model at load time (ai-service `VENUE_COLUMNS`), not stored |
 | is_migrated | BOOLEAN | token has graduated off the bonding curve |
 | pool_address | TEXT | nullable; AMM pool once migrated |
 | price | NUMERIC(28,24) | |
@@ -106,6 +106,7 @@ Time-series feature snapshots per token. The model's input unit.
 | top_trader_share | DOUBLE PRECISION | largest single wallet's share of the window's signed volume (current quote currency; non-positive amounts carry none), (0, 1]; NULL without signed volume |
 | trader_hhi | DOUBLE PRECISION | Herfindahl-Hirschman index of per-wallet volume shares (Σ share²), (0, 1]: 1 = one wallet, 1/n = volume split evenly over n wallets; NULL without signed volume |
 | new_trader_ratio | DOUBLE PRECISION | share of the traders of the last `MomentumShortSeconds` first seen on the token in that span (the rest are returning, even from before the window; past `HolderCounter.ExactLimit` wallets, first seen in the window), [0, 1]; NULL without a signed trade in that span |
+| burned_liquidity | DOUBLE PRECISION | % [0, 100] of the AMM pool's LP burned, from the current pool's latest event reporting it (reset when the token moves to another pool); NULL when unknown (none seen, e.g. still on the curve, or malformed). Kept equal to `onchain_signals.burnedLiquidityPercent`: 0008's insert trigger fills it when a writer omits it, 0009 backfills earlier rows in batches |
 | onchain_signals | JSONB | Pump.fun-specific signals |
 | behavioral_signals | JSONB | pump/rug pattern flags |
 | raw | JSONB | nullable debug payload |

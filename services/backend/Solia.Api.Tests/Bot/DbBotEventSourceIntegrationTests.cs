@@ -188,7 +188,7 @@ public sealed class DbBotEventSourceIntegrationTests : PostgresFixture, IAsyncLi
         {
             var window = await PredictEndpoints.LoadWindowAsync(scope.ServiceProvider.GetRequiredService<SoliaDbContext>(),
                 "a", 100, CancellationToken.None, upTo: T0.AddSeconds(5));
-            Assert.Equal([1.0, 2.0], window.Select(r => r["price"]));
+            Assert.Equal([1.0, 2.0], window.Select(r => r.Numeric["price"]));
         }
 
         // End to end: each prediction's window ends at its own row, the one feature_id points at.
@@ -199,13 +199,14 @@ public sealed class DbBotEventSourceIntegrationTests : PostgresFixture, IAsyncLi
             decimal price = await ScalarAsync<decimal>("SELECT f.price FROM predictions p JOIN features f ON f.id = p.feature_id WHERE p.id = @id",
                 ("id", prediction.PredictionId!.Value));
             Assert.Equal((double)price, prediction.Features["price"]);
+            Assert.DoesNotContain("venue", prediction.Features.Keys); // the raw venue string is the ai-service's to encode
             Assert.True(await ScalarAsync<bool>(
                 "SELECT f.ts = @ts AND p.ts = @ts FROM predictions p JOIN features f ON f.id = p.feature_id WHERE p.id = @id",
                 ("id", prediction.PredictionId!.Value), ("ts", prediction.Ts)));
         }
 
         // Queued on its newest row.
-        Assert.All(_requests, r => Assert.Equal(3.0, ((IReadOnlyList<IReadOnlyDictionary<string, double?>>)r.Features)[^1]["price"]));
+        Assert.All(_requests, r => Assert.Equal(3.0, ((IReadOnlyList<FeatureRow>)r.Features)[^1].Numeric["price"]));
     }
 
     private List<PriceTick> Ticks(string mint) =>

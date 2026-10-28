@@ -15,7 +15,7 @@ from test_inference import saved_checkpoint
 import solia_ai.api
 import solia_ai.registry
 from solia_ai.api import LoadedChampion, check_model_dir_writable, create_app, registry_loader
-from solia_ai.features import FEATURE_COLUMNS
+from solia_ai.features import DB_FEATURE_COLUMNS, FEATURE_COLUMNS, VENUE_COLUMNS, VENUE_OTHER
 from solia_ai.inference import Predictor
 from solia_ai.model import IncompatibleCheckpointError, SoliaTransformer
 
@@ -117,6 +117,81 @@ def test_predict_returns_the_full_contract_per_horizon():
         assert set(p) == {"horizon", "pump_prob", "rug_prob", "expected_return", "confidence"}
         assert 0.0 <= p["pump_prob"] <= 1.0
         assert 0.0 <= p["confidence"] <= 100.0
+
+
+def _scored_windows(monkeypatch) -> list[np.ndarray]:
+    """Spy on the windows the champion is asked to score."""
+    seen: list[np.ndarray] = []
+    original = Predictor.predict
+
+    def spy(self, window, *args, **kwargs):
+        seen.append(np.asarray(window))
+        return original(self, window, *args, **kwargs)
+
+    monkeypatch.setattr(Predictor, "predict", spy)
+    return seen
+
+
+def _venue_rows(*venues) -> list[dict]:
+    return [{**{c: 1.0 for c in DB_FEATURE_COLUMNS}, "venue": v} for v in venues]
+
+
+def test_predict_encodes_the_raw_venue_string_like_training(monkeypatch):
+    # The backend sends the stored columns plus venue; the one-hot is derived server-side.
+    seen = _scored_windows(monkeypatch)
+
+    response = _client().post(
+        "/predict", json={"features": _venue_rows(" PumpSwap ", "new-amm", None)}
+    )
+
+    assert response.status_code == 200
+    (window,) = seen
+    hot = window[:, [FEATURE_COLUMNS.index(c) for c in VENUE_COLUMNS]]
+    expected = np.zeros_like(hot)
+    expected[0, VENUE_COLUMNS.index("venue_pumpswap")] = 1.0
+    expected[1:, VENUE_COLUMNS.index(VENUE_OTHER)] = 1.0  # unknown venue and NULL, as training
+    np.testing.assert_array_equal(hot, expected)
+
+
+def test_predict_rejects_rows_that_name_different_features():
+    rows = _venue_rows("pumpfun", "pumpswap")
+    del rows[1]["venue"]  # would otherwise be scored as venue_other, silently
+
+    response = _client().post("/predict", json={"features": rows})
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_features"
+    assert (
+        "row 1" in response.json()["error"]["message"]
+        and "venue" in response.json()["error"]["message"]
+    )
+
+
+def test_predict_rejects_a_raw_venue_beside_its_one_hot_columns():
+    rows = [{**row, "venue_pumpfun": 1.0} for row in _venue_rows("pumpswap")]
+
+    response = _client().post("/predict", json={"features": rows})
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_features"
+    assert "venue_pumpfun" in response.json()["error"]["message"]
+
+
+def test_predict_rejects_a_non_string_venue():
+    response = _client().post("/predict", json={"features": _venue_rows(3.0)})
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_features"
+
+
+def test_predict_rejects_a_non_numeric_string_in_a_numeric_column():
+    rows = _dict_rows()
+    rows[0]["volume"] = "lots"
+
+    response = _client().post("/predict", json={"features": rows})
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_features"
 
 
 def test_predict_accepts_array_rows():

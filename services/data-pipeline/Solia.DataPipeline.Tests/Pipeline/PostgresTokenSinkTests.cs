@@ -194,6 +194,46 @@ public sealed class PostgresTokenSinkTests(PostgresFixture db) : IClassFixture<P
             "AND top_trader_share IS NULL AND trader_hhi IS NULL AND new_trader_ratio IS NULL"));
     }
 
+    [Fact]
+    public async Task Burned_liquidity_is_persisted_and_null_when_unknown()
+    {
+        FeatureSnapshot snap = Snap("BURN1", T0, 1m) with { BurnedLiquidity = 57.5 };
+        await Sink.WriteAsync(Batch(T0, [snap, Snap("BURN2", T0, 1m)]), default);
+
+        Assert.Equal(57.5, await Feature<double>("burned_liquidity", "BURN1"));
+        Assert.Equal(1L, await db.ScalarAsync<long>(
+            "SELECT count(*) FROM features WHERE mint = 'BURN2' AND burned_liquidity IS NULL"));
+    }
+
+    [Fact]
+    public async Task Migration_0009_backfills_burned_liquidity_from_onchain_signals()
+    {
+        // Rows written before 0008 only carry it in the JSONB: number -> column, null/absent/text -> NULL.
+        // (The UPDATE leaves the insert trigger out of it, so the column is NULL as on a pre-0008 row.)
+        await Sink.WriteAsync(Batch(T0, new[] { "BF1", "BF2", "BF3", "BF4" }.Select(m => Snap(m, T0, 1m)).ToList()), default);
+        await using (var preMigration = db.DataSource.CreateCommand(
+            "UPDATE features SET burned_liquidity = NULL, onchain_signals = CASE mint " +
+            "WHEN 'BF1' THEN '{\"burnedLiquidityPercent\": 100}'::jsonb " +
+            "WHEN 'BF2' THEN '{\"burnedLiquidityPercent\": null}'::jsonb " +
+            "WHEN 'BF3' THEN '{}'::jsonb " +
+            "ELSE '{\"burnedLiquidityPercent\": \"lots\"}'::jsonb END " +
+            "WHERE mint IN ('BF1', 'BF2', 'BF3', 'BF4')"))
+        {
+            await preMigration.ExecuteNonQueryAsync();
+        }
+
+        string backfill = await File.ReadAllTextAsync(
+            Path.Combine(PostgresFixture.FindMigrationsDir(), "0009_backfill_burned_liquidity.sql"));
+        await using (var update = db.DataSource.CreateCommand(backfill)) // batched, commits per batch
+        {
+            await update.ExecuteNonQueryAsync();
+        }
+
+        Assert.Equal(100.0, await Feature<double>("burned_liquidity", "BF1"));
+        Assert.Equal(3L, await db.ScalarAsync<long>(
+            "SELECT count(*) FROM features WHERE mint IN ('BF2', 'BF3', 'BF4') AND burned_liquidity IS NULL"));
+    }
+
     private Task<T> Feature<T>(string column, string mint) =>
         db.ScalarAsync<T>($"SELECT {column} FROM features WHERE mint = @m", ("m", mint));
 

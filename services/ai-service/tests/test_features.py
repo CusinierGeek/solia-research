@@ -9,12 +9,17 @@ from conftest import strip_sql_comments
 
 from solia_ai.features import (
     BASELINE_GROUPS,
+    DB_FEATURE_COLUMNS,
     FEATURE_COLUMNS,
     FEATURE_GROUPS,
     NON_FEATURE_COLUMNS,
+    VENUE_COLUMNS,
+    VENUE_OTHER,
+    VENUES,
     build_feature_matrix,
     check_group_coverage,
     column_mask,
+    encode_venue,
     group_columns,
     group_mask,
 )
@@ -71,8 +76,10 @@ def table_columns(table: str, migration_sql: list[str]) -> list[str]:
 def assert_spec_covers(db_columns: set[str]) -> None:
     # Model columns and excluded columns are disjoint and together cover the whole table —
     # so adding/removing a DB column (or a FEATURE_COLUMNS entry) without updating both fails.
+    # The venue one-hot is derived from `venue` at load time, not stored.
     assert set(FEATURE_COLUMNS).isdisjoint(NON_FEATURE_COLUMNS)
-    assert db_columns - NON_FEATURE_COLUMNS == set(FEATURE_COLUMNS), "spec vs DB drift"
+    assert "venue" in NON_FEATURE_COLUMNS
+    assert db_columns - NON_FEATURE_COLUMNS == set(DB_FEATURE_COLUMNS), "spec vs DB drift"
     assert NON_FEATURE_COLUMNS <= db_columns, "NON_FEATURE_COLUMNS lists columns the DB lacks"
 
 
@@ -170,7 +177,9 @@ def test_build_feature_matrix_order_and_dtype():
 
 
 def test_extra_columns_are_ignored():
-    frame = pd.DataFrame([full_row(mint="M", venue="pumpfun", extra="x")])
+    # A DB row: identity/bookkeeping columns beside the stored features (venue is encoded).
+    row = {**dict.fromkeys(DB_FEATURE_COLUMNS, 1), "mint": "M", "venue": "pumpfun", "extra": "x"}
+    frame = pd.DataFrame([row])
 
     assert build_feature_matrix(frame).shape == (1, len(FEATURE_COLUMNS))
 
@@ -275,7 +284,7 @@ def test_concentration_is_a_candidate_group_outside_the_baseline():
         "trader_hhi",
         "new_trader_ratio",
     )
-    assert FEATURE_COLUMNS[32:] == list(FEATURE_GROUPS["concentration"])
+    assert FEATURE_COLUMNS[32:36] == list(FEATURE_GROUPS["concentration"])
 
 
 def test_group_columns_keep_canonical_order():
@@ -438,3 +447,122 @@ def test_no_recent_trader_is_told_apart_from_all_returning():
     col = build_feature_matrix(df)[:, FEATURE_COLUMNS.index("new_trader_ratio")]
 
     assert col[0] != col[1]
+
+
+# --- FE-T5 (#114): burned liquidity + venue one-hot ---
+
+
+def test_burn_and_venue_are_candidate_groups_outside_the_baseline():
+    # Both stay disabled by default until their ablation lift clears the margin.
+    assert "burn" not in BASELINE_GROUPS and "venue" not in BASELINE_GROUPS
+    assert FEATURE_GROUPS["burn"] == ("burned_liquidity",)
+    assert FEATURE_GROUPS["venue"] == VENUE_COLUMNS
+    assert FEATURE_COLUMNS[36:] == ["burned_liquidity", *VENUE_COLUMNS]
+
+
+def test_venue_categories_are_a_fixed_list_plus_an_other_bucket():
+    assert VENUE_COLUMNS == (
+        "venue_pumpfun",
+        "venue_pumpswap",
+        "venue_raydium_launchpad",
+        "venue_raydium",
+        "venue_meteora_launchpad",
+        "venue_meteora",
+        "venue_bonk",
+        "venue_other",
+    )
+    assert VENUE_OTHER == VENUE_COLUMNS[-1]
+    assert len(VENUES) == len(VENUE_COLUMNS) - 1
+
+
+def test_the_venue_one_hot_is_derived_not_stored():
+    assert not set(VENUE_COLUMNS) & set(DB_FEATURE_COLUMNS)
+    assert DB_FEATURE_COLUMNS == [c for c in FEATURE_COLUMNS if c not in VENUE_COLUMNS]
+
+
+def _venue_rows(*venues) -> np.ndarray:
+    df = pd.DataFrame([{**dict.fromkeys(DB_FEATURE_COLUMNS, 1.0), "venue": v} for v in venues])
+    matrix = build_feature_matrix(df)
+    return matrix[:, [FEATURE_COLUMNS.index(c) for c in VENUE_COLUMNS]]
+
+
+@pytest.mark.parametrize("venue", VENUES)
+def test_each_known_venue_sets_exactly_its_column(venue):
+    hot = _venue_rows(venue)[0]
+
+    assert hot.sum() == 1.0
+    assert VENUE_COLUMNS[int(hot.argmax())] == f"venue_{venue.replace('-', '_')}"
+
+
+@pytest.mark.parametrize("venue", ["orca", "sunrise", "brand-new-amm", None, 7])
+def test_unknown_missing_or_non_string_venue_falls_in_other(venue):
+    hot = _venue_rows(venue)[0]
+
+    assert hot.tolist() == [0.0] * (len(VENUE_COLUMNS) - 1) + [1.0]
+
+
+def test_venue_matching_ignores_case_and_whitespace():
+    assert _venue_rows(" PumpFun ")[0][0] == 1.0
+
+
+def test_encode_venue_keeps_the_frame_index():
+    df = pd.DataFrame({"venue": ["pumpswap", "x"]}, index=[10, 20])
+
+    hot = encode_venue(df)
+
+    assert list(hot.index) == [10, 20]
+    assert list(hot.columns) == list(VENUE_COLUMNS)
+    assert hot.loc[10, "venue_pumpswap"] == 1.0 and hot.loc[20, VENUE_OTHER] == 1.0
+
+
+def test_venue_beside_its_encoded_columns_is_ambiguous_and_rejected():
+    row = {**dict.fromkeys(FEATURE_COLUMNS, 1.0), "venue": "meteora"}
+
+    with pytest.raises(ValueError, match="both 'venue' and its one-hot column"):
+        build_feature_matrix(pd.DataFrame([row]))
+
+
+def test_an_all_null_venue_column_encodes_as_other():
+    # A frame whose venue column pandas typed as float (every value NULL) still encodes.
+    df = pd.DataFrame({"venue": [np.nan, None]})
+
+    hot = encode_venue(df)
+
+    assert hot[VENUE_OTHER].tolist() == [1.0, 1.0]
+    assert hot.drop(columns=[VENUE_OTHER]).to_numpy().sum() == 0.0
+
+
+def test_an_already_encoded_frame_needs_no_venue():
+    row = {**dict.fromkeys(DB_FEATURE_COLUMNS, 1.0), **dict.fromkeys(VENUE_COLUMNS, 0.0)}
+    row["venue_bonk"] = 1.0
+
+    matrix = build_feature_matrix(pd.DataFrame([row]))
+
+    assert matrix[0, FEATURE_COLUMNS.index("venue_bonk")] == 1.0
+
+
+def test_a_frame_without_venue_nor_its_encoding_names_venue_missing():
+    with pytest.raises(ValueError, match=r"missing column\(s\): venue$"):
+        build_feature_matrix(pd.DataFrame([dict.fromkeys(DB_FEATURE_COLUMNS, 1.0)]))
+
+
+def test_unknown_burned_liquidity_is_told_apart_from_none_burned():
+    df = pd.concat(
+        [
+            _frame(burned_liquidity=None),
+            _frame(burned_liquidity=0.0),
+            _frame(burned_liquidity=100.0),
+        ],
+        ignore_index=True,
+    )
+
+    col = build_feature_matrix(df)[:, FEATURE_COLUMNS.index("burned_liquidity")]
+
+    assert col.tolist() == [-1.0, 0.0, 100.0]  # unknown, nothing burned (rug risk), all burned
+
+
+def test_null_burned_liquidity_is_legitimate_not_uncomputed():
+    # No ALWAYS_WRITTEN marker: 0009 backfills earlier rows, NULL is a real "unknown".
+    df = _frame(burned_liquidity=None)
+
+    check_group_coverage(df, ["burn", "venue"])  # no error

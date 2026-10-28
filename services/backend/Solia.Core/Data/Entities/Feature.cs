@@ -99,6 +99,9 @@ public sealed class Feature
     /// <summary>Share of the short window's traders not seen earlier in the window.</summary>
     public double? NewTraderRatio { get; set; }
 
+    /// <summary>Percent [0, 100] of the AMM pool's LP burned; null when unknown (no pool creation seen).</summary>
+    public double? BurnedLiquidity { get; set; }
+
     /// <summary>Pump.fun-specific signals (JSONB).</summary>
     public string? OnchainSignals { get; set; }
 

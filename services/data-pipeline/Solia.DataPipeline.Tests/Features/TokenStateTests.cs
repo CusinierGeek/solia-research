@@ -1,5 +1,6 @@
 using Solia.DataPipeline.Features;
 using Solia.DataPipeline.Ingestion;
+using Solia.DataPipeline.Ingestion.PumpApi;
 
 namespace Solia.DataPipeline.Tests.Features;
 
@@ -850,5 +851,83 @@ public class TokenStateTests
 
         Assert.Equal(2, s.UniqueTraders);
         Assert.Equal(0.75, s.TopTraderShare!.Value, 10); // A 3 of 4, not double-counted
+    }
+
+    // --- FE-T5 (#114): burned liquidity promoted to a column ---
+
+    private static RawEvent PoolCreated(string burnedLiquidity, int offsetSec) =>
+        PumpApiEventParser.Parse(
+            $$"""{"action":"createPool","mint":"M","pool":"raydium-cpmm","burnedLiquidity":"{{burnedLiquidity}}","timestamp":{{T0.AddSeconds(offsetSec).ToUnixTimeMilliseconds()}}}""")!;
+
+    private static RawEvent PoolEvent(string poolId, string? burnedLiquidity, int offsetSec)
+    {
+        string burned = burnedLiquidity is null ? "" : $",\"burnedLiquidity\":\"{burnedLiquidity}\"";
+        return PumpApiEventParser.Parse(
+            $$"""{"action":"createPool","mint":"M","pool":"raydium-cpmm","poolId":"{{poolId}}"{{burned}},"timestamp":{{T0.AddSeconds(offsetSec).ToUnixTimeMilliseconds()}}}""")!;
+    }
+
+    [Fact]
+    public void Burned_liquidity_is_unknown_until_a_pool_creation_reports_it()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(Trade(EventKind.Buy, 1m, 1m, "A", 0));
+
+        Assert.Null(state.Snapshot(T0.AddSeconds(1)).BurnedLiquidity);
+    }
+
+    [Fact]
+    public void Burned_liquidity_comes_from_the_pool_creation_and_persists()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(PoolCreated("57.5%", 0));
+        state.Apply(Trade(EventKind.Buy, 1m, 1m, "A", 1)); // later trades don't report it
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(2));
+
+        Assert.Equal(57.5, s.BurnedLiquidity);
+        Assert.Equal(57.5, s.OnchainSignals["burnedLiquidityPercent"]); // still mirrored in the JSONB
+    }
+
+    [Theory]
+    [InlineData("lots")]
+    [InlineData("150%")]
+    [InlineData("NaN%")]
+    public void Malformed_burned_liquidity_is_unknown_not_zero(string raw)
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(PoolCreated(raw, 0));
+
+        Assert.Null(state.Snapshot(T0.AddSeconds(1)).BurnedLiquidity);
+    }
+
+    [Fact]
+    public void A_malformed_later_report_keeps_the_last_valid_burned_liquidity()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(PoolCreated("100%", 0));
+        state.Apply(PoolCreated("garbage", 1));
+
+        Assert.Equal(100.0, state.Snapshot(T0.AddSeconds(2)).BurnedLiquidity);
+    }
+
+    [Fact]
+    public void Moving_to_another_pool_forgets_the_previous_pools_burned_liquidity()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(PoolEvent("P1", "100%", 0));
+        state.Apply(PoolEvent("P2", null, 1)); // the new pool doesn't report its burn
+
+        Assert.Null(state.Snapshot(T0.AddSeconds(2)).BurnedLiquidity);
+    }
+
+    [Fact]
+    public void A_new_pools_own_report_replaces_the_previous_pools_burned_liquidity()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(PoolEvent("P1", "100%", 0));
+        state.Apply(PoolEvent("P2", "0%", 1));
+        state.Apply(PoolEvent("P2", null, 2)); // same pool, no report: keeps its reading
+
+        Assert.Equal(0.0, state.Snapshot(T0.AddSeconds(3)).BurnedLiquidity);
     }
 }

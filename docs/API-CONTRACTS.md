@@ -191,7 +191,9 @@ Base: `/`
   "horizons": ["1m","5m"] }
 // `features` is either the latest vector (one object = a one-row window) or the token's recent
 // window, oldest row first: a non-empty list of objects keyed by feature name, or of arrays in
-// FEATURE_COLUMNS order. `horizons` is optional (default: all); when present it must be non-empty.
+// FEATURE_COLUMNS order. An object row carries `venue` as its raw string or null (the service one-hot
+// encodes it; null = venue_other) — not beside venue_* columns; an array row carries the encoded venue_*
+// columns. Object rows must all name the same features (else 400 invalid_features). `horizons` is optional (default: all); when present it must be non-empty.
 // response: same prediction shape as backend /predict "predictions"
 // a window keeps its latest `seq_len` rows; one shorter than the champion's training `min_seq_len`
 // is rejected.

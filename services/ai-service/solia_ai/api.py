@@ -52,7 +52,7 @@ from .model import IncompatibleCheckpointError
 
 logger = logging.getLogger(__name__)
 
-Row = dict[str, float | None] | list[float]
+Row = dict[str, float | str | None] | list[float]  # str: the `venue` category
 
 DEFAULT_REFRESH_SECONDS = 30.0
 
@@ -88,17 +88,17 @@ class PredictRequest(BaseModel):
 
     ``features`` is either a single feature object (the latest vector — a one-row window) or a
     non-empty list of rows: objects keyed by feature name (NULLs imputed to 0, exactly as training
-    does) or plain arrays of numbers in :data:`FEATURE_COLUMNS` order. ``horizons``, when given,
-    must name at least one horizon.
+    does; ``venue`` as its raw string, one-hot encoded like training) or plain arrays of numbers
+    in :data:`FEATURE_COLUMNS` order. ``horizons``, when given, must name at least one horizon.
     """
 
     mint: str | None = None
-    features: list[Row] | dict[str, float | None]
+    features: list[Row] | dict[str, float | str | None]
     horizons: list[str] | None = Field(default=None, min_length=1)
 
     @field_validator("features")
     @classmethod
-    def _as_window(cls, value: list[Row] | dict[str, float | None]) -> list[Row]:
+    def _as_window(cls, value: list[Row] | dict[str, float | str | None]) -> list[Row]:
         rows = [value] if isinstance(value, dict) else value
         if not rows:
             raise ValueError("the feature window must hold at least one row")
@@ -115,10 +115,24 @@ class ApiError(HTTPException):
 def _window_matrix(rows: list[Row]) -> np.ndarray:
     """Turn the request's ``features`` rows into a ``[L, F]`` float32 window.
 
-    Object rows go through :func:`build_feature_matrix` (same column/NULL rules as training);
-    array rows must each hold exactly ``len(FEATURE_COLUMNS)`` numbers. Mixing the two is rejected.
+    Object rows go through :func:`build_feature_matrix` (same column/NULL rules as training) and
+    must all name the same features — a key missing from some rows would otherwise be imputed
+    silently; ``venue`` must be a string or null (null = ``venue_other``, as in training). Array
+    rows must each hold exactly ``len(FEATURE_COLUMNS)`` numbers. Mixing the two is rejected.
     """
     if all(isinstance(row, dict) for row in rows):
+        keys = set(rows[0])
+        for i, row in enumerate(rows[1:], start=1):
+            if set(row) != keys:
+                differing = ", ".join(sorted(keys ^ set(row)))
+                raise ApiError(
+                    400,
+                    "invalid_features",
+                    f"every feature row must name the same features (row {i} differs on: "
+                    f"{differing})",
+                )
+        if any(not isinstance(row.get("venue"), str | None) for row in rows):
+            raise ApiError(400, "invalid_features", "'venue' must be a string or null")
         try:
             return build_feature_matrix(pd.DataFrame(list(rows)))
         except ValueError as exc:

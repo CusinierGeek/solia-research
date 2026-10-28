@@ -146,12 +146,21 @@ and seeds.
   `return_medium`, `return_long`, `price_acceleration`, `ema_slope`, `volume_acceleration`,
   `volume_burst_ratio`, `price_history_sec` (windows: `Pipeline:Momentum{Short,Medium,Long}Seconds`);
   `concentration` (FE-T4, #113) — `unique_traders`, `top_trader_share`, `trader_hhi`,
-  `new_trader_ratio`: a holder-concentration proxy from trade signers over the window.
+  `new_trader_ratio`: a holder-concentration proxy from trade signers over the window;
+  `burn` (FE-T5, #114) — `burned_liquidity`, % of the AMM pool's LP burned (rug signal);
+  `venue` (FE-T5, #114) — the `venue` column one-hot encoded (`VENUE_COLUMNS`).
+- **Venue one-hot is encoded at load time, not stored.** `features.py` derives `venue_<name>` from the
+  raw `venue` column (training reads it from the DB, `/predict` rows carry it as a string), over a
+  fixed category list (`VENUES`: `pumpfun`, `pumpswap`, `raydium-launchpad`, `raydium`,
+  `meteora-launchpad`, `meteora`, `bonk`) plus `venue_other` for anything else, NULL included. No
+  schema churn when the list changes; appending a venue appends a column (an ordered-superset spec,
+  so the champion keeps serving). `DB_FEATURE_COLUMNS` is the stored part the parity tests check.
 - **Rows predating a group are refused, not zero-filled.** A NULL in a column the pipeline always writes
   since the group's migration (`ALWAYS_WRITTEN`, e.g. `net_sol_flow`/`large_buy_count` for
-  `buy_pressure`, `volume_burst_ratio`/`price_history_sec` for `momentum`, `unique_traders` for `concentration`) means "never computed": training, evaluation and ablation raise if an enabled (or
+  `buy_pressure`, `volume_burst_ratio`/`price_history_sec` for `momentum`, `unique_traders` for `concentration`; none for `burn`, whose
+  migration 0008 backfills earlier rows from `onchain_signals`, nor `venue`) means "never computed": training, evaluation and ablation raise if an enabled (or
   ablated) group has such rows — re-replay them first. Other NULLs are imputed per `NULL_FILL`
-  (`buy_volume_ratio` → 0.5, "no pressure either way"; `volume_burst_ratio` → 1, "steady"; `new_trader_ratio` → −1, "no recent trader", as 0 is "all returning"; else 0 —
+  (`buy_volume_ratio` → 0.5, "no pressure either way"; `volume_burst_ratio` → 1, "steady"; `new_trader_ratio` → −1, "no recent trader", as 0 is "all returning"; `burned_liquidity` → −1, "unknown", as 0% burned is a real rug signal; else 0 —
   e.g. a return a young token has no history for, which `price_history_sec` tells apart from a flat
   price).
 - **Adding columns keeps the champion serving.** A checkpoint trained before columns were added (its

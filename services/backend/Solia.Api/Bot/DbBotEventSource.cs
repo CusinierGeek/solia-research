@@ -261,7 +261,7 @@ public sealed class DbBotEventSource(
     private async Task<ModelPrediction?> ScoreAsync(FeedRow row, CancellationToken cancellationToken)
     {
         // A scope per load: the context isn't held across the ai-service call.
-        List<IReadOnlyDictionary<string, double?>> window;
+        List<FeatureRow> window;
         await using (AsyncServiceScope scope = scopes.CreateAsyncScope())
         {
             window = await PredictEndpoints.LoadWindowAsync(scope.ServiceProvider.GetRequiredService<SoliaDbContext>(),
@@ -282,7 +282,8 @@ public sealed class DbBotEventSource(
             return null;
         }
 
-        IReadOnlyDictionary<string, double?> features = window[^1];
+        // The numeric features at decision time (the raw venue string is the ai-service's to encode).
+        IReadOnlyDictionary<string, double?> features = window[^1].Numeric;
         var prediction = new ModelPrediction
         {
             Mint = row.Mint,

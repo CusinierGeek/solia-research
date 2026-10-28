@@ -57,9 +57,10 @@ public sealed class AiProxyFixture : PostgresFixture, IAsyncLifetime
         {
             await ExecAsync(
                 "INSERT INTO features (mint, ts, price, holders, buy_sell_ratio, net_sol_flow, large_buy_count, " +
-                "return_short, volume_burst_ratio, unique_traders, top_trader_share, is_migrated) " +
-                "VALUES ('a', @ts, @p, @h, 1.5, -0.25, 2, 0.125, 3.5, 6, 0.4, @mig)",
-                ("ts", T0.AddMinutes(i)), ("p", 0.001m * (i + 1)), ("h", i == 2 ? DBNull.Value : 10 * (i + 1)), ("mig", i == 3));
+                "return_short, volume_burst_ratio, unique_traders, top_trader_share, burned_liquidity, venue, is_migrated) " +
+                "VALUES ('a', @ts, @p, @h, 1.5, -0.25, 2, 0.125, 3.5, 6, 0.4, @burn, @venue, @mig)",
+                ("ts", T0.AddMinutes(i)), ("p", 0.001m * (i + 1)), ("h", i == 2 ? DBNull.Value : 10 * (i + 1)),
+                ("burn", i == 3 ? 100.0 : DBNull.Value), ("venue", i == 3 ? "pumpswap" : "pumpfun"), ("mig", i == 3));
         }
 
         // Three training runs. The latest *finished* one started at T0 (and was rejected: it still consumed the
@@ -138,7 +139,10 @@ public class AiProxyIntegrationTests(AiProxyFixture api) : IClassFixture<AiProxy
         AiPredictRequest sent = LastRequest();
         Assert.Equal("a", sent.Mint);
         Assert.Equal(["1m", "5m"], sent.Horizons!);
-        var window = Assert.IsAssignableFrom<IReadOnlyList<IReadOnlyDictionary<string, double?>>>(sent.Features);
+        var rows = Assert.IsAssignableFrom<IReadOnlyList<FeatureRow>>(sent.Features);
+        // venue goes raw (the ai-service one-hot encodes it), beside the numbers.
+        Assert.Equal<string?>(["pumpfun", "pumpfun", "pumpswap"], rows.Select(r => r.Venue));
+        List<IReadOnlyDictionary<string, double?>> window = rows.Select(r => r.Numeric).ToList();
         Assert.Equal(WindowSize, window.Count);
         Assert.Equal([0.002, 0.003, 0.004], window.Select(r => r["price"]!.Value).ToArray());
         Assert.Equal([20.0, null, 40.0], window.Select(r => r["holders"]).ToArray());
@@ -155,7 +159,8 @@ public class AiProxyIntegrationTests(AiProxyFixture api) : IClassFixture<AiProxy
         Assert.Equal(6.0, window[0]["unique_traders"]);
         Assert.Equal(0.4, window[0]["top_trader_share"]);
         Assert.Null(window[0]["new_trader_ratio"]);
-        Assert.Equal(36, window[0].Count); // the ai-service's FEATURE_COLUMNS
+        Assert.Equal([null, null, 100.0], window.Select(r => r["burned_liquidity"]).ToArray());
+        Assert.Equal(37, window[0].Count); // the ai-service's DB_FEATURE_COLUMNS (+ venue)
     }
 
     [Fact]

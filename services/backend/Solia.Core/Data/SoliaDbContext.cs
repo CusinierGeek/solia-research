@@ -143,6 +143,7 @@ public sealed class SoliaDbContext(DbContextOptions<SoliaDbContext> options) : D
             e.Property(x => x.TopTraderShare).HasColumnName("top_trader_share");
             e.Property(x => x.TraderHhi).HasColumnName("trader_hhi");
             e.Property(x => x.NewTraderRatio).HasColumnName("new_trader_ratio");
+            e.Property(x => x.BurnedLiquidity).HasColumnName("burned_liquidity");
             e.Property(x => x.OnchainSignals).HasColumnName("onchain_signals").HasColumnType("jsonb");
             e.Property(x => x.BehavioralSignals).HasColumnName("behavioral_signals").HasColumnType("jsonb");
             e.Property(x => x.Raw).HasColumnName("raw").HasColumnType("jsonb");
