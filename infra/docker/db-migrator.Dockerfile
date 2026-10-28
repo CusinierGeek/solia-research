@@ -2,7 +2,7 @@
 # Solia db-migrator — one-shot job: applies pending services/db/migrations/*.sql, then exits.
 # Exit 0 = schema up to date (incl. nothing to apply); non-zero = bad SQL, checksum drift,
 # unreachable DB or lock wait timed out, so services gated on it with
-# `service_completed_successfully` don't start (compose wiring: Sprint 6 compose task).
+# `service_completed_successfully` don't start (compose service `db-migrate`).
 # Build context = repo root (the project references services/shared/Solia.Shared):
 #   docker build -f infra/docker/db-migrator.Dockerfile -t solia-db-migrator .
 

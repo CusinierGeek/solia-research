@@ -131,17 +131,31 @@ The HTTP `/predict` endpoint (features in the request → prediction) stays for 
 
 ## 7. Deployment topology (Docker Compose)
 
-`docker compose up -d --build` starts everything on the internal `solia` bridge network; only the
-backend and the dashboard are published on the host.
+`docker compose up -d` (or `make up`) starts everything on the internal `solia` bridge network; only
+the backend and the dashboard are published on the host.
 
-| Container      | Published | Starts after (condition)                          | Volume            | Restart          |
-|----------------|-----------|---------------------------------------------------|-------------------|------------------|
-| postgres       | — (internal) | —                                              | `pgdata`          | unless-stopped   |
-| db-migrate     | —         | postgres (healthy)                                | —                 | no (one-shot)    |
-| data-pipeline  | —         | db-migrate (exited 0)                             | —                 | unless-stopped   |
-| ai-service     | —         | db-migrate (exited 0)                             | `models` (`MODEL_DIR`) | unless-stopped |
-| backend        | 8080      | db-migrate (exited 0), ai-service (healthy)       | `./secrets` → `/app/secrets` (ro) | unless-stopped |
-| dashboard      | 8081      | backend (healthy)                                 | —                 | unless-stopped   |
+```
+       host :8081                         host :8080
+           │                                  │
+       dashboard ───────── HTTP ─────────▶ backend ──── HTTP ────▶ ai-service ── models (volume)
+                                              │                        │
+                                              ▼                        │
+  pumpapi.io ──WS──▶ data-pipeline ────▶  postgres  ◀──────────────────┘
+                                              ▲   └─ pgdata (volume)
+                               db-migrate ────┘  (one-shot, before every app service)
+```
+
+All six containers share the `solia` network and address each other by service name; pumpapi.io is
+the only outbound dependency (data-pipeline).
+
+| Container      | Image base              | Published | Starts after (condition)                     | Volume            | Restart          |
+|----------------|-------------------------|-----------|----------------------------------------------|-------------------|------------------|
+| postgres       | `postgres:16-alpine`    | — (internal) | —                                         | `pgdata`          | unless-stopped   |
+| db-migrate     | `dotnet/runtime:10.0`   | —         | postgres (healthy)                           | —                 | no (one-shot)    |
+| data-pipeline  | `dotnet/aspnet:10.0`    | —         | db-migrate (exited 0)                        | —                 | unless-stopped   |
+| ai-service     | `python:3.11-slim`      | —         | db-migrate (exited 0)                        | `models` (`MODEL_DIR`) | unless-stopped |
+| backend        | `dotnet/aspnet:10.0`    | 8080      | db-migrate (exited 0), ai-service (healthy)  | `./secrets` → `/app/secrets` (ro) | unless-stopped |
+| dashboard      | `dotnet/aspnet:10.0`    | 8081      | backend (healthy)                            | —                 | unless-stopped   |
 
 - `db-migrate` is a job, not a server: it applies `services/db/migrations` and exits; no service
   touches the database before it succeeds.
@@ -156,8 +170,12 @@ backend and the dashboard are published on the host.
   listed there. Other per-service settings (nested .NET keys like `Logging__LogLevel__Default`,
   `Bot__*`) go in the optional, gitignored `config/<service>.env`, loaded by that service only.
 - Requires Docker Engine 25+ (healthcheck `start_interval`) and Docker Compose 2.24+. Config: `.env` via compose interpolation, per-service variable lists (`SOLIA_MASTER_KEY` → backend only), plus optional `config/<service>.env`.
-- Local dev: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres` publishes
-  Postgres on `127.0.0.1:5432` for `dotnet run` / pytest (`POSTGRES_HOST=localhost`).
+- Every container runs non-root; `pgdata` and `models` survive `docker compose down` (only
+  `down -v` / `make reset` deletes them). `infra/scripts/smoke.sh` (`make smoke`, CI `compose-up`)
+  asserts this whole topology on the real stack.
+- Local dev: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres`
+  (`make dev-db`) publishes Postgres on `127.0.0.1:5432` for `dotnet run` / pytest
+  (`POSTGRES_HOST=localhost`).
 
 See [`../infra/`](../infra/), [`../docker-compose.yml`](../docker-compose.yml) and
 [`../docker-compose.dev.yml`](../docker-compose.dev.yml).

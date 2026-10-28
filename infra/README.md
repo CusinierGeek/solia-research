@@ -3,7 +3,47 @@
 Docker & orchestration assets. See the root [`docker-compose.yml`](../docker-compose.yml) and [Sprint 6](../docs/sprints/SPRINT-06-docker.md).
 
 - `docker/*.Dockerfile` — per-service build definitions (`data-pipeline`, `ai-service`, `backend`, `dashboard`, `db-migrator`).
+- `scripts/solia.sh` — the `make up|down|logs|ps|reset|smoke|dev-db` shortcuts (the root
+  [`Makefile`](../Makefile) only calls it, so it works without make, e.g. Git Bash on Windows).
 - `scripts/smoke.sh` — end-to-end smoke test of the compose stack (see [Smoke test](#smoke-test)).
+
+Quickstart (fresh clone → running stack): root [`README.md`](../README.md#quick-start).
+
+## The stack at a glance
+
+| Compose service | Image (Dockerfile → base)                                        | Runs as   | In-container port | Published | Health probe | ~Size |
+|-----------------|------------------------------------------------------------------|-----------|-------------------|-----------|--------------|-------|
+| `postgres`      | `postgres:16-alpine` (stock)                                     | postgres  | 5432              | — (dev override: `127.0.0.1:5432`) | `pg_isready` over TCP | — |
+| `db-migrate`    | `db-migrator.Dockerfile` → `dotnet/runtime:10.0`, migrations baked in | 1654 (`app`) | —            | —         | none (one-shot, exit code) | ~300 MB |
+| `data-pipeline` | `data-pipeline.Dockerfile` → `dotnet/aspnet:10.0` (.NET worker + `/health`) | 1654 (`app`) | 8080 | —     | `dotnet Solia.DataPipeline.dll --healthcheck` → `/health` | ~345 MB |
+| `ai-service`    | `ai-service.Dockerfile` → `python:3.11-slim` (CPU torch, uvicorn) | 10001 (`solia`) | 8000      | —         | python `urllib` → `/health` | ~2.1 GB |
+| `backend`       | `backend.Dockerfile` → `dotnet/aspnet:10.0` (API + paper bot)    | 1654 (`app`) | 8080           | **8080**  | `dotnet Solia.Api.dll --healthcheck` → `/health/live` | ~355 MB |
+| `dashboard`     | `dashboard.Dockerfile` → `dotnet/aspnet:10.0` (Blazor Server)    | 1654 (`app`) | 8081           | **8081**  | `--healthcheck` → `/health/live` | ~360 MB |
+
+**Startup order** (`depends_on` conditions):
+
+```
+postgres ──healthy──▶ db-migrate ──exited 0──▶ data-pipeline
+                                  └─exited 0──▶ ai-service ──healthy──▶ backend ──healthy──▶ dashboard
+                                                (backend also needs db-migrate exited 0)
+```
+
+The backend doesn't wait for the data-pipeline (it reads the DB and ai-service only), so a failing
+pipeline never keeps 8080/8081 down. Long-running services restart `unless-stopped`; `db-migrate`
+never restarts.
+
+**Volumes**
+
+| Volume / mount | Mounted in | Holds | Survives `down` | Removed by |
+|----------------|------------|-------|-----------------|------------|
+| `pgdata` (named) | postgres `/var/lib/postgresql/data` | the whole database (tokens, features, predictions, trades, migration history) | yes | `down -v` / `make reset` |
+| `models` (named) | ai-service `/app/models` (`MODEL_DIR`) | trained model versions (+ an optional `SOLIA_AI_CONFIG` file) | yes | `down -v` / `make reset` |
+| `./secrets` (bind, **ro**) | backend `/app/secrets` | `secrets.enc` only — the key never touches disk in the stack | host folder | — |
+
+**Network & ports.** Everything is on the internal `solia` bridge network and reaches the others by
+service name (`postgres:5432`, `ai-service:8000`, `backend:8080`). Only `backend:8080` and
+`dashboard:8081` are published on the host; postgres, data-pipeline and ai-service have no host port
+(the dev override publishes Postgres on `127.0.0.1` only).
 
 ## Image conventions
 
@@ -72,7 +112,7 @@ Docker & orchestration assets. See the root [`docker-compose.yml`](../docker-com
 
 ## Smoke test
 
-`infra/scripts/smoke.sh` (bash; GitHub Actions or Git Bash on Windows; needs docker + curl, no jq)
+`infra/scripts/smoke.sh` (`make smoke`; bash; GitHub Actions or Git Bash on Windows; needs docker + curl, no jq)
 proves the containerized system works end-to-end:
 
 1. `docker compose up -d --wait --build`, then asserts `db-migrate` exited 0 and every long-running

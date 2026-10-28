@@ -2,7 +2,7 @@
 
 > Predictive trading research system for Pump.fun tokens — ML pump/rug probability, autonomous **paper-trading** bot, continuous training, and a live dashboard.
 
-**Status:** 🏗️ Planning / scaffolding. No application code yet — this repository currently contains the architecture, data model, and the sprint backlog. Each sprint is implemented in its own branch/PR.
+**Status:** 🧪 Runs end-to-end in Docker Compose (Sprints 1–6): live ingestion, model service, backend + paper bot, dashboard. Next: continuous training, then optimization & QA — see [`docs/ROADMAP.md`](docs/ROADMAP.md). Each task is implemented in its own branch/PR.
 
 > ⚠️ **Disclaimer.** Solia is a **research and educational** project. It performs **paper trading only** (simulated orders, no real funds, no on-chain execution). Nothing here is financial advice. Crypto markets — and Pump.fun memecoins in particular — are extremely high risk.
 
@@ -77,17 +77,41 @@ Each sprint = one milestone = one (or more) PR, reviewed before merge. See [`CON
 
 ## Quick start
 
-Requires Docker Engine 25+ and Docker Compose 2.24+.
+Requires Docker Engine 25+ and Docker Compose 2.24+. From a fresh clone:
 
 ```bash
-cp .env.example .env              # works as-is; change POSTGRES_PASSWORD for anything shared
-docker compose up -d --build      # whole stack: backend on :8080, dashboard on :8081
+cp .env.example .env      # 1. config — works as-is; change POSTGRES_PASSWORD for anything shared
+                          # 2. (optional) encrypted secrets — see below
+docker compose up -d      # 3. builds the images on first run, then starts the whole stack
+                          # 4. open http://localhost:8081 (dashboard); the REST API is on :8080
 ```
 
-Local dev (`dotnet run` / pytest against the containerized Postgres, published on `127.0.0.1:5432`):
+The first start builds every image (a few minutes; the ai-service image pulls PyTorch). Startup is
+ordered — postgres → `db-migrate` (applies the schema, then exits) → data-pipeline + ai-service →
+backend (waits for ai-service, not the pipeline) → dashboard, so the dashboard answers once the
+backend is healthy; `make ps` shows where a slow start is. The paper bot
+is off by default (`PAPER_BOT_ENABLED=false` in `.env`).
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres
-```
+**(Optional) secrets.** Without `secrets/secrets.enc` the stack runs on the plaintext `.env`. To keep
+secrets encrypted: create the file and the master key with `Solia.Secrets.Cli` on the host, put it in
+`./secrets/` (readable by UID 1654), and inject `SOLIA_MASTER_KEY` (host env, or `.env`) — step by
+step in [`docs/SECRETS.md` § Docker](docs/SECRETS.md#docker-compose).
 
-See [`infra/README.md`](infra/README.md) for the secrets mount and the startup order.
+Day-to-day:
+
+| Shortcut                    | Plain compose                                  | What it does |
+|-----------------------------|------------------------------------------------|--------------|
+| `make up`                   | `docker compose up -d --build --wait`          | (re)build and start, wait until healthy |
+| `make down`                 | `docker compose down`                          | stop; DB and models volumes are **kept** |
+| `make logs` (`ARGS=backend`)| `docker compose logs -f --tail=100 [service]`  | follow the logs |
+| `make ps`                   | `docker compose ps -a`                         | container status (incl. the exited `db-migrate`) |
+| `make reset`                | `docker compose down -v --remove-orphans`      | stop **and delete** the volumes (DB data, trained models) — asks first |
+| `make smoke`                | `infra/scripts/smoke.sh`                       | end-to-end smoke test, in its own compose project |
+| `make dev-db`               | `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres` | Postgres alone on `127.0.0.1:5432` for `dotnet run` / pytest |
+
+No `make` (Windows)? The targets are thin wrappers: run the same commands from Git Bash with
+`infra/scripts/solia.sh <command>` (e.g. `infra/scripts/solia.sh logs backend`,
+`infra/scripts/solia.sh reset --yes`), or use the plain compose column.
+
+How the containers fit together (images, startup order, volumes, network, ports):
+[`infra/README.md`](infra/README.md) and [`docs/ARCHITECTURE.md` §7](docs/ARCHITECTURE.md#7-deployment-topology-docker-compose).

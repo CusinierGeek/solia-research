@@ -38,8 +38,8 @@ Running it again is a **no-op** — already-applied files are skipped.
 `infra/docker/db-migrator.Dockerfile` ships the migrator with `migrations/*.sql` baked in
 (`MIGRATIONS_DIR=/app/migrations`, non-root). It applies pending migrations and **exits** — 0 when the
 schema is up to date, non-zero on bad SQL, checksum drift, an unreachable database or a lock wait that
-timed out — so the app services can be gated on it with `service_completed_successfully`. (The root
-`docker-compose.yml` doesn't run it yet: that wiring lands with the Sprint 6 compose task.) It reads the
+timed out — so the app services can be gated on it with `service_completed_successfully`. The root
+`docker-compose.yml` runs it as the `db-migrate` service on every `up`, before any app service. It reads the
 same `POSTGRES_*` variables as the other services:
 
 ```bash
