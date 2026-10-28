@@ -82,6 +82,12 @@ def load_config(path: str | os.PathLike[str] | None = None) -> dict[str, Any]:
     return config
 
 
+def validate_config(config: Any, source: str = "config") -> None:
+    """Raise :class:`ConfigError` unless ``config`` is a valid config mapping (the rules
+    :func:`load_config` applies to a file), e.g. for a config built in memory."""
+    _validate(config, source)
+
+
 def _validate(config: Any, source: str) -> None:
     def fail(problem: str) -> NoReturn:
         raise ConfigError(f"{source}: {problem}")

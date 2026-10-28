@@ -155,28 +155,33 @@ def walk_forward_windows(
     eval_fraction: float = DEFAULT_EVAL_FRACTION,
     val_fraction: float = DEFAULT_VAL_FRACTION,
     embargo: int = 0,
+    eval_end_ts: np.ndarray | None = None,
 ) -> list[Window]:
     """Cut the most recent ``eval_fraction`` of samples (by ``end_ts``) into ``n_windows`` slices.
 
     Slice ``k`` scores the samples ending in ``(b_k, b_k+1]``; its training pool is every sample
     ending at or before ``b_k - embargo``, split by time into train / early-stopping validation.
-    Raises when a slice, or its train / validation split, is empty.
+    With ``eval_end_ts`` the slices (bounds and ``eval_idx``) come from that separate scored set
+    instead, and only the training pool from ``end_ts`` — a model trained on other labels is then
+    still scored on the same windows. Raises when a slice, or its train / validation split, is
+    empty.
     """
     if n_windows < 1:
         raise ValueError(f"n_windows must be >= 1, got {n_windows}")
     if not 0 < eval_fraction < 1:
         raise ValueError(f"eval_fraction must be in (0, 1), got {eval_fraction}")
     end_ts = np.asarray(end_ts, dtype=np.int64)
-    if len(end_ts) == 0:
+    scored = end_ts if eval_end_ts is None else np.asarray(eval_end_ts, dtype=np.int64)
+    if len(end_ts) == 0 or len(scored) == 0:
         raise ValueError("no labeled window to ablate on: the feature data is empty or too short")
 
     quantiles = 1.0 - eval_fraction + eval_fraction * np.arange(n_windows + 1) / n_windows
-    bounds = np.quantile(end_ts.astype(np.float64), quantiles)
-    bounds[-1] = end_ts.max()  # the last slice runs up to the most recent sample, inclusive
+    bounds = np.quantile(scored.astype(np.float64), quantiles)
+    bounds[-1] = scored.max()  # the last slice runs up to the most recent sample, inclusive
     windows = []
     for k in range(n_windows):
         lo, hi = bounds[k], bounds[k + 1]
-        eval_idx = np.where((end_ts > lo) & (end_ts <= hi))[0]
+        eval_idx = np.where((scored > lo) & (scored <= hi))[0]
         pool = np.where(end_ts <= lo - embargo)[0]
         if len(eval_idx) == 0 or len(pool) == 0:
             raise ValueError(
@@ -436,23 +441,11 @@ def run_ablation(
                         f"seed {seed}"
                     )
                 cfg = copy.deepcopy(dict(config))
-                cfg["training"] = {**cfg["training"], "seed": seed}
                 cfg["features"] = {"groups": list(variant.groups)}  # the model masks the rest
-                fitted = fit(train_ds, val_ds, cfg, device=device)
-                model = fitted.model.cpu()
-                calibration, _ = fit_calibration_window(model, val_ds, cfg)
-                report = evaluate(
-                    model,
-                    eval_ds,
-                    model_version=variant.name,
-                    policy=policy,
-                    calibration=calibration,
+                best_epoch, metrics = train_and_score(
+                    train_ds, val_ds, eval_ds, cfg, seed=seed, policy=policy, device=device
                 )
-                runs.append(
-                    RunResult(
-                        variant.name, window.index, seed, fitted.best_epoch, run_metrics(report)
-                    )
-                )
+                runs.append(RunResult(variant.name, window.index, seed, best_epoch, metrics))
 
     keys = metric_keys(horizons)
     by_variant = {v.name: _ordered(runs, v.name, windows, seeds) for v in variants}
@@ -509,6 +502,27 @@ def run_ablation(
         lifts=lifts,
         calibration=calibration_effect,
     )
+
+
+def train_and_score(
+    train_ds: SequenceDataset,
+    val_ds: SequenceDataset,
+    eval_ds: SequenceDataset,
+    config: Mapping[str, Any],
+    *,
+    seed: int,
+    policy: ReferencePolicy,
+    device: Any = None,
+) -> tuple[int, dict[str, float | None]]:
+    """One run: fit under ``seed`` (early-stopping on ``val_ds``), calibrate on ``val_ds``, score
+    ``eval_ds`` calibrated. Returns the best epoch and :func:`run_metrics`. Never saves anything."""
+    cfg = copy.deepcopy(dict(config))
+    cfg["training"] = {**cfg["training"], "seed": seed}
+    fitted = fit(train_ds, val_ds, cfg, device=device)
+    model = fitted.model.cpu()
+    calibration, _ = fit_calibration_window(model, val_ds, cfg)
+    report = evaluate(model, eval_ds, policy=policy, calibration=calibration)
+    return fitted.best_epoch, run_metrics(report)
 
 
 def check_settings(

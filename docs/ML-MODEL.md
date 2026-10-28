@@ -212,6 +212,37 @@ python -m solia_ai.ablation --groups flow holders --windows 4 --seeds 0 1 2 3 \
     --margin 0.01 --pnl-margin 0 --out reports/ablation.json  # JSON report + readable summary
 ```
 
+### Hyperparameter & labeling-threshold search
+
+Once the feature set is settled, `solia_ai/search.py` tunes what is left — scored by the ablation
+harness (same walk-forward windows, same seeds, paired run for run), so a config only wins on lift
+that survives eval-sample and initialization luck.
+
+- **Space**: `seq_len`, `d_model`, `n_layers`, `dropout`, `learning_rate`, and the labels as one
+  scale per head over every horizon (`pump_threshold_scale`, `rug_threshold_scale` — the term
+  structure across horizons is kept). Each is `{choices: [...]}` or `{low, high[, log]}` (default
+  space: `search.DEFAULT_SPACE`, override with `--space file.yaml`); omitted parameters keep the base
+  value. `ff_dim` follows `d_model` at the base ratio; `min_seq_len` stays the base one. A space is
+  validated before any data is read (`d_model` a multiple of `n_heads`, `seq_len >= min_seq_len`,
+  every scaled rug threshold < 1, …).
+- **Strategy & budget**: seeded random search (or `--strategy grid` over `choices`). The base config
+  always runs first as `baseline`; then at most `--trials` trials in all, and no trial *starts* after
+  `--max-minutes`.
+- **Fixed metric definitions under a label change.** A threshold change alters the target, so each
+  trial *trains and calibrates* on its own labels but is **scored against the base config's labels**
+  on the same windows (the report's `settings.eval_labels`): every trial answers "how well does it
+  rank the reference events". The objective is therefore a ranking metric — mean ROC-AUC (or
+  `--objective pr_auc`) over both heads and every horizon; ECE is reported but never the objective,
+  since a model trained on other labels is calibrated for another event.
+- **Ranking**: by `mean − std` of the per-run objective (a noisy config doesn't win on luck). The best
+  trial is compared to the baseline with the ablation verdict (objective and every metric).
+- **Output**: a JSON report (`--out`) and a **proposed** `config.yaml` diff (`--diff-out`), never
+  applied. Trials never save a checkpoint, register a model or touch `is_champion`.
+
+```bash
+python -m solia_ai.search --trials 30 --max-minutes 240 --windows 3 --seeds 0 1 2     --out reports/search.json --diff-out reports/search.diff
+```
+
 ## Files (ai-service, built in Sprints 2 & 7)
 
 | File | Role |
@@ -222,6 +253,7 @@ python -m solia_ai.ablation --groups flow holders --windows 4 --seeds 0 1 2 3 \
 | `train.py` | Initial training entrypoint |
 | `evaluate.py` | Held-out evaluation (predictive metrics + reference-policy P&L) |
 | `ablation.py` | Per-feature-group lift across windows & seeds |
+| `search.py` | Hyperparameter & labeling-threshold search (proposes a `config.yaml` diff) |
 | `inference.py` | Load champion, run predictions (+ ONNX export) |
 | `retrain.py` | Continuous-training orchestrator (Sprint 7) |
 | `api.py` | FastAPI app (`/predict`, `/model/status`, `/model/retrain`) |
