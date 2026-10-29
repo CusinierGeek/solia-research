@@ -35,6 +35,7 @@ from solia_ai.retrain import (
     RetrainLockLostError,
     RollbackRefusedError,
     count_trades_since_last_train,
+    eligibility_note,
     heldout_means,
     is_due,
     json_safe,
@@ -672,6 +673,22 @@ def test_train_and_evaluate_pairs_every_seeded_candidate_with_the_champion(df, t
         evaluation.candidate_runs, evaluation.champion_runs, PromotionSettings.from_config(cfg)
     )
     assert decision.reasons  # a valid, paired comparison
+    assert not any("eligibility" in note for note in evaluation.notes)  # same (disabled) rule
+
+
+def test_train_and_evaluate_notes_a_champion_trained_under_another_rule(df, tmp_path):
+    early = df[df["ts"] < df["ts"].min() + pd.Timedelta(seconds=200)]
+    trained = train(early, small_config(), model_dir=tmp_path / "champ", register=False)
+    champion = SimpleNamespace(version=trained.version, path=str(trained.checkpoint_path))
+    cfg = gate_config()
+    cfg["eligibility"] = {"min_volume_sol": 1e-9}  # any traded token: keeps nearly every window
+
+    evaluation = train_and_evaluate(
+        df, cfg, champion=champion, model_dir=tmp_path / "out", device="cpu"
+    )
+
+    (note,) = [n for n in evaluation.notes if "eligibility" in n]
+    assert trained.version in note and "volume>=1e-09 SOL" in note
 
 
 def test_train_and_evaluate_scores_a_champion_on_its_own_window_shape(df, tmp_path):
@@ -867,3 +884,23 @@ def test_the_background_service_fails_fast_on_invalid_bounds(monkeypatch):
     monkeypatch.setattr(solia_ai.config, "load_config", lambda: bad)
     with pytest.raises(ConfigError, match="'data.max_rows' must be >= 1"):
         RetrainService.from_engine(lambda: None)
+
+
+def test_a_champion_trained_under_another_eligibility_rule_is_reported():
+    cfg = {"eligibility": {"min_unique_traders": 3}}
+    checkpoint = {"version": "old", "hyperparams": {"model": {}}}  # recorded before the rule
+
+    note = eligibility_note(checkpoint, cfg)
+
+    assert note is not None
+    assert "champion old" in note
+    assert "disabled (every token)" in note
+    assert "traders>=3" in note
+
+
+def test_a_champion_trained_under_the_config_s_rule_is_not_reported():
+    rule = {"min_unique_traders": 3, "min_volume_sol": 0.0, "min_token_age_sec": 0.0}
+    checkpoint = {"version": "v", "hyperparams": {"eligibility": rule}}
+
+    assert eligibility_note(checkpoint, {"eligibility": {"min_unique_traders": 3}}) is None
+    assert eligibility_note({"hyperparams": {}}, {}) is None  # both disabled

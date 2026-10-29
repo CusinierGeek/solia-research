@@ -131,6 +131,12 @@ def test_model_status_reports_the_champion():
     assert body["metrics"] == {"val_total": 0.3}
     assert body["seq_len"] == 8
     assert body["min_seq_len"] == 1  # no hyperparams recorded: any non-empty window is accepted
+    # ... nor an eligibility rule: a model from before the rule was trained on every token.
+    assert body["eligibility"] == {
+        "min_unique_traders": 0,
+        "min_volume_sol": 0.0,
+        "min_token_age_sec": 0.0,
+    }
     assert body["trades_since_last_train"] == 142
     assert body["retrain_threshold"] == 500
     assert body["latest_run"] == LATEST_RUN
@@ -788,3 +794,14 @@ def test_unwritable_model_dir_warns_without_failing_startup(tmp_path, monkeypatc
     assert not check_model_dir_writable()
     assert "is not writable" in caplog.text and "chown" in caplog.text
     assert _client().get("/health").json() == {"status": "ok"}  # serving still starts
+
+
+def test_model_status_reports_the_champion_s_eligibility_rule():
+    predictor = _predictor()
+    rule = {"min_unique_traders": 3, "min_volume_sol": 0.5, "min_token_age_sec": 0.0}
+    predictor.metadata["hyperparams"] = {"eligibility": rule}
+    champion = LoadedChampion(predictor=predictor)
+
+    response = _client(lambda current: current or champion).get("/model/status")
+
+    assert response.json()["eligibility"] == rule

@@ -298,6 +298,7 @@ def create_app(
             "metrics": loaded.metrics or {},
             "seq_len": loaded.predictor.seq_len,
             "min_seq_len": loaded.predictor.min_seq_len,
+            "eligibility": loaded.predictor.eligibility.as_dict(),
             **service.progress(),
         }
 

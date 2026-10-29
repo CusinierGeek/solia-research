@@ -111,6 +111,16 @@ data:
   # biased in time; never a partial token history) up to this many rows. Peak RSS ~ rows x size.
   max_rows: 4000000
 
+# Token eligibility (solia_ai/eligibility.py, docs/ML-MODEL.md "Token eligibility"): only windows
+# anchored on an eligible row are trained / validated / held out, and the bot only scores (hence
+# enters) a token eligible at its latest snapshot. Causal — each criterion is a running maximum over
+# the token's rows so far — and recorded with every model, so the bot reads its champion's rule.
+# 0 disables a criterion (all 0 = every token); a negative threshold is rejected.
+eligibility:
+  min_unique_traders: 0 # most distinct traders any 5-min window has counted so far
+  min_volume_sol: 0.0 # highest 5-min window SOL volume so far
+  min_token_age_sec: 0.0 # token age
+
 # Prediction horizons.
 horizons: ["30s", "1m", "5m", "15m", "1h"]
 

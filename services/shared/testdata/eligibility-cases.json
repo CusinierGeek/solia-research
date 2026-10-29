@@ -1,0 +1,104 @@
+{
+  "_comment": "Token eligibility parity fixture: the ai-service (solia_ai.eligibility, tests/test_eligibility.py) and the bot (Solia.Bot.Policy.EligibilityRule, EligibilityParityTests) must both give `eligible` for every case's rows (one token, in time order; null = NULL) and both reject every `invalid_rules` entry.",
+  "cases": [
+    {
+      "name": "disabled rule keeps every row, NULLs included",
+      "rule": {},
+      "rows": [
+        { "unique_traders": null, "volume": null, "token_age_sec": null },
+        { "unique_traders": 0, "volume": 0, "token_age_sec": 0 },
+        { "unique_traders": 1, "volume": 0.01, "token_age_sec": 12 }
+      ],
+      "eligible": [true, true, true]
+    },
+    {
+      "name": "explicit zero thresholds are the disabled rule",
+      "rule": { "min_unique_traders": 0, "min_volume_sol": 0.0, "min_token_age_sec": 0.0 },
+      "rows": [{ "unique_traders": null, "volume": null, "token_age_sec": null }],
+      "eligible": [true]
+    },
+    {
+      "name": "traders: running max, threshold inclusive, a later drop or NULL keeps it",
+      "rule": { "min_unique_traders": 3 },
+      "rows": [
+        { "unique_traders": null, "volume": 1.0, "token_age_sec": 1 },
+        { "unique_traders": 1, "volume": 1.0, "token_age_sec": 11 },
+        { "unique_traders": 2, "volume": 1.0, "token_age_sec": 21 },
+        { "unique_traders": 3, "volume": 1.0, "token_age_sec": 31 },
+        { "unique_traders": 1, "volume": 1.0, "token_age_sec": 41 },
+        { "unique_traders": null, "volume": 1.0, "token_age_sec": 51 }
+      ],
+      "eligible": [false, false, false, true, true, true]
+    },
+    {
+      "name": "traders: never reported stays ineligible",
+      "rule": { "min_unique_traders": 1 },
+      "rows": [
+        { "unique_traders": null, "volume": 5.0, "token_age_sec": 100 },
+        { "unique_traders": null, "volume": 5.0, "token_age_sec": 110 }
+      ],
+      "eligible": [false, false]
+    },
+    {
+      "name": "volume: running max of the window volume, threshold edge",
+      "rule": { "min_volume_sol": 0.5 },
+      "rows": [
+        { "unique_traders": 9, "volume": null, "token_age_sec": 1 },
+        { "unique_traders": 9, "volume": 0.1, "token_age_sec": 11 },
+        { "unique_traders": 9, "volume": 0.4999, "token_age_sec": 21 },
+        { "unique_traders": 9, "volume": 0.5, "token_age_sec": 31 },
+        { "unique_traders": 9, "volume": 0.0, "token_age_sec": 41 }
+      ],
+      "eligible": [false, false, false, true, true]
+    },
+    {
+      "name": "age: threshold edge, a NULL age keeps the last known one",
+      "rule": { "min_token_age_sec": 30 },
+      "rows": [
+        { "unique_traders": 1, "volume": 0.1, "token_age_sec": null },
+        { "unique_traders": 1, "volume": 0.1, "token_age_sec": 29 },
+        { "unique_traders": 1, "volume": 0.1, "token_age_sec": 30 },
+        { "unique_traders": 1, "volume": 0.1, "token_age_sec": null },
+        { "unique_traders": 1, "volume": 0.1, "token_age_sec": 31 }
+      ],
+      "eligible": [false, false, true, true, true]
+    },
+    {
+      "name": "combined: every enabled criterion must hold",
+      "rule": { "min_unique_traders": 2, "min_volume_sol": 1.0, "min_token_age_sec": 20 },
+      "rows": [
+        { "unique_traders": 5, "volume": 0.2, "token_age_sec": 5 },
+        { "unique_traders": 1, "volume": 1.5, "token_age_sec": 15 },
+        { "unique_traders": 1, "volume": 0.3, "token_age_sec": 25 },
+        { "unique_traders": null, "volume": null, "token_age_sec": null }
+      ],
+      "eligible": [false, false, true, true]
+    },
+    {
+      "name": "combined: one criterion never met keeps it out",
+      "rule": { "min_unique_traders": 10, "min_volume_sol": 0.1 },
+      "rows": [
+        { "unique_traders": 9, "volume": 50.0, "token_age_sec": 600 },
+        { "unique_traders": 9, "volume": 50.0, "token_age_sec": 610 }
+      ],
+      "eligible": [false, false]
+    },
+    {
+      "name": "no rows",
+      "rule": { "min_unique_traders": 3 },
+      "rows": [],
+      "eligible": []
+    }
+  ],
+  "invalid_rules": [
+    { "min_unique_traders": -1 },
+    { "min_volume_sol": -0.1 },
+    { "min_token_age_sec": -5 },
+    { "min_unique_traders": 2.5 },
+    { "min_unique_traders": "3" },
+    { "min_volume_sol": "1" },
+    { "min_volume_sol": true },
+    { "min_token_age_sec": null },
+    { "max_traders": 3 }
+  ]
+}

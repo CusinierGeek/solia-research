@@ -99,6 +99,70 @@ Labels require the token's **full lifecycle** — including **post-bonding** pri
 AMM. The pipeline captures pre- and post-bonding events (see [`DATA-SOURCES.md`](DATA-SOURCES.md)),
 so a pump/rug after migration is labeled correctly; a pre-bonding-only dataset would bias labels.
 
+
+## Token eligibility
+
+Most Pump.fun tokens are created and never really traded (2026-10-28 00:00–03:00 UTC replay, 22 569
+tokens: 52.9 % never had more than 1 unique trader, 72 % never more than 3, 5.8 % passed 50). One rule,
+`config.yaml` `eligibility` (`solia_ai/eligibility.py`), decides which rows the model learns on and the bot
+may trade. It is **causal** — a row is judged on itself and the token's earlier rows only, never on what
+happened next (dropping the tokens that *turned out* dead would train on an optimistic population and
+miscalibrate the model on the tokens it sees live) — and **identical** in training and trading:
+
+| Threshold (0 = off) | A row passes when… |
+|---|---|
+| `min_unique_traders` | the most distinct traders any snapshot of the token counted so far ≥ it |
+| `min_volume_sol` | the highest window SOL `volume` any snapshot reported so far ≥ it |
+| `min_token_age_sec` | the oldest `token_age_sec` known so far ≥ it |
+
+The pipeline's `unique_traders` / `volume` are per rolling window (`Pipeline:WindowSeconds`, 300 s), so the
+"so far" value is their **running maximum** — a causal lower bound of the traders seen, and never a sum of
+overlapping windows (which would count each trade many times). A NULL input carries no information: it
+doesn't raise a running maximum, so a token with no known value yet fails that criterion. Every criterion is
+a running maximum, hence monotone: once eligible, a token stays eligible. All thresholds 0 (or the section
+omitted) = every token, today's behaviour; a negative, non-finite or non-numeric threshold (or a fractional
+trader count, an unknown key) fails the config load.
+
+- **Dataset** (`build_samples`): only windows whose **anchor** (last) row is eligible become training /
+  validation / held-out samples. Labels are unchanged, and the rows before the token became eligible may
+  still be in the window's history. Each sample records its anchor's inputs (`Samples.eligibility_inputs`),
+  so another rule is a mask, not a rebuild.
+- **Recorded with the model**: `hyperparams["eligibility"]`, in the checkpoint and the `models` row;
+  `GET /model/status` reports the served champion's. A model recorded without one predates the rule and was
+  trained on every token (read as all 0).
+- **Bot** (`Solia.Bot.Policy.EligibilityRule`, `Solia.Api.Bot.ChampionEligibility`): the bot never configures
+  its own rule — it reads its **champion's** from `models.hyperparams` (re-read every 30 s, and as soon as
+  `/predict` answers with another model version), so it can't trade a population its model never saw. Before
+  `/predict`, the feed computes the token's running maxima over its rows up to the scored one (one SQL
+  aggregate); an ineligible token is not sent to the ai-service, hence never entered. Its price ticks still
+  flow, so an already-open position is managed as before. A champion recorded without a rule scores every
+  token (warning); one recording an invalid rule scores **none** (fail closed, error) until it changes.
+- **Rule change**: a retrain whose champion was trained under another rule than the config's logs a note
+  (`training_events` / `logs`): both models are scored on the config's eligible held-out windows, and the bot
+  keeps trading the champion's population until a candidate trained under the new rule is promoted.
+- **Parity**: `services/shared/testdata/eligibility-cases.json` (threshold edges, NULLs, combined criteria,
+  invalid rules) runs in both `tests/test_eligibility.py` and `EligibilityRuleTests`.
+- **Read size**: the rule filters samples, not the training read — `read_training_features` still loads every
+  token of the window (bounding the read is the `data` section's job). The ablation reports how many
+  `features` rows the eligible tokens hold, i.e. what a filtered read would load.
+
+### Choosing the thresholds: eligibility ablation
+
+```bash
+python -m solia_ai.eligibility_ablation --windows 3 --seeds 0 1 --out reports/eligibility.json
+# --rule traders=4,volume=1.0,age=30 (repeatable); --lookback-days / --max-rows like a retrain
+```
+
+For each rule, every walk-forward (window, seed) run pairs the rule's model (trained on the eligible windows
+only) with the every-token model, **both scored on the rule's eligible held-out windows** — the population the
+bot would trade. The slices are cut once, by time, so every rule is scored on the same time ranges. Lift =
+rule − every-token (positive = better, ECE negated), judged like the feature ablation. Predictive metrics are
+primary; the samples / tokens / rows kept and the reference-policy trades & P&L are reported beside them.
+
+**Default: disabled (all thresholds 0)** until measured. The first run (2026-10-29) was stopped: the
+database held a stale replay, to be redone with the current pipeline. Run the ablation on the fresh replay
+(after the training-throughput task, #152) and record the result and the chosen defaults here.
+
 ## Confidence
 
 Confidence (0–100) is **derived** from the calibrated probabilities (their margin from 0.5, after
@@ -382,6 +446,8 @@ python -m solia_ai.search --trials 30 --max-minutes 240 --windows 3 --seeds 0 1 
 | `candidate.py` | Candidate training for a retrain (warm start from champion or scratch, refreshed time split, never registered) |
 | `evaluate.py` | Held-out evaluation (predictive metrics + reference-policy P&L) |
 | `ablation.py` | Per-feature-group lift across windows & seeds |
+| `eligibility.py` | Token eligibility rule (causal, shared with the bot) |
+| `eligibility_ablation.py` | Lift of eligibility rules (rule's model vs every-token model on the rule's population) |
 | `search.py` | Hyperparameter & labeling-threshold search (proposes a `config.yaml` diff) |
 | `inference.py` | Load champion, run predictions (+ ONNX export) |
 | `retrain.py` | Continuous-training orchestrator: trade-count trigger, one run at a time, `training_events` audit, promote/reject, rollback, prune |

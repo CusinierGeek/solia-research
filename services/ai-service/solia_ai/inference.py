@@ -41,6 +41,7 @@ from torch import nn
 from .calibration import Calibration
 from .checkpoints import resolve_checkpoint_path  # noqa: F401  (re-exported for callers)
 from .dataset import pad_window
+from .eligibility import EligibilityRule
 from .features import FEATURE_COLUMNS, is_ordered_subset
 from .model import IncompatibleCheckpointError, SoliaTransformer
 
@@ -264,6 +265,12 @@ class Predictor:
     def min_seq_len(self) -> int:
         """The shortest window the champion was trained on (:func:`recorded_min_seq_len`)."""
         return recorded_min_seq_len(self.metadata, self.seq_len)
+
+    @property
+    def eligibility(self) -> EligibilityRule:
+        """The eligibility rule the champion was trained under (disabled for a model recorded
+        before the rule existed): the bot only scores the tokens it accepts."""
+        return EligibilityRule.of(self.metadata.get("hyperparams"))
 
     @classmethod
     def from_checkpoint(cls, path: str | Path, *, temperature: float | None = None) -> Predictor:

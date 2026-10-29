@@ -209,6 +209,46 @@ public sealed class DbBotEventSourceIntegrationTests : PostgresFixture, IAsyncLi
         Assert.All(_requests, r => Assert.Equal(3.0, ((IReadOnlyList<FeatureRow>)r.Features)[^1].Numeric["price"]));
     }
 
+    [Fact]
+    public async Task Only_the_tokens_eligible_under_the_champion_s_rule_are_scored()
+    {
+        await ExecAsync("UPDATE models SET hyperparams = CAST(@h AS JSONB) WHERE is_champion",
+            ("h", "{\"eligibility\": {\"min_unique_traders\": 3}}"));
+        await TrackAsync("dead", "late", "live");
+        await InsertTradedAsync(("dead", T0, 1), ("late", T0.AddSeconds(1), 1), ("live", T0.AddSeconds(2), 5));
+        StartReading();
+
+        // Queued oldest first: once "live" is scored, "dead" and "late" were judged — and never sent to /predict.
+        await WaitForAsync(() => Predictions("live").Count == 1);
+        Assert.DoesNotContain(_requests, r => r.Mint is "dead" or "late");
+        Assert.Single(Ticks("dead")); // its marks still flow: an open position is managed as before
+        Assert.Empty(Predictions("dead"));
+
+        // "late" becomes eligible (its traders so far reach 3) and is scored from that row on; a later quieter
+        // row keeps it eligible (the rule never forgets what the token reached).
+        await InsertTradedAsync(("late", T0.AddSeconds(10), 4));
+        await WaitForAsync(() => Predictions("late").Count == 1);
+        await InsertTradedAsync(("late", T0.AddSeconds(20), 1));
+        await WaitForAsync(() => Predictions("late").Count == 2);
+        Assert.DoesNotContain(_requests, r => r.Mint == "dead");
+    }
+
+    [Fact]
+    public async Task A_champion_recording_an_invalid_rule_gets_no_token_scored()
+    {
+        await ExecAsync("UPDATE models SET hyperparams = CAST(@h AS JSONB) WHERE is_champion",
+            ("h", "{\"eligibility\": {\"min_volume_sol\": -1}}"));
+        await TrackAsync("a");
+        StartReading();
+
+        await InsertTradedAsync(("a", T0, 50));
+        await WaitForAsync(() => Ticks("a").Count == 1);
+        await Task.Delay(TimeSpan.FromSeconds(1)); // several scoring turns
+
+        Assert.Empty(_requests);
+        Assert.False(_reader.IsCompleted); // fail closed, the feed keeps going
+    }
+
     private List<PriceTick> Ticks(string mint) =>
         [.. _events.OfType<BotEvent.Price>().Select(p => p.Value).Where(t => t.Mint == mint)];
 
@@ -229,6 +269,15 @@ public sealed class DbBotEventSourceIntegrationTests : PostgresFixture, IAsyncLi
         foreach ((string mint, DateTimeOffset ts, decimal price) in rows)
         {
             await ExecAsync("INSERT INTO features (mint, ts, price) VALUES (@m, @ts, @p)", ("m", mint), ("ts", ts), ("p", price));
+        }
+    }
+
+    private async Task InsertTradedAsync(params (string Mint, DateTimeOffset Ts, int UniqueTraders)[] rows)
+    {
+        foreach ((string mint, DateTimeOffset ts, int traders) in rows)
+        {
+            await ExecAsync("INSERT INTO features (mint, ts, price, unique_traders) VALUES (@m, @ts, 1.0, @u)",
+                ("m", mint), ("ts", ts), ("u", traders));
         }
     }
 

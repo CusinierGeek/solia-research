@@ -17,6 +17,7 @@ from solia_ai.calibration import Calibration
 from solia_ai.config import DATA_DEFAULTS
 from solia_ai.dataset import SequenceDataset, make_datasets, positive_weights
 from solia_ai.db import DataBounds, DataSettings
+from solia_ai.eligibility import EligibilityRule
 from solia_ai.features import BASELINE_GROUPS, FEATURE_COLUMNS
 from solia_ai.loss import SoliaLoss
 from solia_ai.model import SoliaTransformer
@@ -27,6 +28,7 @@ from solia_ai.train import (
     calibration_split,
     default_version,
     fit_calibration_window,
+    hyperparams_snapshot,
     main,
     resolve_pos_weight,
     train,
@@ -201,6 +203,8 @@ def test_checkpoint_is_self_describing_and_reloads(tmp_path):
     assert checkpoint["feature_columns"] == FEATURE_COLUMNS
     # The enabled groups travel with the checkpoint: candidates stay masked by default.
     assert checkpoint["hyperparams"]["features"] == {"groups": list(BASELINE_GROUPS)}
+    # So does the eligibility rule (none configured: every token), read back by the bot.
+    assert checkpoint["hyperparams"]["eligibility"] == EligibilityRule().as_dict()
 
     shape = checkpoint["hyperparams"]["model"]
     model = SoliaTransformer(
@@ -556,3 +560,13 @@ def test_resolve_pos_weight_follows_the_config():
     assert torch.equal(
         resolve_pos_weight(train_ds, _natural(1000))["pump"], torch.full((n_h,), 1000.0)
     )
+
+
+def test_the_eligibility_rule_is_recorded_in_the_hyperparams():
+    cfg = small_config()
+    cfg["eligibility"] = {"min_unique_traders": 3, "min_volume_sol": 0.5}
+
+    recorded = hyperparams_snapshot(cfg)["eligibility"]
+
+    assert recorded == {"min_unique_traders": 3, "min_volume_sol": 0.5, "min_token_age_sec": 0.0}
+    assert EligibilityRule.of(hyperparams_snapshot(cfg)) == EligibilityRule(3, 0.5)

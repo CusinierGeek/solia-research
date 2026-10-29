@@ -86,6 +86,15 @@ DATA_DEFAULTS: dict[str, Any] = {
     "max_rows": 4_000_000,
 }
 
+# The token eligibility rule's thresholds and defaults (``config.yaml`` ``eligibility``,
+# solia_ai.eligibility): 0 disables a criterion, so all-zero keeps every token. Defined here so
+# validation stays torch-free.
+ELIGIBILITY_DEFAULTS: dict[str, Any] = {
+    "min_unique_traders": 0,
+    "min_volume_sol": 0.0,
+    "min_token_age_sec": 0.0,
+}
+
 _HORIZON_UNITS = {"s": 1, "m": 60, "h": 3600}
 
 Lookup = Callable[[str], str | None]
@@ -137,6 +146,27 @@ def data_bounds_error(config: Any, lookback_days: Any, max_rows: Any) -> str | N
 
 
 # --------------------------------------------------------------------------- model shape
+
+
+def eligibility_error(values: Any) -> str | None:
+    """Why an ``eligibility`` section is invalid (unknown key, non-numeric or negative threshold,
+    a fractional trader count), or ``None`` when it is valid."""
+    if not isinstance(values, dict):
+        return f"'eligibility' must be a mapping, got {values!r}"
+    unknown = [str(k) for k in values if k not in ELIGIBILITY_DEFAULTS]
+    if unknown:
+        return f"'eligibility' has unknown key(s): {', '.join(unknown)}"
+    for key, value in values.items():
+        integer = key == "min_unique_traders"
+        valid = isinstance(value, int) if integer else isinstance(value, int | float)
+        if isinstance(value, bool) or not valid:
+            kind = "an integer" if integer else "a number"
+            return f"'eligibility.{key}' must be {kind}, got {value!r}"
+        if not 0 <= value < float("inf"):  # also rejects NaN
+            return (
+                f"'eligibility.{key}' must be a finite number >= 0 (0 disables it), got {value!r}"
+            )
+    return None
 
 
 def model_shape_error(*, d_model: int, n_heads: int, seq_len: int, min_seq_len: int) -> str | None:
@@ -404,6 +434,9 @@ def _validate(config: Any, source: str) -> None:
         fail(f"'data' has unknown key(s): {', '.join(unknown)}")
     problem = data_bounds_error(config, *({**DATA_DEFAULTS, **data}[k] for k in DATA_DEFAULTS))
     if problem:
+        fail(problem)
+
+    if "eligibility" in config and (problem := eligibility_error(config["eligibility"])):
         fail(problem)
 
     labeling = section("labeling")

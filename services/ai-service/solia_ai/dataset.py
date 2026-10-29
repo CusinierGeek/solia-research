@@ -29,6 +29,11 @@ The split is temporal with an embargo so a training window's look-ahead can't le
 validation. Windows are not copied: samples keep each token's feature rows once and slice
 windows on access, so memory stays proportional to the data, not ``seq_len`` times it.
 
+Only windows whose anchor (last) row is *eligible* (:mod:`solia_ai.eligibility`, ``config.yaml``
+``eligibility``) become samples — the population the bot trades. The rule is causal, so it never
+peeks at the future; labels are unchanged, and the rows before the token became eligible may still
+sit in a window's history.
+
 Young tokens matter most, so windows may be shorter than ``seq_len`` (down to ``min_seq_len``
 rows): a window holds a token's most recent ``<= seq_len`` rows, and :func:`pad_window` left-pads
 it to ``seq_len`` with a padding mask the model uses to ignore the padding.
@@ -46,6 +51,8 @@ import torch
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 from .config import MAX_POS_WEIGHT, horizon_seconds, load_config
+from .eligibility import INPUT_COLUMNS as ELIGIBILITY_INPUTS
+from .eligibility import EligibilityRule, frame_inputs
 from .features import (
     BASELINE_GROUPS,
     FEATURE_COLUMNS,
@@ -74,6 +81,9 @@ class Samples:
     end_ts: np.ndarray  # [N] int64 epoch seconds of the window's last row
     mint: np.ndarray  # [N] object
     horizons: tuple[str, ...]
+    # [N, 3] float32 — the anchor row's eligibility inputs (solia_ai.eligibility.running_inputs),
+    # so another rule can be applied without rebuilding (:meth:`EligibilityRule.accepts`).
+    eligibility_inputs: np.ndarray | None = None
 
     def __len__(self) -> int:
         return len(self.end_row)
@@ -124,12 +134,16 @@ def build_samples(
     min_gap_seconds: float = DEFAULT_MIN_GAP_SECONDS,
     min_seq_len: int | None = None,
     max_return: float = DEFAULT_MAX_RETURN,
+    eligibility: EligibilityRule | None = None,
 ) -> Samples:
     """Slide windows per mint and label each by the realized future trajectory (module doc).
 
     A window ends at every row from the token's ``min_seq_len``-th on (default ``seq_len``: full
-    windows only) and holds its most recent ``<= seq_len`` rows.
+    windows only) that ``eligibility`` accepts (default: every row) and holds its most recent
+    ``<= seq_len`` rows.
     """
+    rule = EligibilityRule() if eligibility is None else eligibility
+    rule.check_columns(df)
     horizons = tuple(horizons)
     if seq_len < 1:
         raise ValueError(f"seq_len must be >= 1, got {seq_len}")
@@ -162,6 +176,7 @@ def build_samples(
     labels: list[tuple[np.ndarray, ...]] = []
     end_ts: list[np.ndarray] = []
     mints: list[np.ndarray] = []
+    anchors: list[np.ndarray] = []
     offset = 0
 
     for mint, sub in df.groupby("mint", sort=True):
@@ -182,6 +197,8 @@ def build_samples(
             window_ends, ts_sec, price, liquidity, horizon_s, pump_thr, rug_thr, max_gap, max_return
         )
         keep = mask.any(axis=1)  # drop windows with nothing labelable yet
+        anchor_inputs = frame_inputs(sub)[window_ends]
+        keep &= rule.accepts(anchor_inputs)  # ... or anchored on an ineligible row
         if not keep.any():
             continue
 
@@ -191,6 +208,7 @@ def build_samples(
         labels.append((pump[keep], rug[keep], ret[keep], mask[keep]))
         end_ts.append(ts_sec[window_ends[keep]])
         mints.append(np.full(int(keep.sum()), mint, dtype=object))
+        anchors.append(anchor_inputs[keep])
         offset += len(matrix)
 
     n_feat = len(FEATURE_COLUMNS)
@@ -209,6 +227,7 @@ def build_samples(
             np.empty((0,), np.int64),
             np.empty((0,), object),
             horizons,
+            np.empty((0, len(ELIGIBILITY_INPUTS)), np.float32),
         )
 
     return Samples(
@@ -220,6 +239,7 @@ def build_samples(
         np.concatenate(end_ts).astype(np.int64),
         np.concatenate(mints),
         horizons,
+        np.concatenate(anchors).astype(np.float32),
     )
 
 
@@ -407,7 +427,8 @@ def embargo_seconds(horizons: Sequence[str]) -> int:
 
 
 def config_samples(df: pd.DataFrame, cfg: Mapping[str, Any]) -> Samples:
-    """The windows of ``df`` per ``cfg``; refuses rows predating an enabled feature group."""
+    """The windows of ``df`` per ``cfg`` (anchored on rows its ``eligibility`` rule accepts);
+    refuses rows predating an enabled feature group."""
     check_group_coverage(df, cfg.get("features", {}).get("groups", BASELINE_GROUPS))
     labeling = cfg["labeling"]
     return build_samples(
@@ -420,6 +441,7 @@ def config_samples(df: pd.DataFrame, cfg: Mapping[str, Any]) -> Samples:
         max_gap_fraction=labeling.get("max_gap_fraction", DEFAULT_MAX_GAP_FRACTION),
         min_gap_seconds=labeling.get("min_gap_seconds", DEFAULT_MIN_GAP_SECONDS),
         max_return=labeling.get("max_return", DEFAULT_MAX_RETURN),
+        eligibility=EligibilityRule.from_config(cfg),
     )
 
 

@@ -27,7 +27,10 @@ internal sealed record FeedRow(long Id, string Mint, DateTimeOffset Ts, decimal?
 ///   late is still read) and emits every priced row of a <em>tracked</em> token (<c>tokens_live.is_active</c>)
 ///   as a <see cref="BotEvent.Price"/> tick at its snapshot time, then queues the token for scoring;</item>
 ///   <item>the <em>scoring</em> loop takes the queued tokens one at a time, oldest-waiting first
-///   (<see cref="ScoringQueue"/>), scores each on its feature window <em>up to the queued row</em> — the
+///   (<see cref="ScoringQueue"/>), skips a token not eligible at the queued row under the champion's
+///   <see cref="EligibilityRule"/> (<see cref="ChampionEligibility"/>: the model only learned on eligible tokens, so
+///   an ineligible one is never sent to the ai-service, hence never entered — its ticks still flow, so an open
+///   position is managed as before), scores each other on its feature window <em>up to the queued row</em> — the
 ///   window <c>POST /predict</c> sends, never a newer row — through the ai-service, persists the
 ///   <see cref="BotHostOptions.Horizon"/> prediction to <c>predictions</c> and emits it as a
 ///   <see cref="BotEvent.Prediction"/> at that row's time. A slow ai-service never holds the ticks back.</item>
@@ -44,6 +47,7 @@ public sealed class DbBotEventSource(
     IServiceScopeFactory scopes,
     ISoliaAiClient ai,
     PostgresPredictionStore predictions,
+    ChampionEligibility eligibility,
     IOptions<BotHostOptions> hostOptions,
     IOptions<BotOptions> botOptions,
     IOptions<AiServiceOptions> aiOptions,
@@ -264,8 +268,21 @@ public sealed class DbBotEventSource(
         List<FeatureRow> window;
         await using (AsyncServiceScope scope = scopes.CreateAsyncScope())
         {
-            window = await PredictEndpoints.LoadWindowAsync(scope.ServiceProvider.GetRequiredService<SoliaDbContext>(),
-                row.Mint, aiOptions.Value.MaxFeatureWindowSize, cancellationToken, upTo: row.Ts);
+            SoliaDbContext db = scope.ServiceProvider.GetRequiredService<SoliaDbContext>();
+            EligibilityRule? rule = await eligibility.GetAsync(db, cancellationToken);
+            if (rule is null)
+            {
+                return null; // the champion's recorded rule is invalid: fail closed (logged once)
+            }
+
+            if (rule.Enabled && !rule.IsEligible(await ChampionEligibility.LoadInputsAsync(db, row.Mint, row.Ts, cancellationToken)))
+            {
+                logger.LogDebug("bot feed: {Mint} not eligible at {Ts} ({Rule}), not scored", row.Mint, row.Ts, rule);
+                return null;
+            }
+
+            window = await PredictEndpoints.LoadWindowAsync(db, row.Mint, aiOptions.Value.MaxFeatureWindowSize,
+                cancellationToken, upTo: row.Ts);
         }
 
         if (window.Count == 0)
@@ -275,6 +292,11 @@ public sealed class DbBotEventSource(
 
         AiPredictResponse response = await ai.PredictAsync(
             AiPredictRequest.ForWindow(row.Mint, window, [_host.Horizon]), cancellationToken);
+        if (response.ModelVersion != eligibility.Version)
+        {
+            eligibility.Invalidate(); // a new champion is served: its rule applies from the next token on
+        }
+
         AiPrediction? scored = response.Predictions?.FirstOrDefault(p => p?.Horizon == _host.Horizon);
         if (scored is null)
         {

@@ -415,6 +415,24 @@ def _load_scorer(checkpoint: Mapping[str, Any]) -> tuple[Any, Any]:
     return _column_view(model), Calibration.from_checkpoint(checkpoint, model.horizons)
 
 
+def eligibility_note(checkpoint: Mapping[str, Any], config: Mapping[str, Any]) -> str | None:
+    """A warning when the champion was trained under another eligibility rule than ``config``'s
+    (``None`` when the rules match): both models are scored on the config's eligible windows, and
+    the bot trades the champion's population until a candidate trained under the new rule wins."""
+    from .eligibility import EligibilityRule
+
+    trained = EligibilityRule.of(checkpoint.get("hyperparams"))
+    wanted = EligibilityRule.from_config(config)
+    if trained == wanted:
+        return None
+    return (
+        f"champion {checkpoint.get('version')} was trained under eligibility rule "
+        f"[{trained.describe()}], the config's is [{wanted.describe()}]: both are scored on the "
+        "config's eligible windows; the bot keeps trading the champion's population until a "
+        "candidate trained under the config's rule is promoted"
+    )
+
+
 def load_champion_checkpoint(
     champion: ModelRecord | None, config: Mapping[str, Any]
 ) -> dict[str, Any] | None:
@@ -502,6 +520,9 @@ def train_and_evaluate(
     champion_ckpt = champion_checkpoint
     if champion_ckpt is None and champion is not None:
         champion_ckpt = load_champion_checkpoint(champion, config)
+
+    if champion_ckpt is not None and (note := eligibility_note(champion_ckpt, config)):
+        notes.append(note)
 
     samples = config_samples(df, config)
     embargo = embargo_seconds(samples.horizons)

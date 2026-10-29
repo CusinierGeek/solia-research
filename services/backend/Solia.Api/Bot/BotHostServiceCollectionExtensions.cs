@@ -7,7 +7,7 @@ namespace Solia.Api.Bot;
 
 /// <summary>
 /// Hosts the Sprint-3 paper-trading bot in the backend: its validated options, the live
-/// <see cref="DbBotEventSource"/> feed, the Postgres trade store / closed-trade counter / `logs` sink
+/// <see cref="DbBotEventSource"/> feed (scoring only the tokens its <see cref="ChampionEligibility"/> accepts), the Postgres trade store / closed-trade counter / `logs` sink
 /// (<see cref="BotServiceCollectionExtensions.AddPaperTradingEngine"/>) and <see cref="GatedPaperTradingBot"/>,
 /// which runs it only when <see cref="BotHostOptions.Enabled"/>. The feed also needs the EF context and the
 /// ai-service client, which <c>Program.cs</c> registers. Callers add
@@ -25,6 +25,7 @@ public static class BotHostServiceCollectionExtensions
             .ValidateOnStart();
 
         services.AddSingleton<PostgresPredictionStore>();
+        services.AddSingleton<ChampionEligibility>();
         services.AddSingleton<IBotEventSource, DbBotEventSource>();
         services.AddPaperTradingEngine(configuration);
         services.AddSingleton<PaperTradingBot>();

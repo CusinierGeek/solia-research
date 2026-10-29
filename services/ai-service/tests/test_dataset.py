@@ -17,6 +17,7 @@ from solia_ai.dataset import (
     positive_weights,
     temporal_split,
 )
+from solia_ai.eligibility import EligibilityRule
 from solia_ai.features import FEATURE_COLUMNS
 
 PUMP = {"1m": 0.25}
@@ -476,3 +477,72 @@ def test_make_loaders_can_shuffle_unbalanced_and_validates_batch_size():
 
     with pytest.raises(ValueError, match="batch_size"):
         make_loaders(train, val, batch_size=0)
+
+
+# --------------------------------------------------------------------------- eligibility
+
+
+def traded_from(df: pd.DataFrame, row: int, traders: int = 5) -> pd.DataFrame:
+    """``df`` with ``traders`` unique traders from its ``row``-th row on (none before)."""
+    df = df.copy()
+    df["unique_traders"] = [0] * row + [traders] * (len(df) - row)
+    return df
+
+
+def test_only_windows_anchored_on_an_eligible_row_are_kept_with_unchanged_labels():
+    prices = [1.0, 1.1, 1.0, 1.3, 1.2, 1.0, 0.5, 0.4, 1.0, 1.5, 1.4, 1.3, 1.2]
+    df = traded_from(frame(prices, TS), row=5)
+    everything = samples(df, seq_len=4)
+
+    s = samples(df, seq_len=4, eligibility=EligibilityRule(min_unique_traders=3))
+
+    assert len(s) > 0
+    assert s.end_ts.min() == TS[5]  # the first eligible row anchors the first window
+    keep = np.isin(everything.end_ts, s.end_ts)
+    assert set(everything.end_ts[~keep]) == set(TS[3:5])  # full windows end from row 3
+    for name in ("pump", "rug", "expected_return", "mask"):
+        np.testing.assert_array_equal(getattr(s, name), getattr(everything, name)[keep])
+    # The history before eligibility is still in the window.
+    np.testing.assert_array_equal(s.window(0)[:, PRICE], np.array(prices[2:6], np.float32))
+
+
+def test_eligibility_never_looks_ahead():
+    """A token that becomes very active later doesn't make its earlier windows eligible."""
+    prices = [1.0] * len(TS)
+    late = traded_from(frame(prices, TS), row=10, traders=500)
+    rule = EligibilityRule(min_unique_traders=3)
+
+    s = samples(late, eligibility=rule)
+
+    assert (s.end_ts >= TS[10]).all()
+
+
+def test_a_disabled_rule_keeps_today_s_samples():
+    df = traded_from(frame([1.0, 1.2, 0.9, 1.4] * 3 + [1.0], TS), row=6)
+
+    off = samples(df, eligibility=EligibilityRule())
+    default = samples(df)
+
+    np.testing.assert_array_equal(off.end_ts, default.end_ts)
+    np.testing.assert_array_equal(off.mask, default.mask)
+
+
+def test_a_token_never_eligible_gives_no_sample():
+    s = samples(frame([1.0] * len(TS), TS), eligibility=EligibilityRule(min_volume_sol=1.0))
+
+    assert len(s) == 0
+
+
+def test_config_samples_reads_the_rule_from_config():
+    df = traded_from(frame([1.0] * len(TS), TS), row=4)
+    cfg = {
+        "model": {"seq_len": 1},
+        "horizons": ["1m"],
+        "labeling": {"pump_threshold": PUMP, "rug_threshold": RUG},
+        "eligibility": {"min_unique_traders": 2},
+    }
+
+    s = config_samples(df, cfg)
+
+    assert s.end_ts.min() == TS[4]
+    assert len(config_samples(df, {**cfg, "eligibility": {}})) == len(samples(df))
