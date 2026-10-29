@@ -104,7 +104,9 @@ through the **same parser** as live, so historical and live events are identical
 - `Fixtures/sample.jsonl` is 20 real lines captured from `2026/04/20/12.jsonl.zst`. Note the real
   schema: the event type is `txType`, and SOL-quoted pools report `sol*` fields (`solAmount`,
   `solInPool`, `vSolInBondingCurve`, `marketCapSol`) while other pools report `quote*` + `quoteMint`.
-  `RawEvent.QuoteMint` records which currency prices are in.
+  `RawEvent.QuoteMint` records which currency prices are in. A migrated token often trades on several
+  pools at once in different currencies (~16 % of trades on 2026-10-28 weren't SOL-quoted), so features
+  are a **SOL series**: only SOL-quoted trades set price, cap, liquidity, pool and volume.
 
 **Mirror a window locally** (full archive is ~1.7 TB — always pick a window), then replay the files:
 

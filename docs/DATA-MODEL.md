@@ -9,7 +9,9 @@
 - A token is identified by its **mint address** (`mint TEXT`).
 - Monetary/price values use `NUMERIC` to avoid float drift; feature vectors may use `DOUBLE PRECISION`.
   Precision is bounded to 28 digits (migration `0002`) so every value fits a .NET `decimal`: prices
-  `NUMERIC(28,24)`, amounts/P&L `NUMERIC(28,12)`, in quote currency (SOL / USDC).
+  `NUMERIC(28,24)`, amounts/P&L `NUMERIC(28,12)`. Feature prices and amounts are in **SOL**: a token's
+  trades on pools quoted in another currency (USDC, other tokens) count as buys/sells but never set its
+  price, cap, liquidity, pool or volume (see `features` below).
 - Soft relationships via `mint`; hard FKs where lifecycle is coupled.
 - Enumerated `TEXT` columns (status, strategy, horizon, level, …) and probability/confidence ranges are enforced with `CHECK` constraints; the values listed below are the only accepted ones.
 
@@ -70,12 +72,12 @@ Time-series feature snapshots per token. The model's input unit.
 | ts | TIMESTAMPTZ | snapshot time |
 | venue | TEXT | `pumpfun` / `pumpswap` / `raydium` / `meteora` / ... — one-hot encoded for the model at load time (ai-service `VENUE_COLUMNS`), not stored |
 | is_migrated | BOOLEAN | token has graduated off the bonding curve |
-| pool_address | TEXT | nullable; AMM pool once migrated |
-| price | NUMERIC(28,24) | |
-| volume | NUMERIC(28,12) | |
-| market_cap | NUMERIC(28,12) | |
+| pool_address | TEXT | nullable; the SOL-quoted pool of the latest SOL trade (AMM pool once migrated) |
+| price | NUMERIC(28,24) | in SOL, from SOL-quoted trades only (a migrated token trades on several pools, each in its own quote currency); NULL for a token never traded against SOL |
+| volume | NUMERIC(28,12) | SOL volume of the window |
+| market_cap | NUMERIC(28,12) | in SOL, from SOL-quoted trades |
 | holders | INT | |
-| liquidity | NUMERIC(28,12) | |
+| liquidity | NUMERIC(28,12) | SOL in the SOL-quoted pool |
 | buy_events | INT | in window |
 | sell_events | INT | in window |
 | buy_sell_ratio | DOUBLE PRECISION | |
@@ -99,11 +101,11 @@ Time-series feature snapshots per token. The model's input unit.
 | return_long | DOUBLE PRECISION | same over `MomentumLongSeconds` (default 60 s) |
 | price_acceleration | DOUBLE PRECISION | short return − the short return one short window earlier; NULL without 2 short windows of prices |
 | ema_slope | DOUBLE PRECISION | per-second change of the EMA as of the snapshot time / previous snapshot's EMA; NULL on the first snapshot or after a quote change |
-| volume_acceleration | DOUBLE PRECISION | (volume rate of the last short window − of the one before) / short, quote/s²; NULL until 2 short windows observed in the current quote currency |
-| volume_burst_ratio | DOUBLE PRECISION | short / long per-second volume rate (rated over the observed span, since the current quote currency began, when shorter); 1 when nothing traded over the long window. Always written |
+| volume_acceleration | DOUBLE PRECISION | (volume rate of the last short window − of the one before) / short, quote/s²; NULL until 2 short windows observed |
+| volume_burst_ratio | DOUBLE PRECISION | short / long per-second volume rate (rated over the observed span when shorter); 1 when nothing traded over the long window. Always written |
 | price_history_sec | DOUBLE PRECISION | how far back (s) the momentum price history reaches, capped at `MomentumLongSeconds`; 0 without a price. A return over a longer look-back is NULL. Always written |
-| unique_traders | INT | distinct signers (`txSigner`) of the window's trades in the current quote currency; trades without a signer are skipped. Always written |
-| top_trader_share | DOUBLE PRECISION | largest single wallet's share of the window's signed volume (current quote currency; non-positive amounts carry none), (0, 1]; NULL without signed volume |
+| unique_traders | INT | distinct signers (`txSigner`) of the window's SOL-quoted trades; trades without a signer are skipped. Always written |
+| top_trader_share | DOUBLE PRECISION | largest single wallet's share of the window's signed SOL volume (non-positive amounts carry none), (0, 1]; NULL without signed volume |
 | trader_hhi | DOUBLE PRECISION | Herfindahl-Hirschman index of per-wallet volume shares (Σ share²), (0, 1]: 1 = one wallet, 1/n = volume split evenly over n wallets; NULL without signed volume |
 | new_trader_ratio | DOUBLE PRECISION | share of the traders of the last `MomentumShortSeconds` first seen on the token in that span (the rest are returning, even from before the window; past `HolderCounter.ExactLimit` wallets, first seen in the window), [0, 1]; NULL without a signed trade in that span |
 | burned_liquidity | DOUBLE PRECISION | % [0, 100] of the AMM pool's LP burned, from the current pool's latest event reporting it (reset when the token moves to another pool); NULL when unknown (none seen, e.g. still on the curve, or malformed). Kept equal to `onchain_signals.burnedLiquidityPercent`: 0008's insert trigger fills it when a writer omits it, 0009 backfills earlier rows in batches |

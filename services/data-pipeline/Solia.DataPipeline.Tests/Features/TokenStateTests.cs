@@ -149,26 +149,72 @@ public class TokenStateTests
     }
 
     [Fact]
-    public void Quote_currency_change_restarts_the_price_series_and_skips_cross_currency_growth()
+    public void A_trade_in_another_quote_currency_leaves_the_SOL_series_alone()
     {
         var state = new TokenState("M", windowSeconds: 300, emaSpan: 20, rsiPeriod: 2, firstSeen: T0);
         state.Apply(Quoted(EventKind.Buy, 0.0000001m, 1m, Wsol, 0));
-        state.Apply(Quoted(EventKind.Buy, 0.0000001m, 1m, Wsol, 1));
+        RawEvent solPool = Quoted(EventKind.Buy, 0.0000001m, 1m, Wsol, 1);
+        state.Apply(solPool with { MarketCap = 30m, QuoteInPool = 80m, Venue = "pumpswap", PoolId = "SOLPOOL" });
         state.Snapshot(T0.AddSeconds(1));
 
-        state.Apply(Quoted(EventKind.Buy, 0.00002m, 50m, Usdc, 10)); // migrated to a USDC pool
+        RawEvent usdcPool = Quoted(EventKind.Buy, 0.00002m, 50m, Usdc, 10); // the same token on a USDC pool
+        state.Apply(usdcPool with { MarketCap = 5000m, QuoteInPool = 9000m, Venue = "meteora", PoolId = "USDCPOOL", Supply = 1e9m });
         FeatureSnapshot s = state.Snapshot(T0.AddSeconds(10));
 
-        Assert.Equal(0.00002m, s.Price);
-        Assert.Equal(0.00002, s.Ema!.Value, 15); // restarted, not blended with SOL prices
-        Assert.Equal(0, s.Volatility);           // one USDC price: no fake 200x jump
-        Assert.Null(s.Rsi);
-        Assert.Equal(50m, s.Volume);             // SOL amounts aren't summed with USDC
-        Assert.Equal(3, s.BuyEvents);            // counts still include every trade
-        Assert.Null(s.VolumeGrowthRate);
-        Assert.Null(s.PriceDerivative);
-        Assert.Null(s.TrendingScore);
-        Assert.Equal(Usdc, s.OnchainSignals["quoteMint"]);
+        Assert.Equal(0.0000001m, s.Price);   // a USDC price is another unit, not a 200x jump
+        Assert.Equal(0, s.Volatility);
+        Assert.Equal(0, s.PriceDerivative!.Value, 15);
+        Assert.Equal(30m, s.MarketCap);      // cap, liquidity, venue and pool stay the SOL pool's
+        Assert.Equal(80m, s.Liquidity);
+        Assert.Equal("pumpswap", s.Venue);
+        Assert.Equal("SOLPOOL", s.PoolAddress);
+        Assert.Equal(2m, s.Volume);          // USDC amounts aren't summed with SOL
+        Assert.Equal(3, s.BuyEvents);        // counts still include every trade
+        Assert.Equal(1e9m, s.OnchainSignals["supply"]); // the supply doesn't depend on the pool
+        Assert.Equal(Wsol, s.OnchainSignals["quoteMint"]);
+    }
+
+    [Fact]
+    public void A_token_trading_on_several_pools_keeps_one_continuous_SOL_price()
+    {
+        // Real shape (2026-10-28): one migrated token on SOL, USDC and token-quoted pools at once.
+        var state = new TokenState("M", 300, emaSpan: 20, rsiPeriod: 2, T0);
+        (string Quote, decimal Price)[] trades =
+        [
+            (Wsol, 0.000160m), (Usdc, 0.0165m), ("BgKtxB44DWf2zMtQpjwVNwjWCjKgAupoVdGVDuR9pump", 1480m),
+            (Wsol, 0.000162m), (Usdc, 0.0166m), (Wsol, 0.000164m),
+        ];
+        for (int t = 0; t < trades.Length; t++)
+        {
+            state.Apply(Quoted(EventKind.Buy, trades[t].Price, 1m, trades[t].Quote, t));
+        }
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(trades.Length));
+
+        Assert.Equal(0.000164m, s.Price);
+        Assert.InRange(s.Ema!.Value, 0.000160, 0.000164);
+        Assert.InRange(s.Volatility!.Value, 0, 0.02); // ~1.2 % steps, not 10^7x swings
+        Assert.Equal(3m, s.Volume);
+        Assert.Equal(6, s.BuyEvents);
+    }
+
+    [Fact]
+    public void A_token_never_traded_against_SOL_has_no_price_but_counts_its_trades()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(Quoted(EventKind.Buy, 0.02m, 50m, Usdc, 0) with { MarketCap = 5000m, QuoteInPool = 9000m });
+        state.Apply(Quoted(EventKind.Sell, 0.02m, 10m, Usdc, 1));
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(2));
+
+        Assert.Null(s.Price);
+        Assert.Null(s.Ema);
+        Assert.Null(s.MarketCap);
+        Assert.Null(s.Liquidity);
+        Assert.Equal(0m, s.Volume);
+        Assert.Equal(1, s.BuyEvents);
+        Assert.Equal(1, s.SellEvents);
+        Assert.Null(s.OnchainSignals["quoteMint"]);
     }
 
     [Fact]
@@ -342,16 +388,16 @@ public class TokenStateTests
     }
 
     [Fact]
-    public void Buy_pressure_keeps_counting_SOL_trades_after_a_switch_to_another_quote()
+    public void Volume_and_buy_pressure_only_count_SOL_trades()
     {
         var state = new TokenState("M", 300, 20, 14, T0);
         state.Apply(Sol(EventKind.Buy, 2m, 0));
-        state.Apply(Quoted(EventKind.Buy, 1m, 100m, Usdc, 1)); // current quote is now USDC
+        state.Apply(Quoted(EventKind.Buy, 1m, 100m, Usdc, 1)); // 100 USDC is not 100 SOL
 
         FeatureSnapshot s = state.Snapshot(T0.AddSeconds(2));
 
-        Assert.Equal(100m, s.Volume);        // volume follows the current quote currency...
-        Assert.Equal(2m, s.NetSolFlow);      // ...SOL features stay in SOL
+        Assert.Equal(2m, s.Volume);
+        Assert.Equal(2m, s.NetSolFlow);
     }
 
     [Fact]
@@ -548,7 +594,7 @@ public class TokenStateTests
     }
 
     [Fact]
-    public void Volume_momentum_only_spans_the_current_quote_currency()
+    public void Volume_momentum_ignores_trades_in_another_quote_currency()
     {
         var state = new TokenState("M", 300, 20, 14, T0);
         for (int t = 0; t <= 50; t++)
@@ -558,15 +604,15 @@ public class TokenStateTests
 
         for (int t = 51; t <= 60; t++)
         {
-            state.Apply(Quoted(EventKind.Buy, 1m, 1m, Usdc, t)); // migrated to a USDC pool at 51 s
+            state.Apply(Quoted(EventKind.Buy, 7m, 1m, Usdc, t)); // only USDC trades since 51 s
         }
 
         FeatureSnapshot s = state.Snapshot(T0.AddSeconds(60));
 
-        Assert.Null(s.VolumeAcceleration);               // 9 s in USDC < two short windows
-        Assert.Equal(1, s.VolumeBurstRatio, 12);         // 10 USDC / 9 s on both sides: steady
-        Assert.Null(s.ReturnLong);                       // the price history restarted too
-        Assert.Equal(9, s.PriceHistorySec);
+        Assert.Equal(-0.1, s.VolumeAcceleration!.Value, 12); // 0 SOL in (50, 60] vs 10 in (40, 50]
+        Assert.Equal(0, s.VolumeBurstRatio, 12);             // no SOL traded in the short window
+        Assert.Equal(0, s.ReturnLong!.Value, 12);            // the SOL price never moved
+        Assert.Equal(60, s.PriceHistorySec);                 // and its history wasn't restarted
     }
 
     [Fact]
@@ -595,7 +641,7 @@ public class TokenStateTests
     }
 
     [Fact]
-    public void Quote_change_restarts_the_momentum_series()
+    public void Another_quote_currency_trade_does_not_move_the_momentum_series()
     {
         var state = new TokenState("M", 300, 20, 14, T0);
         for (int t = 0; t <= 30; t++)
@@ -607,8 +653,8 @@ public class TokenStateTests
         state.Apply(Quoted(EventKind.Buy, 0.00002m, 50m, Usdc, 31));
         FeatureSnapshot s = state.Snapshot(T0.AddSeconds(31));
 
-        Assert.Null(s.ReturnShort); // USDC prices don't compare with SOL ones
-        Assert.Null(s.EmaSlope);
+        Assert.Equal(0, s.ReturnShort!.Value, 12); // USDC prices aren't compared with SOL ones
+        Assert.Equal(0, s.EmaSlope!.Value, 12);
     }
 
     // --- Holder-concentration proxy (txSigner) ---
@@ -770,21 +816,21 @@ public class TokenStateTests
     }
 
     [Fact]
-    public void Concentration_shares_only_sum_the_current_quote_currency()
+    public void Concentration_shares_only_sum_SOL_amounts()
     {
         var state = new TokenState("M", 300, 20, 14, T0);
-        state.Apply(Quoted(EventKind.Buy, 1m, 1000m, Wsol, 0) with { Trader = "OLD" });
-        state.Apply(Quoted(EventKind.Buy, 1m, 1m, Usdc, 1) with { Trader = "A" });
-        state.Apply(Quoted(EventKind.Buy, 1m, 3m, Usdc, 2) with { Trader = "B" });
+        state.Apply(Quoted(EventKind.Buy, 1m, 1m, Wsol, 0) with { Trader = "A" });
+        state.Apply(Quoted(EventKind.Buy, 1m, 3m, Wsol, 1) with { Trader = "B" });
+        state.Apply(Quoted(EventKind.Buy, 1m, 1000m, Usdc, 2) with { Trader = "U" });
 
         FeatureSnapshot s = state.Snapshot(T0.AddSeconds(3));
 
-        Assert.Equal(2, s.UniqueTraders); // OLD's WSOL trade isn't counted, like its volume
-        Assert.Equal(0.75, s.TopTraderShare!.Value, 10); // B: 3 of 4 USDC
+        Assert.Equal(2, s.UniqueTraders); // U's USDC trade isn't counted, like its volume
+        Assert.Equal(0.75, s.TopTraderShare!.Value, 10); // B: 3 of 4 SOL
     }
 
     [Fact]
-    public void A_quote_switch_keeps_unique_traders_consistent_with_the_hhi()
+    public void Another_quote_currency_trade_keeps_unique_traders_consistent_with_the_hhi()
     {
         var state = new TokenState("M", 300, 20, 14, T0);
         for (int i = 0; i < 10; i++)
@@ -796,8 +842,8 @@ public class TokenStateTests
 
         FeatureSnapshot s = state.Snapshot(T0.AddSeconds(21));
 
-        Assert.Equal(1, s.UniqueTraders);
-        Assert.Equal(1.0, s.TraderHhi!.Value, 10); // 1/n with n = 1
+        Assert.Equal(10, s.UniqueTraders); // the SOL traders; U's USDC trade has no SOL amount
+        Assert.Equal(0.1, s.TraderHhi!.Value, 10); // 1/n with n = 10
     }
 
     [Fact]

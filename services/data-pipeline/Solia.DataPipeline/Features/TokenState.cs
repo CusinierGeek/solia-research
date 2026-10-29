@@ -11,18 +11,20 @@ namespace Solia.DataPipeline.Features;
 /// <para>
 /// Tolerates out-of-order events: trades are kept sorted by timestamp, and only an event at least
 /// as new as the latest one seen updates the "latest" facts (price, market cap, venue, ...).
-/// Prices are series in one quote currency: when the quote mint changes (e.g. a migration to a
-/// USDC pool) the price series and EMA restart, volume only sums trades in the current quote
-/// currency, and growth rates aren't computed across the change. The SOL buy-pressure features
-/// only ever count SOL-quoted trades, whatever the current quote currency.
+/// Prices are a SOL series: a migrated token often trades on several pools at once, each quoted in
+/// its own currency (SOL, USDC, another token...), and taking every trade's price would jump by
+/// orders of magnitude between pools. Only SOL-quoted events (and events reporting no quote mint)
+/// set the price, EMA, market cap, liquidity, venue and pool, and only their amounts are summed in
+/// volume and the concentration shares; a trade in another currency still counts as a buy/sell and
+/// a holder. A token never traded against SOL has no price. The SOL buy-pressure features only
+/// count SOL-quoted trades.
 /// </para>
 /// <para>
 /// Momentum features read a separate per-second price history (the last price of each second, with
 /// the EMA as of that price), bounded by the window but keeping the one price still in force at its
 /// start: a busy token's look-backs aren't lost to the volatility series' point cap, and the price
 /// in force at <c>now - w</c> survives pruning. The EMA and its slope are taken as of the snapshot
-/// time, never from prices after it. Volume rates and accelerations only span the time since the
-/// current quote currency began, like the volume they're summed from.
+/// time, never from prices after it.
 /// </para>
 /// <para>
 /// The holder-concentration proxy (<see cref="TraderConcentration"/>) is rebuilt each snapshot from
@@ -67,7 +69,6 @@ internal sealed class TokenState
     private double? _ema;
 
     private DateTimeOffset _firstSeen;
-    private DateTimeOffset _quoteSince = DateTimeOffset.MinValue; // when the current quote currency began
     private DateTimeOffset _createdAt;
     private bool _hasCreate;
 
@@ -76,7 +77,6 @@ internal sealed class TokenState
     private int _prevHolders;
     private decimal? _prevPrice;
     private double? _prevEma;
-    private string? _prevQuoteMint;
 
     public TokenState(string mint, int windowSeconds, int emaSpan, int rsiPeriod, DateTimeOffset firstSeen,
         decimal largeBuySol = PipelineOptions.DefaultLargeBuySol, MomentumWindows? momentum = null)
@@ -138,16 +138,15 @@ internal sealed class TokenState
             return;
         }
 
-        if (e.QuoteMint is { } quoteMint)
-        {
-            if (_quoteMint is not null && quoteMint != _quoteMint)
-            {
-                RestartPriceSeries();
-                _quoteSince = e.Timestamp;
-            }
+        _supply = e.Supply ?? _supply;
 
-            _quoteMint = quoteMint;
+        // Another pool's currency: its price, cap, liquidity and pool don't belong to the SOL series.
+        if (!IsSolQuoted(e.QuoteMint))
+        {
+            return;
         }
+
+        _quoteMint = e.QuoteMint ?? _quoteMint;
 
         if (e.Price is { } price)
         {
@@ -174,7 +173,6 @@ internal sealed class TokenState
 
         _marketCap = e.MarketCap ?? _marketCap;
         _liquidity = e.QuoteInPool ?? _liquidity;
-        _supply = e.Supply ?? _supply;
         _venue = e.Venue ?? _venue;
         // Burned liquidity belongs to a pool: a move to another pool drops the old pool's reading
         // (unknown until that pool reports its own), so a 100%-burned first pool can't vouch for it.
@@ -236,10 +234,10 @@ internal sealed class TokenState
                 sells++;
             }
 
-            // Only amounts in the current quote currency can be summed.
-            bool currentQuote = o.QuoteMint is null || _quoteMint is null || o.QuoteMint == _quoteMint;
-            _concentration.Add(o.Trader, o.Ts, currentQuote ? o.QuoteAmount ?? 0 : null);
-            if (currentQuote)
+            // Only SOL amounts can be summed.
+            bool inSol = IsSolQuoted(o.QuoteMint);
+            _concentration.Add(o.Trader, o.Ts, inSol ? o.QuoteAmount ?? 0 : null);
+            if (inSol)
             {
                 decimal amount = o.QuoteAmount ?? 0;
                 volume += amount;
@@ -310,8 +308,7 @@ internal sealed class TokenState
 
         // Volume: change of the per-second rate between the last two short windows (needs both
         // observed), and the short/long rate ratio (rated over the observed span, like the tx rate).
-        // Volume is only summed in the current quote currency, so the span starts at its switch.
-        double observedSec = (now - (_quoteSince > _firstSeen ? _quoteSince : _firstSeen)).TotalSeconds;
+        double observedSec = (now - _firstSeen).TotalSeconds;
         double shortSec = _momentum.ShortSeconds;
         double? volumeAcceleration = observedSec < 2 * shortSec
             ? null
@@ -329,18 +326,15 @@ internal sealed class TokenState
         {
             double dt = (now - prevTs).TotalSeconds;
             holdersGrowth = Indicators.GrowthRate(_prevHolders, holders, dt);
-            if (_prevQuoteMint == _quoteMint)
+            volumeGrowth = Indicators.GrowthRate((double)_prevVolume, (double)volume, dt);
+            if (_price is { } price && _prevPrice is { } previous)
             {
-                volumeGrowth = Indicators.GrowthRate((double)_prevVolume, (double)volume, dt);
-                if (_price is { } price && _prevPrice is { } previous)
-                {
-                    priceDerivative = Indicators.GrowthRate((double)previous, (double)price, dt);
-                }
+                priceDerivative = Indicators.GrowthRate((double)previous, (double)price, dt);
+            }
 
-                if (emaNow is { } ema && _prevEma is { } prevEma)
-                {
-                    emaSlope = Indicators.RelativeGrowthRate(prevEma, ema, dt);
-                }
+            if (emaNow is { } ema && _prevEma is { } prevEma)
+            {
+                emaSlope = Indicators.RelativeGrowthRate(prevEma, ema, dt);
             }
         }
 
@@ -408,7 +402,6 @@ internal sealed class TokenState
         _prevHolders = holders;
         _prevPrice = _price;
         _prevEma = emaNow;
-        _prevQuoteMint = _quoteMint;
         return snapshot;
     }
 
@@ -454,18 +447,8 @@ internal sealed class TokenState
         _window.Insert(i, observation);
     }
 
-    /// <summary>Prices in a new quote currency aren't comparable with the old ones.</summary>
-    private void RestartPriceSeries()
-    {
-        _prices.Clear();
-        _anchors.Clear();
-        _ema = null;
-        _price = null;
-        _prevPrice = null;
-        _prevEma = null;
-        _marketCap = null;
-        _liquidity = null;
-    }
+    /// <summary>SOL, or no quote mint reported (a source that only ever quotes in SOL).</summary>
+    private static bool IsSolQuoted(string? quoteMint) => quoteMint is null || quoteMint == RawEvent.WrappedSolMint;
 
     private void Prune(DateTimeOffset now)
     {
