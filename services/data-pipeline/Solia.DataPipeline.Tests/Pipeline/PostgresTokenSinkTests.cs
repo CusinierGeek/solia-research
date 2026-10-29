@@ -244,6 +244,27 @@ public sealed class PostgresTokenSinkTests(PostgresFixture db) : IClassFixture<P
     }
 
     [Fact]
+    public async Task An_out_of_range_value_is_written_as_null_and_does_not_fail_the_flush()
+    {
+        var sink = new PostgresTokenSink(db.DataSource);
+
+        await sink.WriteAsync(Batch(T0, [
+            Snap("BIG1", T0, 25_000m) with { MarketCap = 1e17m, Liquidity = 4m },
+            Snap("OK1", T0, 0.00002m),
+        ]), default);
+
+        Assert.Null(await db.ScalarAsync<decimal?>("SELECT price FROM features WHERE mint = 'BIG1'"));
+        Assert.Null(await db.ScalarAsync<decimal?>("SELECT market_cap FROM features WHERE mint = 'BIG1'"));
+        Assert.Equal(4m, await db.ScalarAsync<decimal>("SELECT liquidity FROM features WHERE mint = 'BIG1'"));
+        Assert.Equal(3, await db.ScalarAsync<int>("SELECT holders FROM features WHERE mint = 'BIG1'"));
+        Assert.Null(await Live<decimal?>("last_price", "BIG1"));
+        Assert.Null(await Live<decimal?>("last_market_cap", "BIG1"));
+        Assert.Equal(0.00002m, await db.ScalarAsync<decimal>("SELECT price FROM features WHERE mint = 'OK1'"));
+        Assert.Equal(2, sink.FeatureRowsWritten);
+        Assert.Equal(2, sink.OutOfRangeValues); // counted once per snapshot value, not per table
+    }
+
+    [Fact]
     public async Task Default_mode_keeps_existing_features_rows_and_counts_only_inserts()
     {
         var sink = new PostgresTokenSink(db.DataSource);

@@ -162,9 +162,17 @@ public static class ReplayCommand
             return await runner.MirrorOnlyAsync(command.Window, mirror!, cancellationToken);
         }
 
-        var sink = new PostgresTokenSink(services.GetRequiredService<NpgsqlDataSource>(), command.Rebuild);
-        return await runner.ReplayAsync(command.Window, mirror ?? (IReplayArchive)download,
+        var sink = new PostgresTokenSink(services.GetRequiredService<NpgsqlDataSource>(), command.Rebuild,
+            loggerFactory.CreateLogger<PostgresTokenSink>());
+        ReplaySummary summary = await runner.ReplayAsync(command.Window, mirror ?? (IReplayArchive)download,
             sink, () => sink.FeatureRowsWritten, pipeline, cancellationToken);
+        if (sink.OutOfRangeValues > 0)
+        {
+            logger.LogWarning("replay: {Count} out-of-range NUMERIC values were written as NULL " +
+                "(set Logging__LogLevel__Solia.DataPipeline.Pipeline=Debug to see which)", sink.OutOfRangeValues);
+        }
+
+        return summary;
     }
 
     /// <summary>Mirrors the summary to the <c>logs</c> table; best-effort, like the live host's startup entry.</summary>

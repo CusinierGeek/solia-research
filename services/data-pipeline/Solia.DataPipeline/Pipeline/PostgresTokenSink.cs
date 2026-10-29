@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using NpgsqlTypes;
 using Solia.DataPipeline.Features;
@@ -22,7 +23,8 @@ namespace Solia.DataPipeline.Pipeline;
 /// state, so its holders, unique traders, growth rates and momentum would be computed from a truncated history and
 /// would degrade correct stored rows; its existing rows are kept (missing ones are still inserted).</item>
 /// </list>
-/// Snapshots in one flush have distinct mints (one per tracked token).
+/// Snapshots in one flush have distinct mints (one per tracked token). A NUMERIC value outside its column's
+/// bounds is written as NULL (<see cref="NumericBounds"/>), so one outlier can't fail the whole flush.
 /// </summary>
 public sealed class PostgresTokenSink : ITokenSink
 {
@@ -80,10 +82,12 @@ public sealed class PostgresTokenSink : ITokenSink
 
     private readonly NpgsqlDataSource _dataSource;
     private readonly bool _refreshExistingFeatures;
+    private readonly ILogger? _logger;
     private long _featureRowsWritten;
+    private long _outOfRangeValues;
 
-    public PostgresTokenSink(NpgsqlDataSource dataSource)
-        : this(dataSource, refreshExistingFeatures: false)
+    public PostgresTokenSink(NpgsqlDataSource dataSource, ILogger<PostgresTokenSink>? logger = null)
+        : this(dataSource, refreshExistingFeatures: false, logger)
     {
     }
 
@@ -92,10 +96,11 @@ public sealed class PostgresTokenSink : ITokenSink
     /// True (replay <c>--rebuild</c>): it is overwritten, so columns added since it was written get filled —
     /// only for tokens created inside the run (see the class remarks).
     /// </param>
-    public PostgresTokenSink(NpgsqlDataSource dataSource, bool refreshExistingFeatures)
+    public PostgresTokenSink(NpgsqlDataSource dataSource, bool refreshExistingFeatures, ILogger? logger = null)
     {
         _dataSource = dataSource;
         _refreshExistingFeatures = refreshExistingFeatures;
+        _logger = logger;
     }
 
     /// <summary>
@@ -106,6 +111,9 @@ public sealed class PostgresTokenSink : ITokenSink
 
     /// <summary><c>features</c> rows inserted (or refreshed, in rebuild mode) by committed writes.</summary>
     public long FeatureRowsWritten => Interlocked.Read(ref _featureRowsWritten);
+
+    /// <summary>NUMERIC values written as NULL because they were outside their column's bounds (committed writes).</summary>
+    public long OutOfRangeValues => Interlocked.Read(ref _outOfRangeValues);
 
     public async Task WriteAsync(FlushBatch batch, CancellationToken cancellationToken)
     {
@@ -127,7 +135,7 @@ public sealed class PostgresTokenSink : ITokenSink
                 Array("mints", NpgsqlDbType.Text, batch.Deactivated.ToArray())));
         }
 
-        IReadOnlyList<FeatureSnapshot> s = batch.Snapshots;
+        IReadOnlyList<FeatureSnapshot> s = Bound(batch, out int outOfRange);
         if (s.Count > 0)
         {
             string[] mints = Column(s, x => x.Mint);
@@ -166,6 +174,7 @@ public sealed class PostgresTokenSink : ITokenSink
         await commands.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         Interlocked.Add(ref _featureRowsWritten, features.Sum(f => (long)f.RecordsAffected));
+        Interlocked.Add(ref _outOfRangeValues, outOfRange);
 
         void AddFeatures(IReadOnlyList<FeatureSnapshot> rows, string sql)
         {
@@ -176,6 +185,24 @@ public sealed class PostgresTokenSink : ITokenSink
                 commands.BatchCommands.Add(command);
             }
         }
+    }
+
+    private IReadOnlyList<FeatureSnapshot> Bound(FlushBatch batch, out int outOfRange)
+    {
+        outOfRange = 0;
+        var bounded = new FeatureSnapshot[batch.Snapshots.Count];
+        for (int i = 0; i < bounded.Length; i++)
+        {
+            bounded[i] = NumericBounds.Bound(batch.Snapshots[i], out IReadOnlyList<string> nulled);
+            if (nulled.Count > 0)
+            {
+                outOfRange += nulled.Count;
+                _logger?.LogDebug("{Mint} at {Ts:O}: out-of-range {Columns} written as NULL",
+                    bounded[i].Mint, bounded[i].Ts, string.Join(", ", nulled));
+            }
+        }
+
+        return bounded;
     }
 
     /// <summary>

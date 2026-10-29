@@ -72,6 +72,9 @@ stored row (so a replay of an older window never rolls live data back), and inse
 
 - The snapshot clock follows event time but ignores a lone far-future timestamp; a real jump
   (e.g. a missing replay hour) is followed once 5 consecutive events confirm it.
+- A value outside its column's NUMERIC bounds (migration 0002: prices < 10^4, amounts < 10^16 — e.g. a
+  pool quoted in another token) is written as `NULL` rather than failing the whole flush; the count is
+  logged at Debug per flush (`Solia.DataPipeline.Pipeline`) and as a warning at the end of a replay.
 - A failed write is retried 3 times with backoff, then that batch is dropped and logged, and
   ingestion continues. Only shutdown stops the engine; any other source failure stops the host.
 - On shutdown a final flush (bounded to 10 s) persists the last window.
