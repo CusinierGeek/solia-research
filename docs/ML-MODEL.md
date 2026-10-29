@@ -127,11 +127,12 @@ predictive. A *learned* policy (e.g. RL) is possible later only if it clearly be
 2. When `>= RETRAIN_EVERY_N_TRADES`: build an updated dataset (historical + live).
 3. Train a **candidate** from the champion checkpoint (warm start) or from scratch (configurable).
 4. Evaluate candidate vs champion on a held-out recent window.
-5. **Promote** only if it beats the champion by a margin on the primary metric; otherwise **reject**
-   / **rollback**.
+5. **Promote** only if it passes the promotion gate (primary metric over a margin, no guard-rail
+   regression); otherwise **reject** (the candidate stays registered). **Rollback** to the previous
+   champion is a separate, on-demand operation.
 6. Record everything in `training_events` and `models`; log to `logs`.
 
-Checkpoints, versioning, comparison, and rollback are first-class — see Sprint 7.
+Checkpoints, versioning, comparison, and rollback are first-class — shipped in Sprint 7.
 
 **Candidate training** (`solia_ai/candidate.py`, config `candidate`): the candidate is trained on every
 labeled window ending at or before the held-out start minus the label embargo (held-out = the most
@@ -174,6 +175,17 @@ lock elsewhere). With `RETRAIN_SCHEDULER_ENABLED` (on in compose) a background t
 a running retrain, and a failed check or run is logged and retried on the next tick. Training never runs on a
 request thread: `/predict` and `/health` keep serving. `/model/status` adds `trades_since_last_train`,
 `retrain_threshold` and `latest_run` (see `docs/API-CONTRACTS.md`).
+
+**End-to-end check** (`tests/test_continuous_training_e2e.py`, the Sprint 7 Definition of Done, run in CI): the
+API app with its lifespan scheduler over an ephemeral PostgreSQL (Testcontainers), configured from the environment
+(`SOLIA_AI_CONFIG` tiny config, `MODEL_DIR`, `RETRAIN_EVERY_N_TRADES`), with features read back from the
+`features` table and a real tiny champion. `N − 1` closed trades start nothing; the `N`-th starts an `n_trades`
+run that trains and scores a real candidate. Only the gate's metrics are controlled (candidate = champion ±
+lift), so a better candidate is `promoted` (`is_champion` flipped, `/model/status` serves the new version with
+`trades_since_last_train` back to 0) and a worse one `rejected` (champion unchanged, candidate row kept); a
+rollback restores the prior champion (`decision = rollback`); `POST /model/retrain` with the backend's body
+answers `202` + id, recorded as `manual`. The backend's relay of `/api/v1/model/*` is covered by its own
+end-to-end tests (`services/backend/Solia.Api.Tests/EndToEnd`). About 25 s.
 
 ### Checkpoint retention
 
