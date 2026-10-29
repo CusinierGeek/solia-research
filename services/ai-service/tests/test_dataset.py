@@ -9,6 +9,7 @@ from solia_ai.dataset import (
     SequenceDataset,
     balanced_sampler,
     build_samples,
+    config_samples,
     horizon_seconds,
     make_datasets,
     make_loaders,
@@ -115,6 +116,43 @@ def test_expected_return_is_the_price_at_the_horizon_end():
     assert label_at(s, 0, "expected_return")[0] == pytest.approx(0.6)  # price at t=60
 
 
+def test_expected_return_is_capped_at_max_return():
+    # A pool drained to dust: the reserve-derived price is ~10^8x the anchor (seen on 2026-10-28).
+    prices = [1e-7] * 5 + [98.56] * 8
+    s = samples(frame(prices, TS))
+
+    assert label_at(s, 0, "expected_return") == (pytest.approx(10.0), 1.0)  # the default cap
+    assert label_at(s, 0, "pump")[0] == 1.0  # the binary labels are unchanged
+
+
+def test_max_return_is_configurable_and_leaves_returns_below_it_untouched():
+    prices = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 4.0] + [4.0] * 6  # +300 % at the 1m horizon end
+    s = samples(frame(prices, TS), max_return=2.0)
+    assert label_at(s, 0, "expected_return")[0] == pytest.approx(2.0)
+
+    s = samples(frame(prices, TS))
+    assert label_at(s, 0, "expected_return")[0] == pytest.approx(3.0)
+
+
+def test_config_samples_reads_the_cap_from_labeling():
+    prices = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 4.0] + [4.0] * 6
+    cfg = {
+        "model": {"seq_len": 1},
+        "horizons": ["1m"],
+        "labeling": {"pump_threshold": PUMP, "rug_threshold": RUG, "max_return": 2.0},
+    }
+
+    s = config_samples(frame(prices, TS), cfg)
+
+    assert label_at(s, 0, "expected_return")[0] == pytest.approx(2.0)
+
+
+def test_a_total_loss_is_minus_one_not_capped():
+    s = samples(frame([1.0] + [1e-12] * 12, TS), max_return=0.5)
+
+    assert label_at(s, 0, "expected_return")[0] == pytest.approx(-1.0, abs=1e-9)
+
+
 def test_a_token_that_collapses_then_stops_trading_is_labeled_rug():
     # Last snapshot is the crash; nothing after it (the pipeline stops tracking dead tokens).
     s = samples(frame([1.0, 1.0, 1.0, 0.2], [0, 10, 20, 30]))
@@ -174,7 +212,16 @@ def test_missing_threshold_for_a_horizon_is_an_error():
 
 
 @pytest.mark.parametrize(
-    "kwargs", [{"seq_len": 0}, {"max_gap_fraction": 0}, {"min_gap_seconds": -1}, {"horizons": ()}]
+    "kwargs",
+    [
+        {"seq_len": 0},
+        {"max_gap_fraction": 0},
+        {"min_gap_seconds": -1},
+        {"horizons": ()},
+        {"max_return": 0},
+        {"max_return": -1.0},
+        {"max_return": float("nan")},
+    ],
 )
 def test_invalid_parameters_are_rejected(kwargs):
     with pytest.raises(ValueError):

@@ -411,6 +411,8 @@ def _validate(config: Any, source: str) -> None:
         fail("'labeling.max_gap_fraction' must be in (0, 1]")
     if "min_gap_seconds" in labeling:
         number("labeling", "min_gap_seconds")
+    if "max_return" in labeling:
+        number("labeling", "max_return", positive=True)
     for kind in ("pump_threshold", "rug_threshold"):
         thresholds = labeling.get(kind)
         if not isinstance(thresholds, dict):

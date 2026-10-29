@@ -128,6 +128,8 @@ def test_invalid_values_are_rejected_with_the_key_named(tmp_path, sections, mess
         ({"max_gap_fraction": 0}, r"'labeling.max_gap_fraction' must be in \(0, 1\]"),
         ({"max_gap_fraction": 1.5}, r"'labeling.max_gap_fraction' must be in \(0, 1\]"),
         ({"min_gap_seconds": -5}, "'labeling.min_gap_seconds' must be >= 0"),
+        ({"max_return": 0}, "'labeling.max_return' must be > 0"),
+        ({"max_return": "big"}, "'labeling.max_return' must be a number"),
     ],
 )
 def test_invalid_gap_settings_are_rejected(tmp_path, extra, message):

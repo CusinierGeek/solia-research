@@ -121,6 +121,9 @@ labeling:
   # max(max_gap_fraction * horizon, min_gap_seconds) of its end (no stale "realized" prices).
   max_gap_fraction: 0.25
   min_gap_seconds: 20 # two pipeline snapshot cadences
+  # expected_return labels are capped here (+1000 %): a price read off a pool drained to dust can be
+  # 10^8x the anchor, and one such label would dominate the regression loss. Floor is -1 (prices > 0).
+  max_return: 10.0
 
   pump_threshold: # the highest price in the horizon rose by >= this fraction
     "30s": 0.15

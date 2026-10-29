@@ -9,7 +9,9 @@ liquidity ``l``, over each horizon ``(t, t + H]``:
 * ``rug`` — the *lowest* price fell to ``p * (1 - rug_threshold)`` **or** the lowest liquidity
   fell to ``l * (1 - rug_threshold)`` (a liquidity pull is a rug even if the last price barely
   moves);
-* ``expected_return`` — the price at the end of the horizon over ``p``, minus 1.
+* ``expected_return`` — the price at the end of the horizon over ``p``, minus 1, capped at
+  ``max_return``: a price read off a pool drained to dust (a rug's aftermath) can be 10^8 times the
+  anchor, and one such label would dominate the regression loss. The floor is -1 (prices are > 0).
 
 ``pump`` and ``rug`` are independent heads: a violent swing can be both, and that is kept.
 
@@ -53,6 +55,7 @@ from .features import (
 
 DEFAULT_MAX_GAP_FRACTION = 0.25
 DEFAULT_MIN_GAP_SECONDS = 20  # two pipeline snapshot cadences: normal spacing is never a "gap"
+DEFAULT_MAX_RETURN = 10.0  # +1000 %: above every pump threshold, far below dust-pool artifacts
 
 
 @dataclass(frozen=True)
@@ -120,6 +123,7 @@ def build_samples(
     max_gap_fraction: float = DEFAULT_MAX_GAP_FRACTION,
     min_gap_seconds: float = DEFAULT_MIN_GAP_SECONDS,
     min_seq_len: int | None = None,
+    max_return: float = DEFAULT_MAX_RETURN,
 ) -> Samples:
     """Slide windows per mint and label each by the realized future trajectory (module doc).
 
@@ -138,6 +142,8 @@ def build_samples(
         raise ValueError(f"max_gap_fraction must be in (0, 1], got {max_gap_fraction}")
     if min_gap_seconds < 0:
         raise ValueError(f"min_gap_seconds must be >= 0, got {min_gap_seconds}")
+    if not max_return > 0:
+        raise ValueError(f"max_return must be > 0, got {max_return}")
     for name, thresholds in (("pump", pump_thresholds), ("rug", rug_thresholds)):
         missing = [h for h in horizons if h not in thresholds]
         if missing:
@@ -173,7 +179,7 @@ def build_samples(
 
         window_ends = np.arange(min_len - 1, len(sub))
         pump, rug, ret, mask = _label(
-            window_ends, ts_sec, price, liquidity, horizon_s, pump_thr, rug_thr, max_gap
+            window_ends, ts_sec, price, liquidity, horizon_s, pump_thr, rug_thr, max_gap, max_return
         )
         keep = mask.any(axis=1)  # drop windows with nothing labelable yet
         if not keep.any():
@@ -226,6 +232,7 @@ def _label(
     pump_thr: np.ndarray,
     rug_thr: np.ndarray,
     max_gap: np.ndarray,
+    max_return: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     n, n_h = len(window_ends), len(horizon_s)
     pump = np.zeros((n, n_h), np.float32)
@@ -263,7 +270,8 @@ def _label(
             finite = future_p[np.isfinite(future_p)]
             pump[k, h] = float(np.max(finite) / p_i - 1.0 >= pump_thr[h])
             rug[k, h] = float(crashed)
-            ret[k, h] = finite[-1] / p_i - 1.0  # price at (or nearest before) the horizon end
+            # Price at (or nearest before) the horizon end, capped (module doc).
+            ret[k, h] = min(finite[-1] / p_i - 1.0, max_return)
             mask[k, h] = 1.0
 
     return pump, rug, ret, mask
@@ -411,6 +419,7 @@ def config_samples(df: pd.DataFrame, cfg: Mapping[str, Any]) -> Samples:
         rug_thresholds=labeling["rug_threshold"],
         max_gap_fraction=labeling.get("max_gap_fraction", DEFAULT_MAX_GAP_FRACTION),
         min_gap_seconds=labeling.get("min_gap_seconds", DEFAULT_MIN_GAP_SECONDS),
+        max_return=labeling.get("max_return", DEFAULT_MAX_RETURN),
     )
 
 

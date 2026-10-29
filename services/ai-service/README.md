@@ -89,7 +89,8 @@ the realized future:
 
 - **pump** — the *highest* price in the horizon rose by ≥ `pump_threshold`;
 - **rug** — the *lowest* price **or** liquidity fell by ≥ `rug_threshold`;
-- **expected_return** — the price at the horizon end vs. the anchor.
+- **expected_return** — the price at the horizon end vs. the anchor, capped at `labeling.max_return`
+  (default +1000 %) so a dust-pool price after a rug can't dominate the loss.
 
 Pump and rug are independent heads (a violent swing can be both). A horizon is masked when the
 data doesn't cover it or the last row inside it is stale (`max(max_gap_fraction·H,

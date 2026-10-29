@@ -88,7 +88,10 @@ policy required**, so the model trains from day one, before any paper trades exi
 
 - `pump` at horizon `h` = price rose ≥ threshold within `h`.
 - `rug` at horizon `h` = liquidity/price collapsed ≥ threshold within `h`.
-- `expected_return` at horizon `h` = realized forward return over `h`.
+- `expected_return` at horizon `h` = realized forward return over `h`, capped at `labeling.max_return`
+  (default 10 = +1000 %; floor -1). A price read off a pool drained to dust can be 10^8x the anchor
+  (seen on the 2026-10-28 replay), and a single such label dominated the Huber loss (`val_return`
+  ≈ 3.6·10^7 on the first 4 M-row training).
 
 Thresholds live in `config.yaml` (documented with the dataset builder, Sprint 2).
 
