@@ -77,15 +77,16 @@ public static class ModelEndpoints
     }
 
     /// <summary>
-    /// <see cref="ClosedTrades">Closed trades</see> closed strictly after the latest <em>finished</em> training run
-    /// started (its data cut-off), or every closed trade before any run finished. A run still in flight — or one
-    /// that crashed and never wrote <c>finished_at</c> — trained no model, so it does not reset the count; a
-    /// finished one does whatever its decision, since a rejected candidate still consumed those trades.
+    /// <see cref="ClosedTrades">Closed trades</see> closed strictly after the latest training run that trained a model
+    /// started (its data cut-off), or every closed trade before any such run. Only a run whose decision is in
+    /// <see cref="TrainingDecisions.ResetTradeCount"/> (promoted or rejected — a rejected candidate still consumed
+    /// those trades) resets the count. A run still in flight (decision NULL; the SQL CHECK sets decision and
+    /// <c>finished_at</c> together), a <c>failed</c> one or a <c>rollback</c> trained no model on them, so it does not.
     /// </summary>
     internal static async Task<long> CountTradesSinceLastTrainAsync(SoliaDbContext db, CancellationToken cancellationToken)
     {
         DateTimeOffset? lastTrain = await db.TrainingEvents.AsNoTracking()
-            .Where(e => e.FinishedAt != null)
+            .Where(e => TrainingDecisions.ResetTradeCount.Contains(e.Decision!))
             .MaxAsync(e => (DateTimeOffset?)e.StartedAt, cancellationToken);
 
         IQueryable<Trade> closed = db.Trades.AsNoTracking().Closed();

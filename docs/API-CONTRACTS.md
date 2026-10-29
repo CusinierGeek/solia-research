@@ -133,8 +133,8 @@ Champion fields come from the ai-service (`metrics` is `{}` when it reports none
 `null` and `metrics` `{}`, so the retrain progress stays visible. `trades_since_last_train` and
 `retrain_threshold` are one consistent pair: the ai-service's own when it reports **both**; otherwise the
 backend's count — closed trades (same set as `/stats/*`) closed strictly after the `started_at` of the latest
-*finished* `training_events` run (any decision; an unfinished or crashed run does not reset it), or all of
-them before any run finished — against `AiService:RetrainThreshold` (`RETRAIN_EVERY_N_TRADES`).
+`training_events` run whose decision is `promoted` or `rejected` (an unfinished run, a `failed` one or a
+`rollback` trained no model on those trades and does not reset it), or all of them before any such run — against `AiService:RetrainThreshold` (`RETRAIN_EVERY_N_TRADES`).
 
 ### `POST /model/retrain`
 Manually trigger a retrain (proxied to ai-service, never retried). Returns `202 Accepted` +

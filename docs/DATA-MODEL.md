@@ -166,13 +166,23 @@ Audit trail of training/retrain runs.
 | id | BIGSERIAL PK | |
 | started_at | TIMESTAMPTZ | |
 | finished_at | TIMESTAMPTZ | nullable |
-| trigger | TEXT | `initial` / `scheduled` / `n_trades` |
+| trigger | TEXT | `initial` / `scheduled` / `n_trades` / `manual` (`POST /model/retrain`; added by 0010) |
 | n_samples | INT | training set size |
 | candidate_model_id | BIGINT | FK → models |
 | champion_model_id | BIGINT | FK → models (nullable) |
 | metrics | JSONB | loss, AUC, precision/recall, etc. |
-| decision | TEXT | `promoted` / `rejected` / `rollback` |
+| decision | TEXT | `promoted` / `rejected` / `rollback` / `failed` (added by 0010); NULL while in flight — set together with `finished_at` (CHECK, 0010) |
 | notes | TEXT | |
+
+Every run is recorded, including the ones that crash or error: those get `finished_at` + decision
+`failed`. `decision` and `finished_at` are both NULL while a run is in flight and both set once it ends
+(`training_events_finished_decision_check`; 0010 backfilled older rows: finished without a decision →
+`failed`, decided without `finished_at` → closed at `started_at`). Only a run that trained a model on the
+new trades resets the trades-since-last-train count: `promoted` or `rejected` (a rejected candidate still
+consumed them). A `failed` run produced nothing usable and a `rollback` only restores the previous
+champion, so neither does. The backend (`TrainingDecisions.ResetTradeCount`) and the ai-service
+(`registry.RESET_TRADE_COUNT_DECISIONS`, used by `registry.last_train_cutoff`) derive this set from the
+decisions minus the no-model ones; parity tests compare both to the CHECKs the migrated database enforces.
 
 ### `models`
 Model registry / versioning.

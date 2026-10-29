@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
 
@@ -36,6 +36,21 @@ def strip_sql_comments(sql: str) -> str:
         marker = line.find("--")
         lines.append(line if marker < 0 else line[:marker])
     return "\n".join(lines)
+
+
+def check_values(engine: Engine, table: str, constraint: str) -> set[str]:
+    """The quoted values of a CHECK constraint as the migrated database enforces it
+    (``pg_get_constraintdef``), so a later migration that drops or re-adds it is followed."""
+    with engine.connect() as conn:
+        definition = conn.execute(
+            text(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                "WHERE conrelid = CAST(:table AS regclass) AND conname = :name"
+            ),
+            {"table": table, "name": constraint},
+        ).scalar_one_or_none()
+    assert definition is not None, f"no {constraint} constraint on {table}"
+    return set(re.findall(r"'([^']*)'", definition))
 
 
 _DOLLAR_QUOTE = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$")

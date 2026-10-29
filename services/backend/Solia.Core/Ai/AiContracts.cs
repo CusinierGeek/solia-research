@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Solia.Core.Data.Entities;
 
 namespace Solia.Core.Ai;
 
@@ -150,7 +151,7 @@ public sealed record AiModelStatus(
 /// <summary><c>POST /model/retrain</c> request body.</summary>
 public sealed record AiRetrainRequest(string Trigger)
 {
-    public const string Manual = "manual";
+    public const string Manual = TrainingTriggers.Manual;
 }
 
 /// <summary><c>POST /model/retrain</c> 202 response: the audit row of the run that was kicked off.</summary>

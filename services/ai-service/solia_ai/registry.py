@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
@@ -36,6 +36,17 @@ class ModelRecord:
 
 CHAMPION_INDEX = "models_single_champion_idx"
 VERSION_CONSTRAINT = "models_version_key"
+
+# ``training_events`` audit values, mirroring the SQL CHECKs (migration 0010). A run that crashed
+# or errored is recorded with ``finished_at`` and decision ``failed``; a ``rollback`` only restores
+# the previous champion. Neither trained a model on the new trades, so only the remaining decisions
+# (RESET_TRADE_COUNT_DECISIONS) restart the trades-since-last-train count, as in the backend.
+TRAINING_TRIGGERS = ("initial", "scheduled", "n_trades", "manual")
+TRAINING_DECISIONS = ("promoted", "rejected", "rollback", "failed")
+NO_MODEL_TRAINED_DECISIONS = ("rollback", "failed")
+RESET_TRADE_COUNT_DECISIONS = tuple(
+    d for d in TRAINING_DECISIONS if d not in NO_MODEL_TRAINED_DECISIONS
+)
 
 
 def _to_json(name: str, value: Mapping[str, Any] | None) -> str | None:
@@ -78,6 +89,20 @@ def read_champion(engine: Engine) -> ModelRecord | None:
         n_params=None if row.n_params is None else int(row.n_params),
         created_at=row.created_at,
     )
+
+
+def last_train_cutoff(engine: Engine) -> datetime | None:
+    """The ``started_at`` of the latest run that trained a model (its data cut-off), or ``None``
+    before any did. Trades closed strictly after it are the ones not learned from yet; a run in
+    flight, ``failed`` or ``rollback`` does not move it (same rule as the backend's count).
+    """
+    with engine.connect() as conn:
+        return conn.execute(
+            text(
+                "SELECT max(started_at) FROM training_events " "WHERE decision IN :decisions"
+            ).bindparams(bindparam("decisions", expanding=True)),
+            {"decisions": list(RESET_TRADE_COUNT_DECISIONS)},
+        ).scalar_one()
 
 
 def register_model(

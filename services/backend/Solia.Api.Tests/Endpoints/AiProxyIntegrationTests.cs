@@ -63,17 +63,22 @@ public sealed class AiProxyFixture : PostgresFixture, IAsyncLifetime
                 ("burn", i == 3 ? 100.0 : DBNull.Value), ("venue", i == 3 ? "pumpswap" : "pumpfun"), ("mig", i == 3));
         }
 
-        // Three training runs. The latest *finished* one started at T0 (and was rejected: it still consumed the
-        // trades). The one started at T0+90min never finished (crashed / in flight), so it must not reset the count.
+        // Five training runs. The latest one that trained a model started at T0 (and was rejected: it still consumed
+        // the trades). After it, none trained a model on the new trades, so none may reset the count: a manual run
+        // that failed (T0+75min), one still in flight (T0+90min) and a rollback to the previous champion (T0+100min).
         await ExecAsync(
             """
             INSERT INTO training_events (started_at, finished_at, trigger, decision) VALUES
-                (@a, @a, 'initial', 'promoted'), (@b, @bEnd, 'n_trades', 'rejected'), (@c, NULL, 'n_trades', NULL)
+                (@a, @a, 'initial', 'promoted'), (@b, @bEnd, 'n_trades', 'rejected'),
+                (@d, @dEnd, 'manual', 'failed'), (@c, NULL, 'n_trades', NULL), (@r, @rEnd, 'manual', 'rollback')
             """,
-            ("a", T0.AddHours(-3)), ("b", T0), ("bEnd", T0.AddMinutes(10)), ("c", T0.AddMinutes(90)));
+            ("a", T0.AddHours(-3)), ("b", T0), ("bEnd", T0.AddMinutes(10)),
+            ("d", T0.AddMinutes(75)), ("dEnd", T0.AddMinutes(80)), ("c", T0.AddMinutes(90)),
+            ("r", T0.AddMinutes(100)), ("rEnd", T0.AddMinutes(101)));
 
-        // Closed after T0 (one before, one after the unfinished run started): two counted. Not counted: closed before T0, closed exactly at T0, still open, closed
-        // without a closed_at.
+        // Closed after T0: two counted. The T0+1h close falls before the failed, in-flight and rollback runs started,
+        // so it is what proves none of them resets the count (if one did, the count would be 1). Keep it before T0+75min.
+        // Not counted: closed before T0, closed exactly at T0, still open, closed without a closed_at.
         const string closedSql = "INSERT INTO trades (mint, opened_at, closed_at, pnl, strategy, status) VALUES ('a', @o, @c, 1, 'buy', 'closed')";
         await ExecAsync(closedSql, ("o", T0.AddHours(-3)), ("c", T0.AddHours(-2)));
         await ExecAsync(closedSql, ("o", T0.AddHours(-1)), ("c", T0));

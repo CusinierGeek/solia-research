@@ -235,4 +235,62 @@ public sealed class MigratorIntegrationTests(EmptyPostgresFixture db) : IClassFi
         Assert.Equal("300000=100;300001=42", await ScalarAsync<string>(conn,
             "SELECT string_agg(id || '=' || burned_liquidity, ';' ORDER BY id) FROM features WHERE id >= 300000"));
     }
+
+    [Fact]
+    public async Task TrainingEvents_AcceptManualAndFailed_OnTopOf0009_AndStillRejectUnknownValues()
+    {
+        // S7-T2 (#130): 0010 widens the trigger / decision CHECKs of a database already at 0009, backfills the rows
+        // whose decision and finished_at disagree, then requires both to be set together.
+        string conn = await db.CreateDatabaseAsync();
+        string[] repo = Directory.GetFiles(PostgresFixture.FindMigrationsDir(), "*.sql").Order().ToArray();
+        foreach (string file in repo.Where(f => string.CompareOrdinal(Path.GetFileName(f), "0010") < 0))
+        {
+            File.Copy(file, Path.Combine(_dir, Path.GetFileName(file)));
+        }
+        Assert.Equal(Migrator.Success, (await RunAsync(conn, _dir)).Code);
+        await ExecuteAsync(conn, """
+            INSERT INTO training_events (id, started_at, finished_at, trigger, decision) VALUES
+                (900, '2026-01-01T00:00:00Z', NULL, 'n_trades', 'promoted'),
+                (901, '2026-01-02T00:00:00Z', '2026-01-02T01:00:00Z', 'initial', NULL),
+                (902, '2026-01-03T00:00:00Z', NULL, 'scheduled', NULL);
+            """);
+        var before = await Assert.ThrowsAsync<PostgresException>(() =>
+            ExecuteAsync(conn, "INSERT INTO training_events (trigger) VALUES ('manual')"));
+        Assert.Equal(PostgresErrorCodes.CheckViolation, before.SqlState);
+
+        foreach (string file in repo.Where(f => string.CompareOrdinal(Path.GetFileName(f), "0010") >= 0))
+        {
+            File.Copy(file, Path.Combine(_dir, Path.GetFileName(file)));
+        }
+        var result = await RunAsync(conn, _dir);
+        Assert.True(result.Code == Migrator.Success, result.Err);
+
+        // A decided run without finished_at is closed at its start; a finished one without a decision has no known
+        // outcome, so it becomes failed; an in-flight one is left alone.
+        Assert.Equal("900:promoted:2026-01-01;901:failed:2026-01-02;902::", await ScalarAsync<string>(conn,
+            "SELECT string_agg(id || ':' || coalesce(decision, '') || ':' || coalesce(to_char(finished_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), ''), ';' ORDER BY id) " +
+            "FROM training_events WHERE id >= 900"));
+        await ExecuteAsync(conn, "DELETE FROM training_events WHERE id >= 900");
+
+        await ExecuteAsync(conn, """
+            INSERT INTO training_events (trigger, finished_at, decision) VALUES
+                ('manual', now(), 'failed'), ('initial', now(), 'rejected'), ('scheduled', now(), 'rollback'),
+                ('n_trades', NULL, NULL);
+            """);
+        Assert.Equal("initial,manual,n_trades,scheduled", await ScalarAsync<string>(conn,
+            "SELECT string_agg(trigger, ',' ORDER BY trigger) FROM training_events"));
+
+        foreach (string bad in new[]
+        {
+            "INSERT INTO training_events (trigger) VALUES ('cron')",
+            "INSERT INTO training_events (decision) VALUES ('error')",
+            "INSERT INTO training_events (trigger) VALUES ('Manual')",
+            "INSERT INTO training_events (trigger, decision) VALUES ('n_trades', 'promoted')",
+            "INSERT INTO training_events (trigger, finished_at) VALUES ('n_trades', now())",
+        })
+        {
+            var ex = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(conn, bad));
+            Assert.Equal(PostgresErrorCodes.CheckViolation, ex.SqlState);
+        }
+    }
 }

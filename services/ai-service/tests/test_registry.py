@@ -3,15 +3,27 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from conftest import check_values
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 from test_train import make_features_df, small_config
 
-from solia_ai.registry import read_champion, register_model
+from solia_ai.registry import (
+    NO_MODEL_TRAINED_DECISIONS,
+    RESET_TRADE_COUNT_DECISIONS,
+    TRAINING_DECISIONS,
+    TRAINING_TRIGGERS,
+    last_train_cutoff,
+    read_champion,
+    register_model,
+)
 from solia_ai.train import train
+
+T0 = datetime(2026, 1, 10, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -192,3 +204,93 @@ def test_a_duplicate_version_constraint_is_reported_as_such():
 def test_an_unknown_integrity_error_propagates_unchanged():
     with pytest.raises(IntegrityError):
         register_model(_FailingEngine("some_other_constraint"), version="v1", path="/v1.pt")
+
+
+def test_training_triggers_mirror_the_sql_check(engine):
+    assert set(TRAINING_TRIGGERS) == check_values(
+        engine, "training_events", "training_events_trigger_check"
+    )
+    assert "manual" in TRAINING_TRIGGERS
+
+
+def test_training_decisions_mirror_the_sql_check(engine):
+    assert set(TRAINING_DECISIONS) == check_values(
+        engine, "training_events", "training_events_decision_check"
+    )
+
+
+def test_only_a_run_that_trained_a_model_resets_the_trade_count():
+    assert set(RESET_TRADE_COUNT_DECISIONS) == {"promoted", "rejected"}
+    assert set(RESET_TRADE_COUNT_DECISIONS) | set(NO_MODEL_TRAINED_DECISIONS) == set(
+        TRAINING_DECISIONS
+    )
+
+
+def _event(conn, started_at, decision, trigger="n_trades"):
+    conn.execute(
+        text(
+            "INSERT INTO training_events (started_at, finished_at, trigger, decision) "
+            "VALUES (:s, :f, :t, :d)"
+        ),
+        {
+            "s": started_at,
+            "f": None if decision is None else started_at,
+            "d": decision,
+            "t": trigger,
+        },
+    )
+
+
+def test_last_train_cutoff_is_none_before_any_run(engine):
+    assert last_train_cutoff(engine) is None
+
+
+def test_last_train_cutoff_is_none_when_no_run_trained_a_model(engine):
+    with engine.begin() as conn:
+        _event(conn, T0, "failed")
+        _event(conn, T0 + timedelta(hours=1), "rollback")
+        _event(conn, T0 + timedelta(hours=2), None)
+    assert last_train_cutoff(engine) is None
+
+
+def test_last_train_cutoff_ignores_later_failed_in_flight_and_rollback_runs(engine):
+    with engine.begin() as conn:
+        _event(conn, T0 - timedelta(hours=3), "promoted", trigger="initial")
+        _event(conn, T0, "rejected")
+        _event(conn, T0 + timedelta(minutes=75), "failed", trigger="manual")
+        _event(conn, T0 + timedelta(minutes=90), None)
+        _event(conn, T0 + timedelta(minutes=100), "rollback", trigger="manual")
+    assert last_train_cutoff(engine) == T0
+
+
+def test_training_events_accept_every_trigger_and_decision(engine):
+    with engine.begin() as conn:
+        for trigger in TRAINING_TRIGGERS:
+            for decision in TRAINING_DECISIONS:
+                conn.execute(
+                    text(
+                        "INSERT INTO training_events (trigger, finished_at, decision) "
+                        "VALUES (:t, now(), :d)"
+                    ),
+                    {"t": trigger, "d": decision},
+                )
+        count = conn.execute(text("SELECT count(*) FROM training_events")).scalar_one()
+    assert count == len(TRAINING_TRIGGERS) * len(TRAINING_DECISIONS)
+
+
+@pytest.mark.parametrize(
+    ("column", "value"), [("trigger", "cron"), ("trigger", "Manual"), ("decision", "error")]
+)
+def test_training_events_reject_unknown_values(engine, column, value):
+    with pytest.raises(IntegrityError, match="check"), engine.begin() as conn:
+        conn.execute(text(f"INSERT INTO training_events ({column}) VALUES (:v)"), {"v": value})
+
+
+@pytest.mark.parametrize(
+    "columns",
+    ["(trigger, decision) VALUES ('n_trades', 'promoted')", "(finished_at) VALUES (now())"],
+)
+def test_training_events_set_decision_and_finished_at_together(engine, columns):
+    with pytest.raises(IntegrityError, match="training_events_finished_decision_check"):
+        with engine.begin() as conn:
+            conn.execute(text(f"INSERT INTO training_events {columns}"))

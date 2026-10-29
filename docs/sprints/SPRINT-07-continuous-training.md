@@ -20,7 +20,7 @@ Automatically retrain after N new closed trades, version models, compare candida
 ## Task breakdown
 - [ ] Trade counter since last training (query `training_events` + `trades`).
 - [ ] Trigger (scheduler/background task) at threshold + manual endpoint.
-  ⚠️ The backend proxies `POST /model/retrain` with `{ "trigger": "manual" }`, but the `training_events.trigger` CHECK only allows `initial` / `scheduled` / `n_trades`: add `manual` (migration `0003`) or map it before inserting.
+  ✅ Resolved by migration `0010` (#130): the CHECK now allows `manual`, `decision` gains `failed` for a crashed/errored run, and `decision` / `finished_at` must be set together. Only `promoted` / `rejected` reset the trades-since-last-train count (`failed` and `rollback` trained nothing).
 - [ ] Dataset builder refresh incorporating live trades.
 - [ ] Candidate training run (warm start option).
 - [ ] Evaluation harness: candidate vs champion, primary metric + margin.
