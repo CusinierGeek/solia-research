@@ -228,8 +228,56 @@ public class PipelineEngineTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Engine([], new RecordingSink()).ResetActiveTokensAsync(cts.Token));
     }
 
+    [Fact]
+    public async Task Release_on_stop_deactivates_still_tracked_tokens_after_the_last_snapshot()
+    {
+        var sink = new RecordingSink();
+        RawEvent[] events = [.. Seconds("A", 0, 12), Buy("B", 13)];
+
+        await Engine(new ListSource(events), sink, releaseTracked: true).RunAsync(default);
+
+        FlushBatch last = sink.Batches[^1];
+        Assert.Empty(last.Snapshots); // its own batch: deactivating alongside the upsert would be undone by it
+        Assert.Equal(new[] { "A", "B" }, last.Deactivated.Order());
+        Assert.Equal(T0.AddSeconds(13), last.Ts); // as of the last event, so newer live rows are untouched
+        Assert.Contains(sink.Batches[^2].Snapshots, s => s.Mint == "B"); // the final window was persisted first
+    }
+
+    [Fact]
+    public async Task Release_on_stop_still_runs_when_the_last_event_already_flushed()
+    {
+        var sink = new RecordingSink();
+
+        await Engine(new ListSource(Seconds("M", 0, 20)), sink, releaseTracked: true).RunAsync(default);
+
+        Assert.Equal(new[] { 10.0, 20.0, 20.0 }, sink.Batches.Select(b => (b.Ts - T0).TotalSeconds));
+        Assert.Equal(new[] { "M" }, sink.Batches[^1].Deactivated);
+    }
+
+    [Fact]
+    public async Task Live_engine_never_releases_tracked_tokens_on_stop()
+    {
+        var sink = new RecordingSink();
+
+        await Engine(Seconds("M", 0, 25), sink).RunAsync(default);
+
+        Assert.All(sink.Batches, b => Assert.Empty(b.Deactivated));
+    }
+
+    [Fact]
+    public async Task Release_failure_counts_as_a_failed_batch()
+    {
+        var sink = new RecordingSink { Fail = call => call > 1 ? new IOException("db down") : null };
+
+        PipelineEngine engine = Engine(new ListSource(Seconds("M", 0, 5)), sink, releaseTracked: true);
+        await engine.RunAsync(default);
+
+        Assert.Equal(1, engine.FailedBatches);
+    }
+
     internal static PipelineEngine Engine(
-        IDataSource source, ITokenSink sink, List<TimeSpan>? delays = null, TimeSpan? finalFlushTimeout = null, int window = 300)
+        IDataSource source, ITokenSink sink, List<TimeSpan>? delays = null, TimeSpan? finalFlushTimeout = null, int window = 300,
+        bool releaseTracked = false)
     {
         var options = new PipelineOptions { SnapshotCadenceSeconds = 10, WindowSeconds = window };
         return new PipelineEngine(
@@ -243,7 +291,10 @@ public class PipelineEngineTests
                 delays?.Add(d);
                 return Task.CompletedTask;
             },
-            finalFlushTimeout ?? TimeSpan.FromSeconds(5));
+            finalFlushTimeout ?? TimeSpan.FromSeconds(5))
+        {
+            ReleaseTrackedOnStop = releaseTracked,
+        };
     }
 
     internal sealed class ListSource(IEnumerable<RawEvent> events) : IDataSource

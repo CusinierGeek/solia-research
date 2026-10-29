@@ -39,7 +39,8 @@ public readonly record struct ReplayWindow(DateTimeOffset StartUtc, DateTimeOffs
         }
     }
 
-    private static DateTimeOffset FloorToHour(DateTimeOffset value)
+    /// <summary>Start of the UTC hour containing <paramref name="value"/>.</summary>
+    public static DateTimeOffset FloorToHour(DateTimeOffset value)
     {
         DateTimeOffset utc = value.ToUniversalTime();
         return new DateTimeOffset(utc.Year, utc.Month, utc.Day, utc.Hour, 0, 0, TimeSpan.Zero);

@@ -5,6 +5,7 @@ using Solia.DataPipeline.Health;
 using Solia.DataPipeline.Hosting;
 using Solia.DataPipeline.Ingestion;
 using Solia.DataPipeline.Ingestion.PumpApi;
+using Solia.DataPipeline.Ingestion.Replay;
 using Solia.Shared.Logging;
 using Solia.DataPipeline.Options;
 using Solia.DataPipeline.Pipeline;
@@ -17,28 +18,19 @@ if (HealthProbe.IsRequested(args))
     return await HealthProbe.RunAsync(args);
 }
 
+// --- One-shot historical replay: `replay --from <utc> --to <utc> [...]` runs and exits (no web host) ---
+if (ReplayCommand.IsRequested(args))
+{
+    return await ReplayCommand.RunAsync(args[1..]);
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
 // --- Configuration: flat .env.example keys (ENRICH_HOLDERS, ...) map onto option sections ---
 builder.Configuration.AddFlatEnvAliases();
 
 // --- Options: bound from config sections, validated at startup (fail fast on bad values) ---
-builder.Services.AddOptions<PipelineOptions>()
-    .Bind(builder.Configuration.GetSection(PipelineOptions.Section))
-    .ValidateDataAnnotations()
-    .Validate(o => o.HasConsistentWindow(), "Pipeline:WindowSeconds must be >= Pipeline:SnapshotCadenceSeconds.")
-    .Validate(o => o.HasConsistentMomentumWindows(),
-        "Pipeline:MomentumShortSeconds < MomentumMediumSeconds < MomentumLongSeconds <= WindowSeconds, and 2 * MomentumShortSeconds <= WindowSeconds.")
-    .Validate(o => o.HasExclusiveLiveConsumer(),
-        "Pipeline:Ingest and Pipeline:StreamProbe (INGEST / STREAM_PROBE) can't both be enabled: each owns the single live connection.")
-    .ValidateOnStart();
-builder.Services.AddOptions<PumpApiOptions>()
-    .Bind(builder.Configuration.GetSection(PumpApiOptions.Section))
-    .ValidateDataAnnotations()
-    .Validate(o => o.HasValidUrls(),
-        "PumpApi:WsUrl must be an absolute ws(s):// URL and PumpApi:ReplayBaseUrl an absolute http(s):// URL.")
-    .Validate(o => o.HasConsistentBackoff(), "PumpApi:ReconnectMaxDelaySeconds must be >= ReconnectBaseDelaySeconds.")
-    .ValidateOnStart();
+builder.Services.AddPipelineOptions(builder.Configuration);
 
 // --- Database: a single pooled data source, owned (and disposed) by the container; the
 // connection string is resolved on first use. Plus the operational log sink (`logs` table).

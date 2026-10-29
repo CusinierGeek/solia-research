@@ -19,6 +19,26 @@ public class HttpReplayArchiveOpenerTests
     }
 
     [Fact]
+    public void BuildUrl_is_culture_invariant()
+    {
+        ReplayArchives.WithCulture("th-TH", () => Assert.Equal(
+            "https://replay.pumpapi.io/2026/04/18/05.jsonl.zst",
+            HttpReplayArchiveOpener.BuildUrl("https://replay.pumpapi.io", Hour)));
+    }
+
+    [Fact]
+    public async Task Body_is_bounded_by_the_read_idle_timeout()
+    {
+        var handler = new StubHandler(HttpStatusCode.OK, "x"u8.ToArray());
+        var opener = new HttpReplayArchiveOpener(new HttpClient(handler),
+            Microsoft.Extensions.Options.Options.Create(new PumpApiOptions()), TimeSpan.FromSeconds(7));
+
+        await using Stream? body = await opener.OpenAsync(Hour, CancellationToken.None);
+
+        Assert.Equal(TimeSpan.FromSeconds(7), Assert.IsType<IdleTimeoutStream>(body).IdleTimeout);
+    }
+
+    [Fact]
     public async Task Success_returns_the_body_from_the_configured_base_url()
     {
         var handler = new StubHandler(HttpStatusCode.OK, "archive-bytes"u8.ToArray());

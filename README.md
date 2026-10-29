@@ -113,5 +113,16 @@ No `make` (Windows)? The targets are thin wrappers: run the same commands from G
 `infra/scripts/solia.sh <command>` (e.g. `infra/scripts/solia.sh logs backend`,
 `infra/scripts/solia.sh reset --yes`), or use the plain compose column.
 
+**Historical data (replay).** The model trains on history replayed from pumpapi's free hourly
+archives (since 2026-04-18) through the same feature path as live. A one-shot run, e.g. a 3-hour test window:
+
+```bash
+docker compose run --rm data-pipeline replay --from 2026-05-01T00:00Z --to 2026-05-01T03:00Z
+```
+
+Streams straight from pumpapi by default (nothing kept on disk); add `--mirror /replay-archives` to
+keep the archives (~400 MB/hour) in the `replay-archives` volume. Baselines, learning curves, rebuilds
+and exit codes: [`docs/DATA-PIPELINE.md` § Historical replay](docs/DATA-PIPELINE.md#historical-replay-training-data).
+
 How the containers fit together (images, startup order, volumes, network, ports):
 [`infra/README.md`](infra/README.md) and [`docs/ARCHITECTURE.md` §7](docs/ARCHITECTURE.md#7-deployment-topology-docker-compose).

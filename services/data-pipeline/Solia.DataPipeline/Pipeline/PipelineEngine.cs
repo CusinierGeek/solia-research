@@ -3,7 +3,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Solia.DataPipeline.Features;
 using Solia.DataPipeline.Ingestion;
-using Solia.DataPipeline.Ingestion.PumpApi;
 using Solia.DataPipeline.Options;
 
 namespace Solia.DataPipeline.Pipeline;
@@ -31,6 +30,7 @@ public sealed class PipelineEngine
     internal const int MaxWriteAttempts = 3;
     internal const int ClockJumpConfirmations = 5;
     internal static readonly TimeSpan DefaultFinalFlushTimeout = TimeSpan.FromSeconds(10);
+    private static readonly RetryPolicy WriteRetry = new(MaxWriteAttempts);
 
     private readonly IDataSource _source;
     private readonly TokenWindowStore _store;
@@ -73,6 +73,13 @@ public sealed class PipelineEngine
 
     /// <summary>Batches dropped after exhausting write retries (or a timed-out final flush).</summary>
     public long FailedBatches { get; private set; }
+
+    /// <summary>
+    /// When set (finite replays), the final flush also marks every token still tracked inactive, as of
+    /// the last event: nothing will update them once the run ends, so they must not stay live. Never
+    /// set for live ingestion, whose tokens stay active until pruned or the next restart's reset.
+    /// </summary>
+    public bool ReleaseTrackedOnStop { get; init; }
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
@@ -172,32 +179,20 @@ public sealed class PipelineEngine
     }
 
     /// <summary>Runs a sink operation with backoff retries. False once every attempt failed; cancellation throws.</summary>
-    private async Task<bool> WithRetriesAsync(
-        Func<CancellationToken, Task> operation, string what, CancellationToken cancellationToken)
-    {
-        for (int attempt = 1; ; attempt++)
+    private Task<bool> WithRetriesAsync(
+        Func<CancellationToken, Task> operation, string what, CancellationToken cancellationToken) =>
+        WriteRetry.RunAsync(operation, _delay, (ex, attempt, wait) =>
         {
-            try
+            if (wait is null)
             {
-                await operation(cancellationToken);
-                return true;
+                _logger.LogWarning(ex, "{What} failed (attempt {Attempt}/{Max}); giving up", what, attempt, MaxWriteAttempts);
             }
-            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+            else
             {
-                // Includes a TaskCanceledException from a DB command timeout: a failure, not a shutdown.
-                if (attempt >= MaxWriteAttempts)
-                {
-                    _logger.LogWarning(ex, "{What} failed (attempt {Attempt}/{Max}); giving up", what, attempt, MaxWriteAttempts);
-                    return false;
-                }
-
-                TimeSpan wait = PumpApiStreamSource.ComputeBackoff(attempt - 1, 1, 30, Random.Shared.NextDouble());
                 _logger.LogWarning(ex, "{What} failed (attempt {Attempt}/{Max}); retrying in {Delay}",
                     what, attempt, MaxWriteAttempts, wait);
-                await _delay(wait, cancellationToken);
             }
-        }
-    }
+        }, cancellationToken);
 
     /// <summary>
     /// Persists the last window. Writes an interrupted batch as-is; otherwise snapshots once more,
@@ -208,17 +203,23 @@ public sealed class PipelineEngine
         using var timeout = new CancellationTokenSource(_finalFlushTimeout);
         try
         {
-            if (_pending is null)
+            if (_pending is not null)
             {
-                if (now is not { } ts || ts == lastFlushAt)
-                {
-                    return;
-                }
-
+                await WritePendingAsync(timeout.Token);
+            }
+            else if (now is { } ts && ts != lastFlushAt)
+            {
                 _pending = new FlushBatch(ts, _store.SnapshotActive(ts), _store.DrainRemoved());
+                await WritePendingAsync(timeout.Token);
             }
 
-            await WritePendingAsync(timeout.Token);
+            // A separate batch, after the snapshots: within one batch deactivation runs first and the
+            // snapshot upsert would mark the tokens active again.
+            if (ReleaseTrackedOnStop && now is { } end && _store.TrackedCount > 0)
+            {
+                _pending = new FlushBatch(end, [], _store.TrackedMints());
+                await WritePendingAsync(timeout.Token);
+            }
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested)
         {

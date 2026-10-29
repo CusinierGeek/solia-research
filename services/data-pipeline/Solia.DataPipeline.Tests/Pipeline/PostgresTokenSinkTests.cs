@@ -242,4 +242,83 @@ public sealed class PostgresTokenSinkTests(PostgresFixture db) : IClassFixture<P
     {
         await Sink.WriteAsync(Batch(T0, []), default); // must not even need a connection
     }
+
+    [Fact]
+    public async Task Default_mode_keeps_existing_features_rows_and_counts_only_inserts()
+    {
+        var sink = new PostgresTokenSink(db.DataSource);
+        await sink.WriteAsync(Batch(T0, [Snap("KEEP1", T0, 1m) with { Rsi = null }]), default);
+
+        await sink.WriteAsync(Batch(T0, [Snap("KEEP1", T0, 2m) with { Rsi = 55 }]), default); // same (mint, ts)
+
+        Assert.Equal(1m, await db.ScalarAsync<decimal>("SELECT price FROM features WHERE mint = 'KEEP1'"));
+        Assert.Null(await db.ScalarAsync<double?>("SELECT rsi FROM features WHERE mint = 'KEEP1'"));
+        Assert.Equal(1, sink.FeatureRowsWritten);
+    }
+
+    [Fact]
+    public async Task Rebuild_mode_refreshes_existing_features_rows_in_place()
+    {
+        await Sink.WriteAsync(Batch(T0, [Snap("REB1", T0, 1m) with { Rsi = null }]), default); // "old" row, column unset
+        long id = await db.ScalarAsync<long>("SELECT id FROM features WHERE mint = 'REB1'");
+        var rebuild = new PostgresTokenSink(db.DataSource, refreshExistingFeatures: true);
+
+        await rebuild.WriteAsync(
+            Batch(T0, [Snap("REB1", T0, 2m, createdAt: T0.AddMinutes(-5)) with { Rsi = 55, TopTraderShare = 0.4 }]), default);
+
+        Assert.Equal(1, await db.ScalarAsync<long>("SELECT count(*) FROM features WHERE mint = 'REB1'"));
+        Assert.Equal(id, await db.ScalarAsync<long>("SELECT id FROM features WHERE mint = 'REB1'"));
+        Assert.Equal(2m, await db.ScalarAsync<decimal>("SELECT price FROM features WHERE mint = 'REB1'"));
+        Assert.Equal(55d, await db.ScalarAsync<double>("SELECT rsi FROM features WHERE mint = 'REB1'"));
+        Assert.Equal(0.4, await db.ScalarAsync<double>("SELECT top_trader_share FROM features WHERE mint = 'REB1'"));
+        Assert.Equal(1, rebuild.FeatureRowsWritten);
+    }
+
+    [Fact]
+    public async Task Rebuild_mode_keeps_rows_of_tokens_whose_creation_the_run_did_not_see()
+    {
+        // PRE1 was born before the rebuild window: its recomputed snapshot comes from a truncated history.
+        await Sink.WriteAsync(Batch(T0, [Snap("PRE1", T0, 1m) with { Holders = 40 }, Snap("NEW1", T0, 1m)]), default);
+        var rebuild = new PostgresTokenSink(db.DataSource, refreshExistingFeatures: true);
+
+        await rebuild.WriteAsync(Batch(T0, [
+            Snap("PRE1", T0, 2m) with { Holders = 2 },
+            Snap("NEW1", T0, 2m, createdAt: T0.AddMinutes(-1)),
+            Snap("PRE1B", T0, 3m), // no stored row yet: still inserted
+        ]), default);
+
+        Assert.Equal(40, await db.ScalarAsync<int>("SELECT holders FROM features WHERE mint = 'PRE1'"));
+        Assert.Equal(1m, await db.ScalarAsync<decimal>("SELECT price FROM features WHERE mint = 'PRE1'"));
+        Assert.Equal(2m, await db.ScalarAsync<decimal>("SELECT price FROM features WHERE mint = 'NEW1'"));
+        Assert.Equal(3m, await db.ScalarAsync<decimal>("SELECT price FROM features WHERE mint = 'PRE1B'"));
+        Assert.Equal(2, rebuild.FeatureRowsWritten); // NEW1 refreshed + PRE1B inserted
+    }
+
+    [Fact]
+    public void Only_snapshots_with_an_observed_creation_can_be_refreshed()
+    {
+        Assert.True(PostgresTokenSink.CanRefresh(Snap("C1", T0, 1m, createdAt: T0)));
+        Assert.False(PostgresTokenSink.CanRefresh(Snap("C2", T0, 1m)));
+    }
+
+    [Fact]
+    public async Task Release_batch_after_a_snapshot_at_the_same_instant_deactivates_it()
+    {
+        await Sink.WriteAsync(Batch(T0.AddDays(1), [Snap("END1", T0.AddDays(1), 1m)]), default);
+
+        await Sink.WriteAsync(Batch(T0.AddDays(1), [], "END1"), default); // replay end: same ts as the last flush
+
+        Assert.False(await Live<bool>("is_active", "END1"));
+    }
+
+    [Fact]
+    public void Refresh_statement_updates_every_column_but_the_key()
+    {
+        string sql = PostgresTokenSink.FeaturesRefreshSql;
+
+        Assert.Contains("behavioral_signals = EXCLUDED.behavioral_signals", sql);
+        Assert.Contains("burned_liquidity = EXCLUDED.burned_liquidity", sql);
+        Assert.DoesNotContain("mint = EXCLUDED", sql);
+        Assert.DoesNotContain(" ts = EXCLUDED", sql);
+    }
 }

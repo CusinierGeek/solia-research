@@ -1,6 +1,6 @@
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
-using Solia.DataPipeline.Ingestion.PumpApi;
+using Solia.DataPipeline.Pipeline;
 using ZstdSharp;
 
 namespace Solia.DataPipeline.Ingestion.Replay;
@@ -25,7 +25,7 @@ public sealed class PumpApiReplaySource : IDataSource
     private readonly ReplayWindow _window;
     private readonly Func<DateTimeOffset, CancellationToken, Task<Stream?>> _openArchive;
     private readonly ILogger<PumpApiReplaySource> _logger;
-    private readonly int _maxAttemptsPerHour;
+    private readonly RetryPolicy _retry;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
     private readonly List<DateTimeOffset> _missingHours = [];
     private readonly List<ReplayHourFailure> _failedHours = [];
@@ -53,7 +53,7 @@ public sealed class PumpApiReplaySource : IDataSource
         _window = window;
         _openArchive = openArchive;
         _logger = logger;
-        _maxAttemptsPerHour = maxAttemptsPerHour;
+        _retry = new RetryPolicy(maxAttemptsPerHour);
         _delay = delay;
     }
 
@@ -138,7 +138,7 @@ public sealed class PumpApiReplaySource : IDataSource
                     }
                 }
 
-                if (attempt >= _maxAttemptsPerHour)
+                if (_retry.DelayAfter(attempt) is not { } wait)
                 {
                     _failedHours.Add(new ReplayHourFailure(hour, failure!.Message));
                     _logger.LogWarning(failure,
@@ -147,10 +147,9 @@ public sealed class PumpApiReplaySource : IDataSource
                     break;
                 }
 
-                TimeSpan wait = PumpApiStreamSource.ComputeBackoff(attempt - 1, 1, 30, Random.Shared.NextDouble());
                 _logger.LogWarning(failure,
                     "replay: {Hour:yyyy-MM-dd HH}:00 UTC failed (attempt {Attempt}/{Max}); retrying in {Delay}",
-                    hour, attempt, _maxAttemptsPerHour, wait);
+                    hour, attempt, _retry.MaxAttempts, wait);
                 await _delay(wait, cancellationToken);
             }
         }

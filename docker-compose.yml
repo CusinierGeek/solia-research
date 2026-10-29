@@ -90,6 +90,10 @@ services:
       # The pipeline's job in the stack is to ingest; set INGEST=false in .env to run it idle.
       INGEST: ${INGEST:-true}
       STREAM_PROBE: ${STREAM_PROBE:-false}
+    volumes:
+      # Opt-in local mirror of the replay archives (~400 MB/hour): only written by
+      # `replay … --mirror /replay-archives`; live ingestion never touches it. See docs/DATA-PIPELINE.md.
+      - replay-archives:/replay-archives
     restart: unless-stopped
     healthcheck:
       # /health needs the database; a dropped pumpapi stream is Degraded, not unhealthy.
@@ -201,3 +205,4 @@ networks:
 volumes:
   pgdata:
   models:
+  replay-archives:

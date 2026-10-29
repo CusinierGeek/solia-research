@@ -30,6 +30,11 @@ ENV ASPNETCORE_ENVIRONMENT=Production \
 
 COPY --from=build /app .
 
+# Mount point of the optional replay-archive mirror volume, owned by the app user so a fresh named
+# volume (which copies this directory's ownership) is writable. Empty in the image: archives only
+# land there on `replay --mirror /replay-archives`.
+RUN mkdir /replay-archives && chown $APP_UID /replay-archives
+
 # Built-in non-root user of the .NET images (UID 1654).
 USER $APP_UID
 EXPOSE 8080

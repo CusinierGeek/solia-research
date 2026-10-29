@@ -88,11 +88,94 @@ Events carry a `venue` and migration markers, so a token is tracked **continuous
 - Bounded memory: cap tracked tokens; evict stale/inactive (`is_active=false`).
 - Backpressure: batch DB writes; if lagging, drop low-value snapshots (logged).
 
-## Historical backfill (training)
+## Historical replay (training data)
 
-- Download a **window** of replay archives (start ~2–4 recent weeks — the full archive is ~1.7 TB, do not pull it all), decompress, feed through `PumpApiReplaySource`.
-- **Mirror archives to our own storage** to own the dataset long-term.
-- Same normalization/feature path as live → consistent training/serving features.
+A one-shot **replay mode** of the data-pipeline replays a UTC window of pumpapi's hourly archives
+(`https://replay.pumpapi.io/YYYY/MM/DD/HH.jsonl.zst`, free, since 2026-04-18) through
+`PumpApiReplaySource` → the **same** `PipelineEngine` / `TokenWindowStore` / `PostgresTokenSink` as live
+ingestion → Postgres, then exits. There is no parallel feature code: a replayed snapshot is computed
+exactly like a live one. It runs in its own process (never alongside live ingestion's token state), with
+the same configuration as the live host (`Pipeline:*`, `PUMPAPI_REPLAY_BASE_URL`, DB connection, and the
+same environment: `ASPNETCORE_ENVIRONMENT` or `DOTNET_ENVIRONMENT` picks `appsettings.{env}.json`), and
+never resets `tokens_live` (its newer-wins guards keep an old window from rolling live rows back). At the
+end it marks the tokens it still tracks inactive, as of the last replayed event (rows live ingestion has
+updated since are untouched), so historical tokens never show as live.
+"Derive, don't fetch": no enrichment call is made during a replay.
+
+```bash
+# local (Postgres from `make dev-db`)
+dotnet run --project services/data-pipeline/Solia.DataPipeline -- replay --from <utc> --to <utc> [options]
+# container, against the compose stack's database
+docker compose run --rm data-pipeline replay --from <utc> --to <utc> [options]
+```
+
+| Argument | Meaning |
+|----------|---------|
+| `--from`, `--to` | Half-open UTC window `[from, to)`, ISO 8601 (`2026-05-01T03:00Z`; a bare date = midnight UTC; no offset = UTC). Rejected: `from >= to`, a start before 2026-04-18, an end after the start of the current hour (that hour's archive isn't published until it is over). |
+| `--mirror <dir>` | **Opt-in** local mirror (off by default). Hours are read from `<dir>/YYYY/MM/DD/HH.jsonl.zst` first and downloaded into it only when absent. The directory must already exist and be writable (it is never created for you). In compose: `--mirror /replay-archives` (the `replay-archives` volume). |
+| `--mirror-only` | With `--mirror`: only download the window into the mirror; no replay, no database. |
+| `--rebuild` | Refresh `features` rows the replay recomputes (see *Rebuild* below). |
+| `--Section:Key=value`, `--environment <name>` | Configuration overrides, as on the live host's command line (e.g. `--Pipeline:SnapshotCadenceSeconds=5`; `--Key value` works too). |
+
+**Default = direct streaming.** Each hour is downloaded and zstd-decompressed on the fly (~2 GB/hour
+decompressed, never held in memory); nothing but the database is written. A dropped download, a download
+that stalls (no data for 60 s) or a corrupt hour is retried with backoff, resuming after the last line already read; an hour that keeps failing is
+skipped and reported. Hours absent at the source (404) are reported as missing.
+
+**Mirror.** Downloads go to `HH.jsonl.zst.part` and are renamed into place only once complete, so the
+mirror never holds a half-written hour (an interrupted run leaves at most a `.part`, overwritten next
+time). A mirror file that fails to read is downloaded again on the retry and replaced only once the new
+copy is complete; if the source no longer has that hour, the local copy is kept and the hour is reported
+**failed** (exit `3`), not missing. Paths are culture-invariant, so every host maps an hour to the same file.
+Budget **~400 MB per hour** compressed (~9.4 GiB/day): before it starts, the run logs the estimate for the
+hours **not yet mirrored** and the free space. The
+full archive is ~1.7 TB — mirror chosen windows, never all of it.
+
+**Idempotent / resumable.** `features` rows are keyed by `(mint, ts)` and inserted
+`ON CONFLICT DO NOTHING`, so re-running a window (after an interruption or failed hours) inserts no
+duplicates; with a mirror, the re-run doesn't download again either.
+
+**Rebuild** (for feature enrichment). By default a re-replay **keeps** existing rows, so a column added
+since they were written would stay NULL. `--rebuild` switches the insert to `ON CONFLICT (mint, ts) DO
+UPDATE` of every column, refreshing those rows in place (ids kept) — but only for tokens whose **creation
+the replay observed**: a token born before the window starts is tracked from an empty state, so its holders,
+unique traders, growth rates and momentum would come from a truncated history; its stored rows are kept
+(missing ones are still inserted). Snapshot times are derived from the
+event clock, so a row is refreshed only when the replay recomputes the same `(mint, ts)`: use the **same
+window start and `Pipeline:SnapshotCadenceSeconds`** as the run that wrote it (a different start writes
+new rows next to the old ones). `tokens_live` / `tokens_history` follow their usual merge rules.
+
+**Summary and exit codes.** The run ends with a summary line (hours, processed, `missing`
+(`MissingHours`), `failed` (`FailedHours`), `featureRowsWritten` (rows inserted, or refreshed with
+`--rebuild`), `failedBatches`, mirror hits/downloads) followed by each missing/failed hour. The summary is
+also written to the `logs` table (`service = 'data-pipeline'`, best-effort; not for `--mirror-only`).
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | Every hour read (or missing at the source) and every batch written. |
+| `1` | Fatal: unreachable database, interruption (SIGTERM / Ctrl+C), unexpected error. Re-run the window. |
+| `2` | Invalid arguments or configuration (bad window, missing/unwritable mirror dir); nothing ran. |
+| `3` | Ran to the end, but some hours or write batches were given up on: re-run the same window to fill them. |
+
+### Recipes
+
+Replay **recent** windows first (the most recent days are closest to what the live model will see).
+Cold start: a token's rolling window begins at the replay's first event, so the first
+`Pipeline:WindowSeconds` (5 min) of a window carry partial-history features — negligible over hours.
+
+- **Test window (3 h)**: smoke-tests the path and the DB in a few minutes.
+  `replay --from 2026-05-01T00:00Z --to 2026-05-01T03:00Z`
+- **Baseline (3–7 days)**: the first real training set. With a mirror, so later rebuilds and ablations
+  don't download it again (3 days ≈ 28 GiB, 7 days ≈ 66 GiB):
+  `replay --from 2026-05-01 --to 2026-05-08 --mirror /replay-archives`
+  (or download first with `--mirror-only`, then replay from disk).
+- **Learning curve (1 / 2 / 4 / 8 days, most recent window held out)**: tells whether more data still
+  helps before replaying more. Fix a held-out window at the **end** (e.g. the most recent day, never
+  trained on), then train on growing windows that end where it starts: `D-1..D`, `D-2..D`, `D-4..D`,
+  `D-8..D`. Each larger window contains the smaller ones, so replay the largest once (idempotent) and
+  select the training range at train time (`solia_ai.train` and the ablation harness split by time).
+  Plot the held-out metric against days: still climbing at 8 days → replay more; flat → spend the effort
+  on features/model instead.
 
 ## Config
 
@@ -102,3 +185,7 @@ Events carry a `venue` and migration markers, so a token is tracked **continuous
 
 - Unit: feature math on synthetic windows.
 - Integration: `FileReplaySource` feeds a recorded event file → assert rows in an ephemeral Postgres (Testcontainers).
+- Replay mode: window/argument validation, direct mode keeps nothing on disk, mirror hit / miss / corrupt
+  file (kept when the source lost the hour), atomic downloads, stalled downloads, end-of-replay deactivation,
+  idempotent re-run and `--rebuild` refresh limited to tokens born in the window (Postgres parts in the
+  Integration category).

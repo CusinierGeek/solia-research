@@ -38,6 +38,7 @@ never restarts.
 |----------------|------------|-------|-----------------|------------|
 | `pgdata` (named) | postgres `/var/lib/postgresql/data` | the whole database (tokens, features, predictions, trades, migration history) | yes | `down -v` / `make reset` |
 | `models` (named) | ai-service `/app/models` (`MODEL_DIR`) | trained model versions (+ an optional `SOLIA_AI_CONFIG` file) | yes | `down -v` / `make reset` |
+| `replay-archives` (named) | data-pipeline `/replay-archives` | opt-in mirror of pumpapi replay archives (~400 MB/hour); empty unless a `replay … --mirror /replay-archives` run fills it ([DATA-PIPELINE.md](../docs/DATA-PIPELINE.md#historical-replay-training-data)) | yes | `down -v` / `make reset` |
 | `./secrets` (bind, **ro**) | backend `/app/secrets` | `secrets.enc` only — the key never touches disk in the stack | host folder | — |
 
 **Network & ports.** Everything is on the internal `solia` bridge network and reaches the others by

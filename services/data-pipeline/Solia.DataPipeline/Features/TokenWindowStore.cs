@@ -41,6 +41,9 @@ public sealed class TokenWindowStore
 
     public int TrackedCount => _tokens.Count;
 
+    /// <summary>Mints currently tracked.</summary>
+    public IReadOnlyList<string> TrackedMints() => _tokens.Keys.ToList();
+
     /// <summary>
     /// Mints pruned or evicted since the last call that aren't tracked again, so the hot table
     /// can mark them inactive. Each mint is reported once.
