@@ -19,7 +19,10 @@ One entry point for docs/ML-MODEL.md "Continuous training loop":
    candidate is trained per gate seed (:func:`solia_ai.candidate.train_candidate`, pinned to the
    first window's start, so it never sees the held-out data); every candidate and the champion are
    scored on the same windows. The champion is a fixed model, so its metrics on a window are shared
-   by every seed of that window.
+   by every seed of that window. With **no champion** yet a single candidate is trained (the first
+   seed): the seeds only matter for a paired comparison, and the first valid candidate is promoted
+   anyway. Each candidate's start / end and every epoch (loss, duration, samples/s, ETA) are
+   logged, and handed to ``on_progress`` (the API's ``/model/status``).
 5. **Decide + record** (:func:`solia_ai.promotion.decide_promotion`): the first seed's candidate
    always gets a ``models`` row (with its metrics); a promotion flips ``is_champion`` in the same
    transaction that completes the ``training_events`` row. The API re-reads the registry champion
@@ -51,6 +54,7 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import traceback
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -85,6 +89,9 @@ from .retention import (
 )
 
 logger = logging.getLogger(__name__)
+
+# progress(event): see train_and_evaluate (and solia_ai.train.fit for "epoch" events).
+ProgressFn = Callable[[dict[str, Any]], None]
 
 SERVICE = "ai-service"
 THRESHOLD_ENV = "RETRAIN_EVERY_N_TRADES"
@@ -491,14 +498,19 @@ def train_and_evaluate(
     model_dir: str | os.PathLike[str] | None = None,
     device: Any = None,
     version: str | None = None,
+    progress: ProgressFn | None = None,
 ) -> Evaluation:
-    """Train one candidate per gate seed and score them and the ``champion`` on the gate's
-    walk-forward held-out windows (see the module doc). Only the first seed's checkpoint is kept.
+    """Train one candidate per gate seed (a single one without a champion) and score them and the
+    ``champion`` on the gate's walk-forward held-out windows (see the module doc). Only the first
+    seed's checkpoint is kept.
 
     The champion is never scored in-sample: the held-out windows end after its own training data
     plus the embargo (the held-out share shrinks if fewer windows are that recent). It is fed
     windows of its own ``seq_len``, and only windows it would serve (at least its ``min_seq_len``
-    rows) are scored, for both models, so the comparison stays paired.
+    rows) are scored, for both models, so the comparison stays paired. ``progress`` gets a
+    ``candidate_start`` / ``candidate_end`` event around each candidate (``candidate`` 1-based,
+    ``candidates``, ``seed``; the end adds ``best_epoch``, ``epochs_run`` and ``seconds``) and the
+    fit's ``epoch`` events tagged with the same ``candidate`` / ``candidates`` / ``seed``.
 
     Raises:
         ValueError / IncompatibleCheckpointError: too little data (or none yet past the champion's
@@ -591,12 +603,22 @@ def train_and_evaluate(
         ]
 
     base_seed = int(config["training"].get("seed", 0))
-    seeds = [base_seed + i for i in range(gate.seeds)]
+    n_seeds = gate.seeds if champion_ckpt is not None else 1
+    if n_seeds < gate.seeds:
+        notes.append(
+            f"no champion: one candidate trained (seed {base_seed}) instead of {gate.seeds}: the "
+            "gate's seeds only matter for a paired comparison"
+        )
+    seeds = [base_seed + i for i in range(n_seeds)]
     version = version or default_version()
+    report = progress or (lambda event: None)
     candidate_runs: dict[tuple[int, int], dict[str, float | None]] = {}
     primary = None
     with tempfile.TemporaryDirectory(prefix="solia-retrain-") as scratch:
         for i, seed in enumerate(seeds):
+            tag = {"candidate": i + 1, "candidates": len(seeds), "seed": seed}
+            report({"event": "candidate_start", **tag})
+            started = time.monotonic()
             cfg = copy.deepcopy(dict(config))
             cfg["training"] = {**cfg["training"], "seed": seed}
             result = train_candidate(
@@ -607,6 +629,17 @@ def train_and_evaluate(
                 model_dir=model_dir if i == 0 else scratch,
                 version=version if i == 0 else f"{version}-seed{seed}",
                 device=device,
+                samples=samples,
+                progress=lambda event, tag=tag: report({**event, **tag}),
+            )
+            report(
+                {
+                    "event": "candidate_end",
+                    **tag,
+                    "best_epoch": result.best_epoch + 1,
+                    "epochs_run": len(result.history),
+                    "seconds": time.monotonic() - started,
+                }
             )
             primary = primary or result
             scorer = _load_scorer(load_checkpoint(result.checkpoint_path))
@@ -630,6 +663,26 @@ def train_and_evaluate(
         windows=[w.describe() for w in windows],
         notes=notes,
     )
+
+
+def describe_progress(event: Mapping[str, Any]) -> str:
+    """One line for a training progress event (:func:`train_and_evaluate`)."""
+    who = f"candidate {event.get('candidate', 1)}/{event.get('candidates', 1)}"
+    if "seed" in event:
+        who += f" (seed {event['seed']})"
+    kind = event.get("event")
+    if kind == "candidate_start":
+        return f"{who} started"
+    if kind == "candidate_end":
+        return (
+            f"{who} trained in {event['seconds']:.0f}s: best epoch {event['best_epoch']} of "
+            f"{event['epochs_run']} run"
+        )
+    if kind == "epoch":
+        from .train import describe_epoch
+
+        return f"{who} {describe_epoch(event)}"
+    return f"{who} {kind}"
 
 
 def _is_finite(value: Any) -> bool:
@@ -691,6 +744,7 @@ def run_retrain(
     load_champion_fn: Callable[..., Any] = load_champion_checkpoint,
     heartbeat_seconds: float = HEARTBEAT_SECONDS,
     on_started: Callable[[int], None] | None = None,
+    on_progress: Callable[[int, dict[str, Any]], None] | None = None,
 ) -> RetrainOutcome:
     """Run one retrain if due (see the module doc). ``lookback_days`` / ``max_rows`` override the
     config's ``data`` bounds (the CLI flags). ``evaluate_fn`` / ``read_data_fn`` (``(engine,
@@ -698,7 +752,8 @@ def run_retrain(
     the training. ``on_started`` is called with
     the ``training_events`` id as soon as the run is recorded (the API answers ``202`` with it
     while the run goes on); it is not called for a skipped run, and an error it raises is only
-    logged.
+    logged. Every training progress event (:func:`train_and_evaluate`) is logged and handed to
+    ``on_progress(event_id, event)`` (an error it raises is only logged too).
 
     Raises:
         RetrainBusyError: another run holds the lock (nothing is recorded).
@@ -737,6 +792,20 @@ def run_retrain(
             except Exception:
                 logger.exception("retrain #%s: the on_started callback failed", event_id)
         context = {"training_event_id": event_id, "trigger": trigger}
+
+        def report(event: dict[str, Any]) -> None:
+            db_log(
+                engine,
+                "info",
+                f"retrain #{event_id}: {describe_progress(event)}",
+                {**context, "progress": json_safe(event)},
+            )
+            if on_progress is not None:
+                try:
+                    on_progress(event_id, event)
+                except Exception:
+                    logger.exception("retrain #%s: the on_progress callback failed", event_id)
+
         db_log(
             engine,
             "info",
@@ -761,6 +830,7 @@ def run_retrain(
                 champion_checkpoint=champion_checkpoint,
                 model_dir=model_dir,
                 device=device,
+                progress=report,
             )
             candidate = evaluation.candidate
             db_log(

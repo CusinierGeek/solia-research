@@ -35,7 +35,7 @@ import numpy as np
 import torch
 from scipy.stats import rankdata
 from sklearn.metrics import average_precision_score, roc_auc_score
-from torch.utils.data import DataLoader
+from torch.utils.data import SequentialSampler
 
 from .calibration import (
     DEFAULT_METHOD,
@@ -44,7 +44,7 @@ from .calibration import (
     Calibration,
     fit_calibration,
 )
-from .dataset import SequenceDataset, make_datasets, make_holdout_dataset
+from .dataset import SequenceDataset, batch_loader, make_datasets, make_holdout_dataset
 from .inference import contract_outputs, resolve_calibration
 from .model import SoliaTransformer
 
@@ -79,9 +79,8 @@ def score_logits(
     model.eval()
     try:
         with torch.no_grad():
-            for x, padding_mask, targets in DataLoader(
-                dataset, batch_size=batch_size, shuffle=False
-            ):
+            loader = batch_loader(dataset, SequentialSampler(dataset), batch_size=batch_size)
+            for x, padding_mask, targets in loader:
                 out = model(x, padding_mask)
                 for key in LOGIT_KEYS:
                     outs[key].append(out[key].numpy())

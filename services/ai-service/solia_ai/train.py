@@ -27,10 +27,12 @@ from __future__ import annotations
 
 import argparse
 import copy
+import logging
 import math
 import os
+import time
 import warnings
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -49,6 +51,7 @@ from .calibration import settings as calibration_settings
 from .checkpoints import model_directory
 from .config import ConfigError, load_config
 from .dataset import (
+    LoaderSettings,
     SequenceDataset,
     make_datasets,
     make_loaders,
@@ -60,6 +63,12 @@ from .evaluate import calibrate
 from .features import BASELINE_GROUPS
 from .loss import SoliaLoss
 from .model import SoliaTransformer
+
+logger = logging.getLogger(__name__)
+
+# progress(event) gets one "epoch" event per epoch from fit (describe_epoch); the retrain
+# loop adds "candidate_start" / "candidate_end" events around each candidate's fit.
+ProgressFn = Callable[[dict[str, Any]], None]
 
 
 @dataclass
@@ -198,13 +207,33 @@ def _cosine_warmup(optimizer: AdamW, warmup_steps: int, total_steps: int) -> Lam
     return LambdaLR(optimizer, scale)
 
 
-def _to_device(batch: dict[str, torch.Tensor], device: torch.device) -> dict[str, torch.Tensor]:
-    return {key: value.to(device) for key, value in batch.items()}
+def _to_device(
+    batch: dict[str, torch.Tensor], device: torch.device, non_blocking: bool = False
+) -> dict[str, torch.Tensor]:
+    return {key: value.to(device, non_blocking=non_blocking) for key, value in batch.items()}
+
+
+def describe_epoch(event: Mapping[str, Any]) -> str:
+    """One line for an ``epoch`` progress event."""
+    return (
+        f"epoch {event['epoch']}/{event['epochs']}: train_loss={event['train_loss']:.4f} "
+        f"val_loss={event['val_loss']:.4f} ({event['seconds']:.1f}s, "
+        f"{event['samples_per_s']:.0f} samples/s, ETA {event['eta_seconds']:.0f}s), "
+        f"no improvement {event['since_improved']}/{event['patience']}"
+    )
+
+
+def _log_epoch(event: Mapping[str, Any]) -> None:
+    logger.info(describe_epoch(event))
 
 
 @torch.no_grad()
 def _validate(
-    model: SoliaTransformer, loss_fn: SoliaLoss, loader: DataLoader, device: torch.device
+    model: SoliaTransformer,
+    loss_fn: SoliaLoss,
+    loader: DataLoader,
+    device: torch.device,
+    non_blocking: bool = False,
 ) -> dict[str, float]:
     """Mean loss components over the whole validation set.
 
@@ -218,11 +247,14 @@ def _validate(
     total_weight = 0.0
     try:
         for x, padding_mask, targets in loader:
-            targets = _to_device(targets, device)
+            targets = _to_device(targets, device, non_blocking)
             weight = float(loss_fn.label_weight(targets).sum())
             if weight <= 0:
                 continue
-            outputs = model(x.to(device), padding_mask.to(device))
+            outputs = model(
+                x.to(device, non_blocking=non_blocking),
+                padding_mask.to(device, non_blocking=non_blocking),
+            )
             components = loss_fn(outputs, targets)
             for key, value in components.items():
                 totals[key] = totals.get(key, 0.0) + float(value) * weight
@@ -304,6 +336,7 @@ def fit(
     *,
     device: str | torch.device | None = None,
     init_state: Mapping[str, Any] | None = None,
+    progress: ProgressFn | None = None,
 ) -> FitResult:
     """The training loop alone: fit a model on ``train_ds``, early-stopping on ``val_ds``.
 
@@ -314,6 +347,13 @@ def fit(
     architecture (:func:`solia_ai.candidate.warm_start_problems`); loading still refuses other
     horizons or feature columns. Seeds torch from ``training.seed``. Writes nothing —
     :func:`train` saves and registers; the ablation harness only scores the in-memory model.
+
+    Batches are fed per :class:`~solia_ai.dataset.LoaderSettings` (``training.num_workers`` ...);
+    the fitted weights don't depend on them. After each epoch ``progress`` (default: the module
+    logger) gets an ``epoch`` event: ``epoch`` (1-based) / ``epochs``, mean ``train_loss``,
+    ``val_loss``, ``seconds``, training ``samples_per_s``, ``eta_seconds`` (the rest of the epoch
+    budget at the mean pace so far — early stopping may end sooner) and ``since_improved`` /
+    ``patience``.
     """
     cfg = config
     training = cfg["training"]
@@ -321,13 +361,17 @@ def fit(
     torch.manual_seed(int(training["seed"]))
 
     balanced = bool(training.get("balanced_sampling", True))
+    loader = LoaderSettings.from_config(cfg, device)
     train_loader, val_loader = make_loaders(
         train_ds,
         val_ds,
         batch_size=int(training["batch_size"]),
         balanced=balanced,
         seed=int(training["seed"]),
+        loader=loader,
     )
+    report = progress or _log_epoch
+    pin = loader.pin_memory
 
     model = SoliaTransformer.from_config(cfg).to(device)
     if init_state is not None:
@@ -354,20 +398,29 @@ def fit(
     best_state = copy.deepcopy(model.state_dict())
     best_metrics: dict[str, float] = {}
     since_improved = 0
+    started = time.monotonic()
 
     for epoch in range(epochs):
+        epoch_start = time.monotonic()
         model.train()
+        loss_sum = torch.zeros((), device=device)  # accumulated on the device: no sync per step
+        n_batches = 0
         for x, padding_mask, targets in train_loader:
             optimizer.zero_grad()
-            outputs = model(x.to(device), padding_mask.to(device))
-            loss = loss_fn(outputs, _to_device(targets, device))["total"]
+            outputs = model(
+                x.to(device, non_blocking=pin), padding_mask.to(device, non_blocking=pin)
+            )
+            loss = loss_fn(outputs, _to_device(targets, device, pin))["total"]
             loss.backward()
             if grad_clip > 0:
                 nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             optimizer.step()
             scheduler.step()
+            loss_sum += loss.detach()
+            n_batches += 1
+        train_seconds = time.monotonic() - epoch_start
 
-        val = _validate(model, loss_fn, val_loader, device)
+        val = _validate(model, loss_fn, val_loader, device, pin)
         history.append({"epoch": float(epoch), **{f"val_{k}": v for k, v in val.items()}})
         if val["total"] < best_val - 1e-6:
             best_val, best_epoch, best_metrics = val["total"], epoch, val
@@ -375,8 +428,24 @@ def fit(
             since_improved = 0
         else:
             since_improved += 1
-            if since_improved >= patience:
-                break
+
+        now = time.monotonic()
+        report(
+            {
+                "event": "epoch",
+                "epoch": epoch + 1,
+                "epochs": epochs,
+                "train_loss": float(loss_sum) / max(1, n_batches),
+                "val_loss": val["total"],
+                "seconds": now - epoch_start,
+                "samples_per_s": len(train_ds) / max(train_seconds, 1e-9),
+                "eta_seconds": (now - started) / (epoch + 1) * (epochs - epoch - 1),
+                "since_improved": since_improved,
+                "patience": patience,
+            }
+        )
+        if since_improved >= patience:
+            break
 
     if not best_metrics:
         raise RuntimeError(
@@ -490,6 +559,7 @@ def main(argv: list[str] | None = None) -> None:
     df, bounds = read_training_features(engine, data)
     print(bounds.describe())
 
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     result = train(
         df,
         model_dir=args.model_dir,

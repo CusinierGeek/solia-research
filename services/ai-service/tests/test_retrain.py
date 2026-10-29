@@ -213,7 +213,9 @@ def stub(candidate_value: float, champion_value: float | None = None, *, version
     """An evaluate_fn returning synthetic gate runs (``champion_value=None``: no champion runs)."""
     calls = []
 
-    def evaluate_fn(df, config, *, champion, model_dir, device, champion_checkpoint=None):
+    def evaluate_fn(
+        df, config, *, champion, model_dir, device, champion_checkpoint=None, progress=None
+    ):
         calls.append(champion)
         candidate = SimpleNamespace(
             version=version,
@@ -226,7 +228,8 @@ def stub(candidate_value: float, champion_value: float | None = None, *, version
             warm_start=WarmStart(True, False, None, ("no champion checkpoint",)),
         )
         theirs = None if champion is None or champion_value is None else runs(champion_value)
-        return Evaluation(candidate, runs(candidate_value), theirs, [{"index": 0}, {"index": 1}])
+        ours = runs(candidate_value, seeds=1 if theirs is None else 2)  # one seed when unpaired
+        return Evaluation(candidate, ours, theirs, [{"index": 0}, {"index": 1}])
 
     evaluate_fn.calls = calls
     return evaluate_fn
@@ -439,6 +442,44 @@ def test_an_unloadable_champion_fails_before_the_data_is_read(engine, tmp_path):
     assert events(engine)[0]["decision"] == "failed"
 
 
+def test_training_progress_is_logged_and_handed_to_on_progress(engine):
+    add_trades(engine, 7)
+    inner = stub(0.5)
+    epoch = {"event": "epoch", "epoch": 2, "epochs": 5, "train_loss": 0.5, "val_loss": 0.75,
+             "seconds": 3.0, "samples_per_s": 1200.0, "eta_seconds": 9.0,
+             "since_improved": 1, "patience": 3}  # fmt: skip
+    tag = {"candidate": 1, "candidates": 1, "seed": 42}
+
+    def evaluate_fn(df, config, *, progress, **kwargs):
+        progress({"event": "candidate_start", **tag})
+        progress({**epoch, **tag, "val_loss": float("nan")})  # not JSON: logged as null
+        progress({"event": "candidate_end", **tag, "best_epoch": 1, "epochs_run": 2,
+                  "seconds": 6.0})  # fmt: skip
+        return inner(df, config, **kwargs)
+
+    seen = []
+
+    def on_progress(event_id, event):
+        seen.append((event_id, event["event"]))
+        raise RuntimeError("a broken listener never fails the run")
+
+    outcome = run(engine, evaluate_fn, on_progress=on_progress)
+
+    assert outcome.status == "promoted"
+    assert seen == [(outcome.event_id, k) for k in ("candidate_start", "epoch", "candidate_end")]
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT message, context FROM logs WHERE context ? 'progress' ORDER BY id")
+        ).all()
+    messages = [m for m, _ in rows]
+    assert messages[0] == f"retrain #{outcome.event_id}: candidate 1/1 (seed 42) started"
+    assert messages[1].startswith(f"retrain #{outcome.event_id}: candidate 1/1 (seed 42) epoch 2/5")
+    assert "ETA 9s" in messages[1]
+    assert "trained in 6s: best epoch 1 of 2 run" in messages[2]
+    assert rows[1][1]["progress"]["val_loss"] is None
+    assert rows[1][1]["training_event_id"] == outcome.event_id
+
+
 def test_first_candidate_is_promoted_and_fully_recorded(engine):
     add_trades(engine, 7)
     outcome = run(engine, stub(0.5))
@@ -455,7 +496,7 @@ def test_first_candidate_is_promoted_and_fully_recorded(engine):
     assert "first valid candidate" in event["notes"]
     assert model["is_champion"] and model["version"] == "cand"
     assert model["metrics"]["val_total"] == 1.25
-    assert model["metrics"]["heldout"][PRIMARY] == pytest.approx(0.5005)
+    assert model["metrics"]["heldout"][PRIMARY] == pytest.approx(0.5)  # one seed: no champion
     assert model["hyperparams"] == {"training": {"seed": 42}} and model["n_params"] == 123
     assert count_trades_since_last_train(engine) == 0
 
@@ -658,9 +699,16 @@ def test_train_and_evaluate_pairs_every_seeded_candidate_with_the_champion(df, t
     champion = SimpleNamespace(version=trained.version, path=str(trained.checkpoint_path))
     cfg = gate_config()
 
+    events = []
     evaluation = train_and_evaluate(
-        df, cfg, champion=champion, model_dir=tmp_path / "out", device="cpu", version="cand"
-    )
+        df, cfg, champion=champion, model_dir=tmp_path / "out", device="cpu", version="cand",
+        progress=events.append,
+    )  # fmt: skip
+    starts = [e for e in events if e["event"] == "candidate_start"]
+    assert starts == [
+        {"event": "candidate_start", "candidate": 1, "candidates": 2, "seed": 42},
+        {"event": "candidate_start", "candidate": 2, "candidates": 2, "seed": 43},
+    ]
     keys = {(w, s) for w in range(2) for s in (42, 43)}
     assert set(evaluation.candidate_runs) == set(evaluation.champion_runs) == keys
     assert evaluation.candidate_runs[(0, 42)][PRIMARY] is not None
@@ -674,6 +722,29 @@ def test_train_and_evaluate_pairs_every_seeded_candidate_with_the_champion(df, t
     )
     assert decision.reasons  # a valid, paired comparison
     assert not any("eligibility" in note for note in evaluation.notes)  # same (disabled) rule
+
+
+def test_without_a_champion_a_single_candidate_is_trained_and_reported(df, tmp_path):
+    cfg = gate_config()  # 2 gate seeds: only a paired comparison needs them
+    events = []
+
+    evaluation = train_and_evaluate(
+        df, cfg, champion=None, model_dir=tmp_path / "out", device="cpu", version="cand",
+        progress=events.append,
+    )  # fmt: skip
+
+    assert set(evaluation.candidate_runs) == {(0, 42), (1, 42)}
+    assert evaluation.champion_runs is None
+    assert any("one candidate trained (seed 42) instead of 2" in n for n in evaluation.notes)
+    kinds = [e["event"] for e in events]
+    assert kinds[0] == "candidate_start" and kinds[-1] == "candidate_end"
+    epochs = [e for e in events if e["event"] == "epoch"]
+    assert len(epochs) == len(evaluation.candidate.history) > 0
+    assert all(e["candidate"] == 1 and e["candidates"] == 1 and e["seed"] == 42 for e in epochs)
+    end = events[-1]
+    assert end["epochs_run"] == len(epochs) and end["best_epoch"] >= 1 and end["seconds"] > 0
+    decision = decide_promotion(evaluation.candidate_runs, None, PromotionSettings.from_config(cfg))
+    assert decision.promote and decision.initial  # the gate takes the single seed
 
 
 def test_train_and_evaluate_notes_a_champion_trained_under_another_rule(df, tmp_path):

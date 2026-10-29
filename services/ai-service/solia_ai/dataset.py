@@ -41,18 +41,28 @@ it to ``seq_len`` with a padding mask the model uses to ignore the padding.
 
 from __future__ import annotations
 
+import multiprocessing
+import os
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
+from torch.utils.data import (
+    BatchSampler,
+    DataLoader,
+    Dataset,
+    RandomSampler,
+    Sampler,
+    SequentialSampler,
+    WeightedRandomSampler,
+)
 
 from .config import MAX_POS_WEIGHT, horizon_seconds, load_config
 from .eligibility import INPUT_COLUMNS as ELIGIBILITY_INPUTS
-from .eligibility import EligibilityRule, frame_inputs
+from .eligibility import EligibilityRule
 from .features import (
     BASELINE_GROUPS,
     FEATURE_COLUMNS,
@@ -95,6 +105,17 @@ class Samples:
     def padded(self, i: int) -> tuple[np.ndarray, np.ndarray]:
         """Sample ``i`` left-padded to ``[seq_len, F]``, with its ``[seq_len]`` padding mask."""
         return pad_window(self.window(i), self.seq_len)
+
+    def padded_batch(self, indices: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """:meth:`padded` of every sample in ``indices`` at once: ``(x[B, seq_len, F],
+        padding_mask[B, seq_len])``, gathered in one indexing pass instead of one per sample."""
+        indices = np.asarray(indices, np.int64)
+        # Position j of a window holds row end - (seq_len - 1 - j); rows before its start are pad.
+        rows = self.end_row[indices, None] - np.arange(self.seq_len - 1, -1, -1)
+        padding_mask = rows < self.start_row[indices, None]
+        x = self.features[np.where(padding_mask, 0, rows)]
+        x[padding_mask] = 0.0
+        return x, padding_mask
 
     @property
     def x(self) -> np.ndarray:
@@ -140,7 +161,9 @@ def build_samples(
 
     A window ends at every row from the token's ``min_seq_len``-th on (default ``seq_len``: full
     windows only) that ``eligibility`` accepts (default: every row) and holds its most recent
-    ``<= seq_len`` rows.
+    ``<= seq_len`` rows. Built in vectorized passes over every token at once (one sort, one
+    feature projection, the labels by searches and range extrema), never a loop per token or
+    window.
     """
     rule = EligibilityRule() if eligibility is None else eligibility
     rule.check_columns(df)
@@ -170,81 +193,103 @@ def build_samples(
     rug_thr = np.array([rug_thresholds[h] for h in horizons], np.float64)
     max_gap = np.maximum(horizon_s * max_gap_fraction, min_gap_seconds)
 
-    blocks: list[np.ndarray] = []
-    start_rows: list[np.ndarray] = []
-    end_rows: list[np.ndarray] = []
-    labels: list[tuple[np.ndarray, ...]] = []
-    end_ts: list[np.ndarray] = []
-    mints: list[np.ndarray] = []
-    anchors: list[np.ndarray] = []
-    offset = 0
-
-    for mint, sub in df.groupby("mint", sort=True):
-        if len(sub) < min_len:
-            continue
-        # Stable sort (ties keep a deterministic order: by id when present, else input order).
-        sort_keys = ["ts", "id"] if "id" in sub.columns else ["ts"]
-        sub = sub.sort_values(sort_keys, kind="stable")
-
-        matrix = build_feature_matrix(sub)  # [T, F] float32
-        price = pd.to_numeric(sub["price"], errors="coerce").to_numpy(dtype=np.float64)
-        liquidity = pd.to_numeric(sub["liquidity"], errors="coerce").to_numpy(dtype=np.float64)
-        ts_utc = pd.to_datetime(sub["ts"], utc=True).dt.tz_localize(None)
-        ts_sec = ts_utc.to_numpy().astype("datetime64[s]").astype(np.int64)
-
-        window_ends = np.arange(min_len - 1, len(sub))
-        pump, rug, ret, mask = _label(
-            window_ends, ts_sec, price, liquidity, horizon_s, pump_thr, rug_thr, max_gap, max_return
-        )
-        keep = mask.any(axis=1)  # drop windows with nothing labelable yet
-        anchor_inputs = frame_inputs(sub)[window_ends]
-        keep &= rule.accepts(anchor_inputs)  # ... or anchored on an ineligible row
-        if not keep.any():
-            continue
-
-        blocks.append(matrix)
-        start_rows.append(np.maximum(window_ends[keep] - seq_len + 1, 0) + offset)
-        end_rows.append(window_ends[keep] + offset)
-        labels.append((pump[keep], rug[keep], ret[keep], mask[keep]))
-        end_ts.append(ts_sec[window_ends[keep]])
-        mints.append(np.full(int(keep.sum()), mint, dtype=object))
-        anchors.append(anchor_inputs[keep])
-        offset += len(matrix)
-
+    kept = df[df["mint"].notna()]  # groupby semantics: rows without a mint belong to no token
+    sizes = kept.groupby("mint", sort=False)["mint"].transform("size").to_numpy()
+    kept = kept[sizes >= min_len]
     n_feat = len(FEATURE_COLUMNS)
-    n_h = len(horizons)
-    if not blocks:
-        empty_h = np.empty((0, n_h), np.float32)
-        return Samples(
-            np.empty((0, n_feat), np.float32),
-            np.empty((0,), np.int64),
-            np.empty((0,), np.int64),
-            seq_len,
-            empty_h,
-            empty_h.copy(),
-            empty_h.copy(),
-            empty_h.copy(),
-            np.empty((0,), np.int64),
-            np.empty((0,), object),
-            horizons,
-            np.empty((0, len(ELIGIBILITY_INPUTS)), np.float32),
-        )
+    if kept.empty:
+        return _empty_samples(seq_len, horizons, n_feat)
+    # Tokens in mint order, each token's rows in time order; ties keep a deterministic order (by
+    # id when present, else input order: the multi-key sort is stable).
+    sort_keys = ["mint", "ts", "id"] if "id" in kept.columns else ["mint", "ts"]
+    kept = kept.sort_values(sort_keys, kind="stable")
+
+    token, _ = pd.factorize(kept["mint"], sort=False)  # already grouped: codes are 0, 1, ...
+    token = token.astype(np.int64)
+    first = np.flatnonzero(np.r_[True, token[1:] != token[:-1]])
+    token_start = first[token]  # each row's token's first row
+    token_last = np.r_[first[1:], len(token)][token] - 1  # ... and last row
+    pos = np.arange(len(token)) - token_start  # row position inside its token
+
+    matrix = build_feature_matrix(kept)  # [R, F] float32
+    price = pd.to_numeric(kept["price"], errors="coerce").to_numpy(dtype=np.float64)
+    liquidity = pd.to_numeric(kept["liquidity"], errors="coerce").to_numpy(dtype=np.float64)
+    ts_utc = pd.to_datetime(kept["ts"], utc=True).dt.tz_localize(None)
+    ts_sec = ts_utc.to_numpy().astype("datetime64[s]").astype(np.int64)
+
+    window_ends = np.flatnonzero(pos >= min_len - 1)
+    pump, rug, ret, mask = _label(
+        window_ends, token, token_last, ts_sec, price, liquidity,
+        horizon_s, pump_thr, rug_thr, max_gap, max_return,
+    )  # fmt: skip
+    keep = mask.any(axis=1)  # drop windows with nothing labelable yet
+    anchor_inputs = _running_inputs(kept, token)[window_ends]
+    keep &= rule.accepts(anchor_inputs)  # ... or anchored on an ineligible row
+    if not keep.any():
+        return _empty_samples(seq_len, horizons, n_feat)
+    ends = window_ends[keep]
+
+    # Only the rows of tokens holding a sample are stored; renumber rows over them.
+    has_sample = np.zeros(int(token[-1]) + 1, bool)
+    has_sample[token[ends]] = True
+    stored = has_sample[token]
+    new_row = np.cumsum(stored) - 1
+    end_row = new_row[ends]
+    start_row = end_row - np.minimum(pos[ends], seq_len - 1)
 
     return Samples(
-        np.concatenate(blocks),
-        np.concatenate(start_rows).astype(np.int64),
-        np.concatenate(end_rows).astype(np.int64),
+        np.ascontiguousarray(matrix[stored]),
+        start_row.astype(np.int64),
+        end_row.astype(np.int64),
         seq_len,
-        *(np.concatenate([lab[k] for lab in labels]).astype(np.float32) for k in range(4)),
-        np.concatenate(end_ts).astype(np.int64),
-        np.concatenate(mints),
+        pump[keep],
+        rug[keep],
+        ret[keep],
+        mask[keep],
+        ts_sec[ends].astype(np.int64),
+        kept["mint"].to_numpy(dtype=object)[ends],
         horizons,
-        np.concatenate(anchors).astype(np.float32),
+        anchor_inputs[keep].astype(np.float32),
     )
+
+
+def _empty_samples(seq_len: int, horizons: tuple[str, ...], n_feat: int) -> Samples:
+    empty_h = np.empty((0, len(horizons)), np.float32)
+    return Samples(
+        np.empty((0, n_feat), np.float32),
+        np.empty((0,), np.int64),
+        np.empty((0,), np.int64),
+        seq_len,
+        empty_h,
+        empty_h.copy(),
+        empty_h.copy(),
+        empty_h.copy(),
+        np.empty((0,), np.int64),
+        np.empty((0,), object),
+        horizons,
+        np.empty((0, len(ELIGIBILITY_INPUTS)), np.float32),
+    )
+
+
+def _running_inputs(rows: pd.DataFrame, token: np.ndarray) -> np.ndarray:
+    """:func:`solia_ai.eligibility.frame_inputs` of every token at once: ``[R, 3]`` running maxima
+    of the eligibility inputs per token, in row order (NaN until a token's first known value)."""
+    columns = []
+    for col in ELIGIBILITY_INPUTS:
+        if col not in rows:
+            columns.append(np.full(len(rows), np.nan))
+            continue
+        values = pd.Series(pd.to_numeric(rows[col], errors="coerce").to_numpy(np.float64))
+        # cummax skips NaN but leaves it in place; carrying the max over it = np.fmax.accumulate.
+        running = values.groupby(token, sort=False).cummax().groupby(token, sort=False).ffill()
+        columns.append(running.to_numpy(np.float64))
+    return np.stack(columns, axis=1)
 
 
 def _label(
     window_ends: np.ndarray,
+    token: np.ndarray,
+    token_last: np.ndarray,
     ts_sec: np.ndarray,
     price: np.ndarray,
     liquidity: np.ndarray,
@@ -254,47 +299,87 @@ def _label(
     max_gap: np.ndarray,
     max_return: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Label every window (module doc) at once, over every token's rows (time-ordered, tokens
+    contiguous). Each horizon looks at the rows ``(t, t + H]`` of the window's own token: a
+    search over ``(token, ts)`` keys, then range minima / maxima over those rows."""
     n, n_h = len(window_ends), len(horizon_s)
     pump = np.zeros((n, n_h), np.float32)
     rug = np.zeros((n, n_h), np.float32)
     ret = np.zeros((n, n_h), np.float32)
     mask = np.zeros((n, n_h), np.float32)
-    last_sec = ts_sec[-1]
+    if n == 0:
+        return pump, rug, ret, mask
 
-    for k, i in enumerate(window_ends):
-        p_i, l_i, t_i = price[i], liquidity[i], ts_sec[i]
-        if not np.isfinite(p_i) or p_i <= 0:
-            continue  # no usable anchor price
-        lo = np.searchsorted(ts_sec, t_i, side="right")  # first row strictly after t_i
+    # (token, ts) as one sortable int64 key: a horizon's search never leaves its token.
+    rel = ts_sec - ts_sec.min()
+    if int(rel.max()) + int(horizon_s.max()) >= 2**32:
+        raise ValueError("the features span too long a time range to label")
+    key = (token << 32) | rel
 
-        for h in range(n_h):
-            horizon_end = t_i + horizon_s[h]
-            hi = np.searchsorted(ts_sec, horizon_end, side="right")  # rows (t_i, t_i + H]
-            if hi <= lo:
-                continue
-            future_p = price[lo:hi]
-            if not np.isfinite(future_p).any():
-                continue
+    i = window_ends
+    p_i, l_i, t_i = price[i], liquidity[i], ts_sec[i]
+    anchored = np.isfinite(p_i) & (p_i > 0)  # no usable anchor price: unlabeled
+    lo = np.searchsorted(key, key[i], side="right")  # first row strictly after t_i
+    last_sec = ts_sec[token_last[i]]
 
-            p_min = np.nanmin(future_p)
+    price_finite = np.isfinite(price)
+    n_price = np.r_[0, np.cumsum(price_finite)]  # finite values in [lo, hi) = n[hi] - n[lo]
+    n_liq = np.r_[0, np.cumsum(np.isfinite(liquidity))]
+    # Index of the last finite price at or before each row (-1: none).
+    last_finite = np.maximum.accumulate(np.where(price_finite, np.arange(len(price)), -1))
+    price_lo = np.where(np.isnan(price), np.inf, price)  # nanmin
+    price_hi = np.where(price_finite, price, -np.inf)  # max over the finite values
+    liq_lo = np.where(np.isnan(liquidity), np.inf, liquidity)
+
+    for h in range(n_h):
+        horizon_end = t_i + horizon_s[h]
+        hi = np.searchsorted(key, key[i] + horizon_s[h], side="right")  # rows (t_i, t_i + H]
+        future = anchored & (hi > lo)
+        future &= n_price[hi] - n_price[np.minimum(lo, hi)] > 0  # some finite future price
+        lo_f, hi_f = np.where(future, lo, 0), np.where(future, hi, 1)
+        p_min, p_max, l_min = _range_extrema(
+            lo_f, hi_f, (price_lo, np.minimum), (price_hi, np.maximum), (liq_lo, np.minimum)
+        )
+        with np.errstate(invalid="ignore", divide="ignore", over="ignore"):
             crashed = (p_i - p_min) / p_i >= rug_thr[h]
-            if np.isfinite(l_i) and l_i > 0:
-                future_l = liquidity[lo:hi]
-                if np.isfinite(future_l).any():
-                    crashed |= (l_i - np.nanmin(future_l)) / l_i >= rug_thr[h]
-
-            covered = last_sec >= horizon_end and ts_sec[hi - 1] >= horizon_end - max_gap[h]
-            if not covered and not crashed:
-                continue  # outcome unknown: data ends early or has a gap
-
-            finite = future_p[np.isfinite(future_p)]
-            pump[k, h] = float(np.max(finite) / p_i - 1.0 >= pump_thr[h])
-            rug[k, h] = float(crashed)
+            liq_known = np.isfinite(l_i) & (l_i > 0) & (n_liq[hi_f] - n_liq[lo_f] > 0)
+            crashed |= liq_known & ((l_i - l_min) / l_i >= rug_thr[h])
+            covered = (last_sec >= horizon_end) & (ts_sec[hi_f - 1] >= horizon_end - max_gap[h])
+            labeled = future & (covered | crashed)
+            pump[:, h] = np.where(labeled, p_max / p_i - 1.0 >= pump_thr[h], 0.0)
+            rug[:, h] = np.where(labeled, crashed, 0.0)
             # Price at (or nearest before) the horizon end, capped (module doc).
-            ret[k, h] = min(finite[-1] / p_i - 1.0, max_return)
-            mask[k, h] = 1.0
+            last_price = price[last_finite[hi_f - 1]]
+            ret[:, h] = np.where(labeled, np.minimum(last_price / p_i - 1.0, max_return), 0.0)
+        mask[:, h] = labeled
 
     return pump, rug, ret, mask
+
+
+def _range_extrema(
+    lo: np.ndarray, hi: np.ndarray, *series: tuple[np.ndarray, Any]
+) -> list[np.ndarray]:
+    """``reduce(values[lo:hi])`` for every ``(values, reduce)`` in ``series`` and every range
+    (``hi > lo``), vectorized: a sparse table built one level at a time, so only one level per
+    series is held at once. A range of length ``L`` is answered at level ``k = floor(log2 L)``
+    by its two overlapping ``2**k``-long halves."""
+    level = np.floor(np.log2(np.maximum(hi - lo, 1))).astype(np.int64)
+    out = [np.empty(len(lo), np.float64) for _ in series]
+    tables = [values for values, _ in series]
+    for k in range(int(level.max()) + 1):
+        if k:
+            step = 1 << (k - 1)
+            tables = [
+                reduce(table[:-step], table[step:])
+                for table, (_, reduce) in zip(tables, series, strict=True)
+            ]
+        at = np.flatnonzero(level == k)
+        if len(at) == 0:
+            continue
+        left, right = lo[at], hi[at] - (1 << k)
+        for o, table, (_, reduce) in zip(out, tables, series, strict=True):
+            o[at] = reduce(table[left], table[right])
+    return out
 
 
 def temporal_split(
@@ -338,6 +423,36 @@ class SequenceDataset(Dataset):
         x, padding_mask = s.padded(i)
         return torch.from_numpy(x), torch.from_numpy(padding_mask), targets
 
+    def batch(
+        self, ks: Sequence[int]
+    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
+        """Items ``ks`` already collated — exactly what the default collation of
+        ``[self[k] for k in ks]`` gives (``[B, ...]`` tensors), in a few vectorized gathers."""
+        i = self.indices[np.asarray(ks, np.int64)]
+        s = self.samples
+        x, padding_mask = s.padded_batch(i)
+        targets = {
+            name: torch.from_numpy(getattr(s, name)[i])
+            for name in ("pump", "rug", "expected_return", "mask")
+        }
+        return torch.from_numpy(x), torch.from_numpy(padding_mask), targets
+
+
+class _Batches(Dataset):
+    """A loader's view of a :class:`SequenceDataset` indexed by whole batches (lists of item
+    indices from a :class:`~torch.utils.data.BatchSampler`). Only small index lists and finished
+    batches cross to a worker: the rows are read in place (shared copy-on-write under fork) and no
+    per-sample Python object is created or ref-counted."""
+
+    def __init__(self, dataset: SequenceDataset) -> None:
+        self.dataset = dataset
+
+    def __len__(self) -> int:
+        return len(self.dataset)
+
+    def __getitem__(self, ks: Sequence[int]):
+        return self.dataset.batch(ks)
+
 
 # --------------------------------------------------------------------------- class imbalance
 
@@ -377,6 +492,94 @@ def balanced_sampler(dataset: SequenceDataset, *, seed: int = 0) -> WeightedRand
     )
 
 
+MAX_AUTO_WORKERS = 4
+
+
+def auto_num_workers() -> int:
+    """``training.num_workers: auto``: half the usable CPUs (at most :data:`MAX_AUTO_WORKERS`)
+    where workers fork — and so share the dataset's rows copy-on-write — else ``0``: a spawned
+    worker (Windows, macOS) would receive its own copy of every row."""
+    if multiprocessing.get_start_method() != "fork":
+        return 0
+    cpus = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count()
+    return min(MAX_AUTO_WORKERS, max(1, (cpus or 1) // 2))
+
+
+@dataclass(frozen=True)
+class LoaderSettings:
+    """How batches are fed to the model (``config.yaml`` ``training``): ``num_workers`` processes
+    gather them (``0`` = the training process), ``pin_memory`` for faster host-to-GPU copies,
+    ``prefetch_factor`` batches queued per worker. Workers persist across epochs. Batches don't
+    depend on these: the sampling happens in the training process."""
+
+    num_workers: int = 0
+    pin_memory: bool = False
+    prefetch_factor: int = 2
+
+    def __post_init__(self) -> None:
+        if isinstance(self.num_workers, bool) or not isinstance(self.num_workers, int):
+            raise ValueError(f"num_workers must be an integer, got {self.num_workers!r}")
+        if self.num_workers < 0:
+            raise ValueError(f"num_workers must be >= 0, got {self.num_workers}")
+        if isinstance(self.prefetch_factor, bool) or not isinstance(self.prefetch_factor, int):
+            raise ValueError(f"prefetch_factor must be an integer, got {self.prefetch_factor!r}")
+        if self.prefetch_factor < 1:
+            raise ValueError(f"prefetch_factor must be >= 1, got {self.prefetch_factor}")
+
+    @classmethod
+    def from_config(
+        cls, config: Mapping[str, Any], device: str | torch.device | None = None
+    ) -> LoaderSettings:
+        """The settings for training on ``device``: ``num_workers: auto`` is
+        :func:`auto_num_workers`, ``pin_memory: auto`` is on for CUDA."""
+        training = config["training"]
+        workers = training.get("num_workers", 0)
+        pin = training.get("pin_memory", "auto")
+        if pin == "auto":
+            pin = device is not None and torch.device(device).type == "cuda"
+        if not isinstance(pin, bool):
+            raise ValueError(f"pin_memory must be a boolean or 'auto', got {pin!r}")
+        return cls(
+            num_workers=auto_num_workers() if workers == "auto" else workers,
+            pin_memory=pin,
+            prefetch_factor=training.get("prefetch_factor", 2),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def batch_loader(
+    dataset: SequenceDataset,
+    sampler: Sampler[int],
+    *,
+    batch_size: int,
+    seed: int = 0,
+    loader: LoaderSettings | None = None,
+) -> DataLoader:
+    """A loader yielding :meth:`SequenceDataset.batch` batches of ``batch_size`` items drawn by
+    ``sampler``.
+
+    The loader gets its own seeded generator: the base seed it draws for workers at each iteration
+    never touches the global RNG, so dropout — hence the trained weights — is identical whatever
+    ``num_workers`` (with persistent workers that seed is drawn once, not once per epoch).
+    """
+    if batch_size < 1:
+        raise ValueError(f"batch_size must be >= 1, got {batch_size}")
+    settings = loader or LoaderSettings()
+    workers = settings.num_workers
+    return DataLoader(
+        _Batches(dataset),
+        sampler=BatchSampler(sampler, batch_size, drop_last=False),
+        batch_size=None,  # the sampler yields whole batches, collated by SequenceDataset.batch
+        num_workers=workers,
+        pin_memory=settings.pin_memory,
+        persistent_workers=workers > 0,
+        prefetch_factor=settings.prefetch_factor if workers > 0 else None,
+        generator=torch.Generator().manual_seed(seed),
+    )
+
+
 def make_loaders(
     train: SequenceDataset,
     val: SequenceDataset,
@@ -384,18 +587,18 @@ def make_loaders(
     batch_size: int,
     balanced: bool = True,
     seed: int = 0,
+    loader: LoaderSettings | None = None,
 ) -> tuple[DataLoader, DataLoader]:
-    """Train loader (class-balanced sampling by default) and an ordered, unshuffled val loader."""
-    if batch_size < 1:
-        raise ValueError(f"batch_size must be >= 1, got {batch_size}")
+    """Train loader (class-balanced sampling by default) and an ordered, unshuffled val loader,
+    both fed per ``loader`` (default: in the training process)."""
     if balanced:
-        train_loader = DataLoader(
-            train, batch_size=batch_size, sampler=balanced_sampler(train, seed=seed)
-        )
+        sampler: Sampler[int] = balanced_sampler(train, seed=seed)
     else:
-        generator = torch.Generator().manual_seed(seed)
-        train_loader = DataLoader(train, batch_size=batch_size, shuffle=True, generator=generator)
-    return train_loader, DataLoader(val, batch_size=batch_size, shuffle=False)
+        sampler = RandomSampler(train, generator=torch.Generator().manual_seed(seed))
+    return (
+        batch_loader(train, sampler, batch_size=batch_size, seed=seed, loader=loader),
+        batch_loader(val, SequentialSampler(val), batch_size=batch_size, seed=seed, loader=loader),
+    )
 
 
 def make_datasets(

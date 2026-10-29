@@ -207,7 +207,10 @@ Base: `/`
   "seq_len": 64, "min_seq_len": 8,
   "eligibility": { "min_unique_traders": 3, "min_volume_sol": 0.0, "min_token_age_sec": 0.0 },
   "trades_since_last_train": 142, "retrain_threshold": 500,
-  "latest_run": { "id": 17, "trigger": "n_trades", "started_at": "...", "finished_at": null, "decision": null } }
+  "latest_run": { "id": 17, "trigger": "n_trades", "started_at": "...", "finished_at": null, "decision": null,
+                  "progress": { "candidate": 1, "candidates": 3, "seed": 42, "epoch": 7, "epochs": 50,
+                                "train_loss": 0.41, "val_loss": 0.52, "seconds": 64.2, "samples_per_s": 21000.0,
+                                "eta_seconds": 2780.0, "since_improved": 1, "patience": 8 } } }
 ```
 `eligibility` is the token eligibility rule the champion was trained under (all `0` = every token; a model
 recorded before the rule reads as all `0`) — the bot only scores the tokens it accepts (docs/ML-MODEL.md
@@ -215,7 +218,11 @@ recorded before the rule reads as all `0`) — the bot only scores the tokens it
 can be served (the backend then reports its own progress). `trades_since_last_train` / `retrain_threshold` are the
 orchestrator's (same rule as the backend's count, against `RETRAIN_EVERY_N_TRADES`) and always come as a pair:
 both `null` when the database read fails. `latest_run` is the newest `training_events` row — `finished_at` and
-`decision` `null` while it runs — or `null` before any run (or when the read fails).
+`decision` `null` while it runs — or `null` before any run (or when the read fails). While the answering
+ai-service process trains that run, `latest_run.progress` is its live progress — the candidate being trained
+(`candidate` of `candidates`, its `seed`) and its last finished epoch (`epoch` is `0` until the first one ends;
+`eta_seconds` = the rest of the candidate's epoch budget at its pace so far, early stopping may end it sooner);
+absent otherwise (another process's run, a finished run).
 
 ### `POST /model/retrain`
 ```jsonc

@@ -60,6 +60,7 @@ from .db import add_data_bounds_arguments
 from .features import BASELINE_GROUPS, FEATURE_COLUMNS, group_mask
 from .model import IncompatibleCheckpointError
 from .train import (
+    ProgressFn,
     build_checkpoint,
     default_version,
     fit,
@@ -375,20 +376,24 @@ def train_candidate(
     version: str | None = None,
     device: str | torch.device | None = None,
     champion_unavailable: str | None = None,
+    samples: Samples | None = None,
+    progress: ProgressFn | None = None,
 ) -> CandidateResult:
     """Train a candidate on ``df`` (a ``features`` frame) and save — never register — it.
 
     ``champion`` is the champion's loaded checkpoint (:func:`solia_ai.inference.load_checkpoint`;
     ``None`` when there is none) for a warm start; ``champion_unavailable`` says why a registered
     champion could not be loaded. ``heldout_start_ts`` pins the held-out start (e.g. the promotion
-    gate's first window); by default it is cut by ``heldout_fraction``.
+    gate's first window); by default it is cut by ``heldout_fraction``. ``samples`` are ``df``'s
+    windows under ``config`` when the caller already built them (built here otherwise);
+    ``progress`` gets the fit's epoch events (:func:`solia_ai.train.fit`).
 
     The recorded ``hyperparams`` are the configured ones; a warm start's effective budget and
     learning rate are recorded beside them, under ``hyperparams["warm_start"]``.
     """
     cfg = load_config() if config is None else config
     settings = CandidateSettings.from_config(cfg)
-    samples = config_samples(df, cfg)
+    samples = config_samples(df, cfg) if samples is None else samples
     split = candidate_split(
         samples,
         heldout_fraction=settings.heldout_fraction,
@@ -419,7 +424,9 @@ def train_candidate(
             "epochs": warm_hyperparams["epochs"],
             "learning_rate": warm_hyperparams["learning_rate"],
         }
-    fitted = fit(split.train, split.val, fit_cfg, device=device, init_state=init_state)
+    fitted = fit(
+        split.train, split.val, fit_cfg, device=device, init_state=init_state, progress=progress
+    )
     model, metrics = fitted.model, fitted.metrics
 
     version = version or default_version()

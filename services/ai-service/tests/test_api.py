@@ -70,7 +70,7 @@ LATEST_RUN = {
 def _service(run_fn=None, *, trades: int = 142, threshold: int = 500, **kwargs) -> RetrainService:
     """A retrain service over stubs (no database): ``run_fn`` defaults to a run recorded as #17."""
 
-    def recorded(*, trigger, on_started=None):
+    def recorded(*, trigger, on_started=None, on_progress=None):
         if on_started:
             on_started(17)
         return RetrainOutcome("rejected", trades, threshold, event_id=17)
@@ -170,7 +170,7 @@ def test_model_status_without_any_run_has_a_null_latest_run():
 def test_retrain_returns_202_with_the_training_event_id():
     calls = []
 
-    def run_fn(*, trigger, on_started=None):
+    def run_fn(*, trigger, on_started=None, on_progress=None):
         calls.append(trigger)
         on_started(17)
         return RetrainOutcome("promoted", 0, 500, event_id=17)
@@ -186,7 +186,7 @@ def test_retrain_answers_202_before_the_run_finishes_and_409_while_it_runs():
     release = threading.Event()
     finished = threading.Event()
 
-    def long_run(*, trigger, on_started=None):
+    def long_run(*, trigger, on_started=None, on_progress=None):
         on_started(21)
         release.wait(10)
         finished.set()
@@ -220,7 +220,7 @@ def test_retrain_answers_202_before_the_run_finishes_and_409_while_it_runs():
 def test_retrain_is_409_when_another_process_holds_the_lock():
     from solia_ai.retrain import RetrainBusyError
 
-    def busy(*, trigger, on_started=None):
+    def busy(*, trigger, on_started=None, on_progress=None):
         raise RetrainBusyError("another retrain or rollback is running; try again later")
 
     response = _client(retrain=_service(busy)).post("/model/retrain", json={"trigger": "manual"})
@@ -230,7 +230,7 @@ def test_retrain_is_409_when_another_process_holds_the_lock():
 
 
 def test_retrain_is_503_when_the_run_cannot_be_started():
-    def down(*, trigger, on_started=None):
+    def down(*, trigger, on_started=None, on_progress=None):
         raise ConnectionError("database down")
 
     response = _client(retrain=_service(down)).post("/model/retrain", json={"trigger": "manual"})
@@ -243,7 +243,7 @@ def test_retrain_is_503_when_the_run_cannot_be_started():
 def test_retrain_is_503_when_the_run_is_not_recorded_in_time():
     release = threading.Event()
 
-    def stuck(*, trigger, on_started=None):
+    def stuck(*, trigger, on_started=None, on_progress=None):
         release.wait(10)
 
     service = _service(stuck, start_timeout=0.05)

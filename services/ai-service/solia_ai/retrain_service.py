@@ -16,7 +16,8 @@ during a training:
 * **Progress** (:meth:`RetrainService.progress`): the counter, the threshold and the latest run, for
   ``GET /model/status``, read at most every ``progress_seconds`` (a run starting or ending refreshes
   it). A failed read reports them as ``None`` (the backend then uses its own count) instead of
-  failing the status.
+  failing the status. While this process runs a retrain, ``latest_run`` also carries its live
+  ``progress`` (current candidate, seed, epoch, losses, ETA), never cached.
 * **Recovery** (:meth:`RetrainService.recover_in_background`, at startup): worker threads are
   daemons, so stopping the process mid-training leaves that run's ``training_events`` row in flight
   (no decision). Startup records such rows as ``failed`` — off the startup path, so the API serves
@@ -53,7 +54,8 @@ DEFAULT_PROGRESS_SECONDS = 30.0
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off", ""}
 
-# run_fn(trigger=..., on_started=...) runs one retrain (``run_retrain`` over the shared engine).
+# run_fn(trigger=..., on_started=..., on_progress=...) runs one retrain (``run_retrain`` over the
+# shared engine).
 RunFn = Callable[..., RetrainOutcome]
 # count_fn() -> (closed trades since the last training, threshold); raises when the DB fails.
 CountFn = Callable[[], tuple[int, int]]
@@ -61,6 +63,22 @@ CountFn = Callable[[], tuple[int, int]]
 LatestFn = Callable[[], dict[str, Any] | None]
 # recover_fn() -> the ids of the abandoned runs it recorded as failed.
 RecoverFn = Callable[[], list[int]]
+
+# The fields of a training progress event (solia_ai.retrain.train_and_evaluate) the status shows.
+PROGRESS_FIELDS = (
+    "candidate",
+    "candidates",
+    "seed",
+    "epoch",
+    "epochs",
+    "train_loss",
+    "val_loss",
+    "seconds",
+    "samples_per_s",
+    "eta_seconds",
+    "since_improved",
+    "patience",
+)
 
 
 class RetrainStartError(RuntimeError):
@@ -146,6 +164,7 @@ class RetrainService:
         self._progress_lock = threading.Lock()
         self._progress: dict[str, Any] | None = None
         self._progress_at = 0.0
+        self._live: tuple[int, dict[str, Any]] | None = None  # (event id, progress) of our run
 
     @classmethod
     def from_engine(cls, engine: Callable[[], Any]) -> RetrainService:
@@ -159,12 +178,22 @@ class RetrainService:
         # ... and on bad data bounds; each run re-reads them with the config (same as the CLI).
         DataSettings.from_config(load_config())
 
-        def run_fn(*, trigger: str, on_started: Callable[[int], None] | None = None):
+        def run_fn(
+            *,
+            trigger: str,
+            on_started: Callable[[int], None] | None = None,
+            on_progress: Callable[[int, dict[str, Any]], None] | None = None,
+        ):
             import torch
 
             device = "cuda" if torch.cuda.is_available() else "cpu"
             return run_retrain(
-                engine(), trigger=trigger, threshold=threshold, device=device, on_started=on_started
+                engine(),
+                trigger=trigger,
+                threshold=threshold,
+                device=device,
+                on_started=on_started,
+                on_progress=on_progress,
             )
 
         return cls(
@@ -210,12 +239,15 @@ class RetrainService:
 
         def work() -> None:
             try:
-                handoff.outcome = self._run_fn(trigger=trigger, on_started=on_started)
+                handoff.outcome = self._run_fn(
+                    trigger=trigger, on_started=on_started, on_progress=self._record_progress
+                )
             except BaseException as exc:
                 handoff.error = exc
                 if handoff.event_id is not None:  # already recorded as failed by the run
                     logger.error("retrain #%s failed: %s", handoff.event_id, exc)
             finally:
+                self._end_progress()
                 self._slot.release()
                 self._invalidate_progress()
                 handoff.done.set()
@@ -258,7 +290,9 @@ class RetrainService:
             logger.info("retrain due: %s/%s closed trades", trades, threshold)
             ran = True
             return self._run_fn(
-                trigger="n_trades", on_started=lambda _: self._invalidate_progress()
+                trigger="n_trades",
+                on_started=lambda _: self._invalidate_progress(),
+                on_progress=self._record_progress,
             )
         except RetrainBusyError as exc:
             logger.info("retrain check skipped: %s", exc)
@@ -267,6 +301,7 @@ class RetrainService:
                 "retrain check failed (retrying next tick): %s: %s", type(exc).__name__, exc
             )
         finally:
+            self._end_progress()
             self._slot.release()
             if ran:
                 self._invalidate_progress()
@@ -330,13 +365,36 @@ class RetrainService:
         """``trades_since_last_train`` + ``retrain_threshold`` (one consistent pair, both ``None``
         when the count fails) and ``latest_run`` (``None`` before any run or when its read
         fails). A read is reused for ``progress_seconds`` — a failed one too, so a slow or down
-        database costs one attempt per interval rather than one per status call."""
+        database costs one attempt per interval rather than one per status call. While this
+        process trains that run, ``latest_run["progress"]`` is its live progress
+        (:data:`PROGRESS_FIELDS`: the candidate and seed being trained, its last epoch)."""
         with self._progress_lock:
             fresh = self._clock() - self._progress_at < self._progress_seconds
             if self._progress is None or not fresh:
                 self._progress = self._read_progress()
                 self._progress_at = self._clock()
-            return dict(self._progress)
+            out = dict(self._progress)
+            latest, live = out.get("latest_run"), self._live
+            if latest is not None and live is not None and latest.get("id") == live[0]:
+                if latest.get("finished_at") is None:
+                    out["latest_run"] = {**latest, "progress": dict(live[1])}
+            return out
+
+    def _record_progress(self, event_id: int, event: dict[str, Any]) -> None:
+        """Keep a run's latest progress event (``on_progress``); a new candidate resets the
+        epoch fields."""
+        fields = {k: event[k] for k in PROGRESS_FIELDS if k in event}
+        with self._progress_lock:
+            previous = self._live[1] if self._live and self._live[0] == event_id else {}
+            if event.get("event") == "candidate_start":
+                previous = {"epoch": 0}
+            elif event.get("event") == "candidate_end":
+                fields.pop("seconds", None)  # the candidate's total, not an epoch's
+            self._live = (event_id, {**previous, **fields})
+
+    def _end_progress(self) -> None:
+        with self._progress_lock:
+            self._live = None
 
     def _invalidate_progress(self) -> None:
         with self._progress_lock:

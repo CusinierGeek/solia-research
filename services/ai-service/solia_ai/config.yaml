@@ -24,6 +24,15 @@ training:
   # Class imbalance is corrected once: balanced batches (events ~50%) by default; when false,
   # batches follow the natural distribution and the BCE term gets pos_weight = neg/pos instead.
   balanced_sampling: true
+  # DataLoader: batches are gathered by `num_workers` worker processes while the model trains
+  # (0 = in the training process). `auto` = half the CPUs (at most 4) where workers fork and so
+  # share the dataset's rows (Linux, the container); 0 elsewhere, where each worker would copy
+  # them. Results are identical whatever the count. 0: batches are gathered whole and cost far
+  # less than the model step, so workers measured no faster (docs/ML-MODEL.md "Training
+  # throughput"). `pin_memory: auto` = on for CUDA.
+  num_workers: 0
+  pin_memory: auto
+  prefetch_factor: 2
 
 loss:
   alpha: 0.5 # pump/rug loss = alpha * BCE + (1 - alpha) * Focal(gamma)  (docs/ML-MODEL.md)

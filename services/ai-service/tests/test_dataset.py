@@ -464,8 +464,8 @@ def test_make_loaders_batches_train_balanced_and_val_in_order():
     assert x.shape == (8, 2, len(FEATURE_COLUMNS))
     assert padding_mask.shape == (8, 2)
     assert targets["mask"].shape == (8, 1)
-    assert isinstance(train_loader.sampler, torch.utils.data.WeightedRandomSampler)
-    assert list(val_loader.sampler) == list(range(len(val)))  # unshuffled
+    assert isinstance(train_loader.sampler.sampler, torch.utils.data.WeightedRandomSampler)
+    assert [k for b in val_loader.sampler for k in b] == list(range(len(val)))  # unshuffled
 
 
 def test_make_loaders_can_shuffle_unbalanced_and_validates_batch_size():
@@ -473,7 +473,7 @@ def test_make_loaders_can_shuffle_unbalanced_and_validates_batch_size():
     train, val = make_datasets(frame([1.0] * len(ts), ts), CFG, val_fraction=0.3)
 
     train_loader, _ = make_loaders(train, val, batch_size=4, balanced=False)
-    assert isinstance(train_loader.sampler, torch.utils.data.RandomSampler)
+    assert isinstance(train_loader.sampler.sampler, torch.utils.data.RandomSampler)
 
     with pytest.raises(ValueError, match="batch_size"):
         make_loaders(train, val, batch_size=0)

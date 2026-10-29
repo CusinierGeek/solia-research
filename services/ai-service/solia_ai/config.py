@@ -287,6 +287,13 @@ def _validate(config: Any, source: str) -> None:
     balanced = section("training").get("balanced_sampling", True)
     if not isinstance(balanced, bool):
         fail(f"'training.balanced_sampling' must be a boolean, got {balanced!r}")
+    if section("training").get("num_workers", "auto") != "auto":
+        number("training", "num_workers", integer=True)
+    pin_memory = section("training").get("pin_memory", "auto")
+    if pin_memory != "auto" and not isinstance(pin_memory, bool):
+        fail(f"'training.pin_memory' must be a boolean or 'auto', got {pin_memory!r}")
+    if "prefetch_factor" in section("training"):
+        number("training", "prefetch_factor", positive=True, integer=True)
 
     if not 0 <= number("loss", "alpha") <= 1:
         fail("'loss.alpha' must be in [0, 1] (L = alpha*BCE + (1-alpha)*Focal)")

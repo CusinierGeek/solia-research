@@ -570,3 +570,88 @@ def test_the_eligibility_rule_is_recorded_in_the_hyperparams():
 
     assert recorded == {"min_unique_traders": 3, "min_volume_sol": 0.5, "min_token_age_sec": 0.0}
     assert EligibilityRule.of(hyperparams_snapshot(cfg)) == EligibilityRule(3, 0.5)
+
+
+# --- throughput (#152): workers, progress ---
+
+
+def _fit(cfg, df=None, **kwargs):
+    train_ds, val_ds = make_datasets(make_features_df() if df is None else df, cfg)
+    return train_module.fit(train_ds, val_ds, cfg, **kwargs)
+
+
+@pytest.mark.parametrize("balanced", [True, False])
+def test_fitted_weights_do_not_depend_on_the_worker_count(balanced):
+    """Same seed -> bit-for-bit the same weights and trace with 0 or 2 loader workers (spawned
+    here on Windows, forked on Linux), dropout on: the loaders' seed draws never touch the global
+    RNG the model draws from."""
+    cfg = small_config()
+    cfg["model"]["dropout"] = 0.2
+    cfg["training"]["epochs"] = 2
+    cfg["training"]["balanced_sampling"] = balanced
+    fits = []
+    for workers in (0, 2):
+        cfg["training"]["num_workers"] = workers
+        fits.append(_fit(cfg))
+
+    a, b = fits
+    assert a.history == b.history and a.best_epoch == b.best_epoch
+    state_a, state_b = a.model.state_dict(), b.model.state_dict()
+    assert state_a.keys() == state_b.keys()
+    for key, value in state_a.items():
+        if isinstance(value, torch.Tensor):
+            assert torch.equal(value, state_b[key]), key
+        else:
+            assert value == state_b[key], key
+
+
+def test_fit_reports_every_epoch(caplog):
+    cfg = small_config()
+    cfg["training"]["epochs"] = 3
+    cfg["training"]["early_stopping_patience"] = 5
+    events = []
+
+    fitted = _fit(cfg, progress=events.append)
+
+    assert [e["epoch"] for e in events] == [1, 2, 3] and len(fitted.history) == 3
+    for event, row in zip(events, fitted.history, strict=True):
+        assert event["event"] == "epoch" and event["epochs"] == 3
+        assert event["val_loss"] == row["val_total"]
+        assert np.isfinite(event["train_loss"]) and event["train_loss"] > 0
+        assert event["seconds"] > 0 and event["samples_per_s"] > 0
+        assert event["patience"] == 5 and 0 <= event["since_improved"] <= 3
+    assert events[-1]["eta_seconds"] == 0 and events[0]["eta_seconds"] > 0
+    text = train_module.describe_epoch(events[0])
+    assert text.startswith("epoch 1/3: train_loss=") and "samples/s" in text and "ETA" in text
+
+    with caplog.at_level("INFO", logger="solia_ai.train"):
+        _fit(cfg)  # no callback: the module logger
+    assert sum("epoch " in r.getMessage() for r in caplog.records) == 3
+
+
+def test_the_progress_counts_epochs_without_improvement_up_to_the_early_stop():
+    cfg = small_config()
+    cfg["training"]["epochs"] = 30
+    cfg["training"]["early_stopping_patience"] = 2
+    cfg["training"]["learning_rate"] = 0.0  # frozen weights -> val loss never improves
+    events = []
+
+    _fit(cfg, progress=events.append)
+
+    assert [e["since_improved"] for e in events] == [0, 1, 2]
+    assert events[-1]["eta_seconds"] > 0  # the budget left when early stopping cut it
+
+
+@pytest.mark.parametrize(
+    ("knob", "value"),
+    [("num_workers", -1), ("num_workers", 1.5), ("pin_memory", "yes"), ("prefetch_factor", 0)],
+)
+def test_invalid_loader_settings_fail_fast(knob, value):
+    from solia_ai.config import ConfigError, validate_config
+
+    cfg = small_config()
+    cfg["training"][knob] = value
+    with pytest.raises(ConfigError, match=f"training.{knob}"):
+        validate_config(cfg)
+    with pytest.raises(ValueError, match=knob):
+        _fit(cfg)  # fit on an unvalidated config still refuses it before training

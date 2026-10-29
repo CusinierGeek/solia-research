@@ -17,10 +17,12 @@ the ablation harness and the hyper-parameter search:
 * **P&L is a sanity check, never a reason to promote.** The reference-policy P&L lift is reported
   with a bootstrap confidence interval (over runs); with ``pnl_veto`` a lift whose whole interval
   lies below zero rejects the candidate.
-* **No champion** → the first *valid* candidate is promoted (``initial``). A candidate with a
-  missing or non-finite primary metric, a non-finite value anywhere, or runs that are not exactly
-  ``windows`` distinct windows × ``seeds`` distinct seeds is rejected, never promoted; so is one
-  compared with a champion whose stored metrics are non-finite (the comparison cannot be trusted).
+* **No champion** → the first *valid* candidate is promoted (``initial``). Seeds only matter for
+  a paired comparison, so without a champion a single seed is trained and expected. A candidate
+  with a missing or non-finite primary metric, a non-finite value anywhere, or runs that are not
+  exactly ``windows`` distinct windows × ``seeds`` distinct seeds (× 1 seed without a champion) is
+  rejected, never promoted; so is one compared with a champion whose stored metrics are non-finite
+  (the comparison cannot be trusted).
 
 Everything here is pure (no torch, no database, no training): the caller (the continuous-training
 loop) scores both models and writes :meth:`PromotionDecision.metrics` to ``training_events``.
@@ -224,14 +226,12 @@ def decide_promotion(
         return reject(*invalid)
     n_windows = len({window for window, _ in runs})
     n_seeds = len({seed for _, seed in runs})
-    if (n_windows, n_seeds, len(runs)) != (
-        settings.windows,
-        settings.seeds,
-        settings.expected_runs,
-    ):
+    seeds = settings.seeds if champion is not None else 1  # seeds only matter when paired
+    if (n_windows, n_seeds, len(runs)) != (settings.windows, seeds, settings.windows * seeds):
         return reject(
             f"{len(runs)} run(s) over {n_windows} window(s) x {n_seeds} seed(s): the gate needs "
-            f"windows x seeds = {settings.windows} x {settings.seeds} distinct runs"
+            f"windows x seeds = {settings.windows} x {seeds} distinct runs"
+            + ("" if champion is not None else " (a single seed without a champion)")
         )
 
     if champion is None:

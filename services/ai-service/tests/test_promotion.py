@@ -182,6 +182,18 @@ def test_no_champion_promotes_first_valid_candidate():
     assert decision.promote and decision.initial
 
 
+def test_no_champion_expects_a_single_seed():
+    """Seeds only matter for a paired comparison: the retrain trains one candidate without a
+    champion, and the gate expects exactly that."""
+    one_seed = {(w, 42): metrics(0.3) for w in range(3)}
+    assert decide_promotion(one_seed, None, settings(windows=3, seeds=3)).promote
+
+    three_seeds = {(w, seed): metrics(0.3) for w in range(3) for seed in range(3)}
+    decision = decide_promotion(three_seeds, None, settings(windows=3, seeds=3))
+    assert not decision.promote
+    assert "3 x 1 distinct runs (a single seed without a champion)" in decision.reasons[0]
+
+
 def test_too_few_runs_is_rejected():
     decision = decide_promotion(runs(metrics(0.9)), None, settings(windows=3, seeds=3))
 

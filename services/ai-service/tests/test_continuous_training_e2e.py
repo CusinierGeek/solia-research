@@ -153,7 +153,7 @@ class Harness:
             settings=SchedulerSettings.from_env(),
         )
 
-    def _run(self, *, trigger, on_started=None):
+    def _run(self, *, trigger, on_started=None, on_progress=None):
         try:
             return run_retrain(
                 self.engine,
@@ -161,6 +161,7 @@ class Harness:
                 threshold=self.threshold,
                 device="cpu",
                 on_started=on_started,
+                on_progress=on_progress,
                 evaluate_fn=self.gate,
             )
         finally:  # run_retrain returns once its decision, logs and pruning are done and unlocked

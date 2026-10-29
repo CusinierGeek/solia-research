@@ -41,7 +41,7 @@ class Runs:
         self.gate = gate
         self.running = threading.Event()
 
-    def __call__(self, *, trigger, on_started=None) -> RetrainOutcome:
+    def __call__(self, *, trigger, on_started=None, on_progress=None) -> RetrainOutcome:
         self.triggers.append(trigger)
         if on_started:
             on_started(len(self.triggers))
@@ -110,7 +110,7 @@ def test_a_tick_survives_a_database_blip_and_retries_next_tick(caplog):
 
 
 def test_a_tick_survives_a_failed_run():
-    def crash(*, trigger, on_started=None):
+    def crash(*, trigger, on_started=None, on_progress=None):
         raise RuntimeError("training exploded")
 
     svc = service(crash, Counter(trades=9))
@@ -120,7 +120,7 @@ def test_a_tick_survives_a_failed_run():
 
 
 def test_a_tick_skips_when_another_process_holds_the_lock(caplog):
-    def busy(*, trigger, on_started=None):
+    def busy(*, trigger, on_started=None, on_progress=None):
         raise RetrainBusyError("another retrain or rollback is running")
 
     svc = service(busy, Counter(trades=9))
@@ -192,7 +192,7 @@ def test_start_returns_the_recorded_id_while_the_run_goes_on():
 
 
 def test_start_reports_a_run_that_failed_before_being_recorded():
-    def down(*, trigger, on_started=None):
+    def down(*, trigger, on_started=None, on_progress=None):
         raise ConnectionError("database down")
 
     svc = service(down, Counter(trades=0))
@@ -210,7 +210,7 @@ def test_start_reports_a_run_that_ended_without_being_recorded():
 
 
 def test_a_run_failing_after_it_was_recorded_still_returns_its_id():
-    def fails_later(*, trigger, on_started=None):
+    def fails_later(*, trigger, on_started=None, on_progress=None):
         on_started(3)
         raise RuntimeError("training exploded")
 
@@ -386,3 +386,53 @@ def test_an_invalid_enable_flag_is_refused(raw):
 def test_an_invalid_interval_is_refused(raw):
     with pytest.raises(ValueError, match="RETRAIN_CHECK_INTERVAL_SECONDS"):
         SchedulerSettings.from_env({"RETRAIN_CHECK_INTERVAL_SECONDS": raw}.get)
+
+
+def test_progress_shows_the_live_training_progress_of_the_run_in_flight():
+    """While this process trains run #1, ``latest_run.progress`` is its last event (never cached);
+    a new candidate resets the epoch; the run ending clears it."""
+    gate = threading.Event()
+    reported = threading.Event()
+    tag = {"candidate": 2, "candidates": 3, "seed": 43}
+
+    def run_fn(*, trigger, on_started=None, on_progress=None):
+        on_started(1)
+        on_progress(1, {"event": "candidate_start", "candidate": 1, "candidates": 3, "seed": 42})
+        on_progress(1, {"event": "epoch", "candidate": 1, "candidates": 3, "seed": 42,
+                        "epoch": 7, "epochs": 50, "eta_seconds": 300.0})  # fmt: skip
+        on_progress(1, {"event": "candidate_end", **tag, "candidate": 1, "seconds": 99.0})
+        on_progress(1, {"event": "candidate_start", **tag})
+        on_progress(1, {"event": "epoch", **tag, "epoch": 3, "epochs": 50, "train_loss": 0.4,
+                        "val_loss": 0.5, "eta_seconds": 120.0, "since_improved": 0,
+                        "patience": 8, "ignored": "x"})  # fmt: skip
+        reported.set()
+        gate.wait(10)
+        return RetrainOutcome("rejected", 0, 5, event_id=1)
+
+    latest = {"id": 1, "trigger": "manual", "started_at": "x", "finished_at": None}
+    svc = RetrainService(run_fn, Counter(trades=0), lambda: latest, progress_seconds=3600)
+    assert svc.progress()["latest_run"] == latest  # cached from before the run
+
+    svc.start()
+    assert reported.wait(5)
+    assert svc.progress()["latest_run"]["progress"] == {
+        **tag, "epoch": 3, "epochs": 50, "train_loss": 0.4, "val_loss": 0.5,
+        "eta_seconds": 120.0, "since_improved": 0, "patience": 8,
+    }  # fmt: skip
+    assert "progress" not in latest  # the cached read is never mutated
+
+    gate.set()
+    wait_idle(svc)
+    assert "progress" not in svc.progress()["latest_run"]
+
+
+def test_live_progress_only_decorates_its_own_unfinished_run():
+    svc = RetrainService(Runs(), Counter(trades=0), lambda: None)
+    svc._record_progress(5, {"event": "candidate_start", "candidate": 1, "candidates": 1})
+    for latest in (
+        {"id": 4, "finished_at": None},  # another run
+        {"id": 5, "finished_at": "2026-10-29T10:00:00+00:00"},  # already finished
+    ):
+        svc._latest_fn = lambda latest=latest: latest
+        svc._invalidate_progress()
+        assert "progress" not in svc.progress()["latest_run"]

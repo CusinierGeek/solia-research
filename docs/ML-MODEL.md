@@ -78,7 +78,16 @@ and the ablation reports the calibrated − raw effect over all runs.
 - **Optimizer**: AdamW (`lr`, `weight_decay` in config).
 - **Scheduler**: cosine with warmup.
 - **Regularization**: dropout, gradient clipping, early stopping on the validation metric.
-- **Mixed precision** optional.
+- **Mixed precision** optional (not enabled: not measured to help yet, see "Training throughput").
+- **Batch feeding** (`training.num_workers` / `pin_memory` / `prefetch_factor`): batches are gathered
+  whole (one vectorized gather per batch, no per-sample Python objects), in the training process by
+  default (`0`, measured fastest) or by persistent loader workers; `num_workers: auto` = half the CPUs
+  (max 4) where workers fork and share the rows copy-on-write (Linux / the container), 0 elsewhere.
+  The weights don't depend on the worker count (sampling stays in the training process; the loaders
+  have their own seeded RNG).
+- **Progress**: every epoch logs epoch / max, train & val loss, duration, samples/s, the candidate's
+  ETA and the early-stopping counter (stdout; a retrain also writes it to `logs`, and
+  `/model/status` shows the run's current candidate and epoch).
 - **Split**: temporal split (train on past, validate on more recent) to avoid leakage. **Never** shuffle across the time boundary within a token.
 
 ## Labeling
@@ -294,6 +303,42 @@ to the same PostgreSQL):
 windows). The default leaves the rest of the ~16 GB Docker budget to training. Before the bound, every retrain
 (the background trigger included) read the full table with its JSONB columns.
 
+### Training throughput
+
+Measured on the retrain #1 data (2026-10-29: the bounded read, 3 997 258 rows of 16 020 tokens →
+3 803 692 windows; RTX 4070, 6 CPUs, `docker-compose.gpu.yml`), with `python -m solia_ai.throughput
+--workers 0 2 3 4 --per-item --batches 300` (`solia_ai/throughput.py`: no writes) in the ai-service
+container. Model and batch size are the shipped ones (`d_model` 128, 4 layers, batch 256).
+
+| Phase | Before (#152) | After |
+|---|---|---|
+| Read `features` (bounded, #151) | "a few minutes" | 653 s (unchanged by #152) |
+| Dataset build (windows + labels) | ~15 min, 1 core at 100 % — and redone by every candidate | **17 s** (vectorized, ~50×), built once per retrain |
+| Training feed, samples/s (GPU utilisation) | 9 400 (57 %) — per-sample loader | **10 360 (70 %)** — batched, 0 workers |
+| Candidates trained without a champion | 3 (one per gate seed) | **1** |
+| Peak RSS (build + training) | 4.9 GB build, 6.6 GB training | 3.9 GB after the build, 7.4 GB peak (benchmark process, all loaders) |
+| Per-epoch progress | none until a candidate ends | every epoch: loss, duration, samples/s, ETA (stdout, `logs`, `/model/status`) |
+| Total retrain | > 3 h, interrupted (retrain #1, candidate 1 of 3 still training) | measured at the next real retrain (the per-epoch log gives it) |
+
+Loader workers (same run, batched loader):
+
+| `num_workers` | samples/s | GPU util. | Σ RSS (MB) | Σ PSS (MB) |
+|---|---|---|---|---|
+| 0 | 10 360 | 70 % | 4 463 | 4 436 |
+| 2 | 8 800 | 55 % | 12 755 | 4 695 |
+| 3 | 9 470 | 59 % | 16 948 | 3 392 |
+| 4 | 8 850 | 58 % | 21 318 | 2 812 |
+
+- **Workers don't multiply memory**: summed RSS counts the shared rows once per process, but the
+  summed PSS (shared pages split between their sharers) stays at about one copy — the forked workers
+  read the rows copy-on-write, never copy them.
+- **Workers don't help either**: gathering a whole batch costs far less than the model's step, so the
+  GPU waits on the training step's own launch overhead (~70 % utilisation at batch 256), not on data.
+  Hence the shipped `num_workers: 0`. The next levers are a larger batch or mixed precision — both
+  model/hyper-parameter changes, to be measured on their own (AMP is not enabled).
+- The wall-clock gain of a retrain comes from the build (15 min → 17 s, and no longer rebuilt per
+  candidate) and from training one candidate instead of three when there is no champion yet.
+
 ### Checkpoint retention
 
 Every retrain writes a checkpoint to `MODEL_DIR`; `solia_ai/retention.py` keeps the volume bounded without breaking
@@ -335,8 +380,10 @@ paper-trading account — a single live path has no counterfactual for the champ
   metric (default `pump/5m/pr_auc`) lifts by > `margin` on average **and** on ≥ `min_win_share` of
   runs, with no ECE / other ROC-AUC·PR-AUC regression beyond tolerance. P&L lift gets a bootstrap
   CI: it can veto (`pnl_veto`, CI entirely < 0), never promote. No champion → first valid candidate
-  is promoted (`initial`); missing/NaN metrics (candidate or champion), or runs that are not
-  exactly `windows` distinct windows × `seeds` distinct seeds → reject. Only predictive metrics
+  is promoted (`initial`) — and since seeds only matter for a paired comparison, a retrain without
+  a champion trains **one** candidate (noted in the run); missing/NaN metrics (candidate or
+  champion), or runs that are not exactly `windows` distinct windows × `seeds` distinct seeds
+  (× 1 seed without a champion) → reject. Only predictive metrics
   (not P&L, not the uncalibrated `raw/` twins) can reject a candidate for being undefined.
   `check_rollback` validates restoring the previous champion (exists, checkpoint present and
   recording its version / feature spec / horizons, feature spec an ordered subset of the code's,
@@ -452,6 +499,7 @@ python -m solia_ai.search --trials 30 --max-minutes 240 --windows 3 --seeds 0 1 
 | `inference.py` | Load champion, run predictions (+ ONNX export) |
 | `retrain.py` | Continuous-training orchestrator: trade-count trigger, one run at a time, `training_events` audit, promote/reject, rollback, prune |
 | `retrain_service.py` | Retrains inside the API: manual start (`POST /model/retrain`), background trade-count trigger, status progress |
+| `throughput.py` | Training throughput benchmark: dataset build time, samples/s per loader setting, GPU use, memory (no writes) |
 | `retention.py` | Checkpoint retention policy: keep champion + rollback chain + newest candidates, mark pruned rows |
 | `api.py` | FastAPI app (`/predict`, `/model/status`, `/model/retrain`) |
 | `config.yaml` | All hyperparameters & thresholds |
