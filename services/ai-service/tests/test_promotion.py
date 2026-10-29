@@ -298,7 +298,7 @@ def test_metrics_are_json_ready_for_training_events():
 
     payload = decide_promotion(candidate, CHAMPION, SETTINGS, windows=windows).metrics()
 
-    json.dumps(payload, allow_nan=False)  # registry._to_json rejects NaN
+    json.dumps(payload, allow_nan=False)  # registry.to_json rejects NaN
     assert payload["decision"] == "promote" and payload["windows"] == windows
     assert payload["primary"] == PRIMARY and len(payload["primary_lift"]["runs"]) == 3
     assert {"promoted", "rejected"} <= set(TRAINING_DECISIONS)

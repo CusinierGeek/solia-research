@@ -149,6 +149,24 @@ keeps evaluation off every window the candidate saw. The recorded `hyperparams` 
 ones, with a warm start's effective budget/LR under `hyperparams.warm_start`. The checkpoint is saved
 but never registered; `n_samples` (train + validation) feeds `training_events.n_samples`.
 
+**Orchestrator** (`solia_ai/retrain.py`, `python -m solia_ai.retrain [--trigger n_trades|scheduled|manual] [--force]`
+or `python -m solia_ai.retrain rollback`): due when the closed trades since the last run that trained a model
+(`promoted` / `rejected`, the backend's `/model/status` rule) reach `RETRAIN_EVERY_N_TRADES` (default 500); a
+`manual` or `--force` run skips the check. One run at a time (PostgreSQL advisory lock): a concurrent run or
+rollback is refused, not queued. Each run writes a `training_events` row at start (trigger, champion) and
+completes it (`n_samples`, the gate's comparison in `metrics`, decision, notes); anything that raises ends it as
+`failed` with the error in `notes`. The gate's walk-forward windows are cut once (eval share =
+`candidate.heldout_fraction`); one candidate is trained per gate seed, pinned to the first window's start, and
+every candidate and the champion (a fixed model: its metrics per window are shared by the seeds) are scored on
+the same windows. The first seed's candidate always gets a `models` row (val metrics + held-out means under
+`heldout`); a promotion flips `is_champion` in the same transaction that completes the event. A champion whose
+checkpoint can't be loaded or that serves other horizons fails the run (no paired comparison). **Rollback**
+restores the champion the current one replaced (the `promoted` event that crowned it, so a second rollback
+walks further back), after `check_rollback`, and records a `rollback` event; refused when there is none, its
+checkpoint is missing or incompatible. Steps are logged to stdout and `logs` (service `ai-service`). The API
+re-reads the registry champion every 30 s (`api.DEFAULT_REFRESH_SECONDS`), so a promotion or rollback is
+served without a restart.
+
 ### Promotion gate: guard against luck-driven false champions
 
 The promotion gate is a **controlled offline comparison**: candidate and champion are scored on the
@@ -283,7 +301,7 @@ python -m solia_ai.search --trials 30 --max-minutes 240 --windows 3 --seeds 0 1 
 | `ablation.py` | Per-feature-group lift across windows & seeds |
 | `search.py` | Hyperparameter & labeling-threshold search (proposes a `config.yaml` diff) |
 | `inference.py` | Load champion, run predictions (+ ONNX export) |
-| `retrain.py` | Continuous-training orchestrator (Sprint 7) |
+| `retrain.py` | Continuous-training orchestrator: trade-count trigger, one run at a time, `training_events` audit, promote/reject, rollback |
 | `api.py` | FastAPI app (`/predict`, `/model/status`, `/model/retrain`) |
 | `config.yaml` | All hyperparameters & thresholds |
 

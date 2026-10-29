@@ -183,6 +183,10 @@ class _FailingEngine:
                 if str(statement).startswith("INSERT"):
                     raise error
 
+            @contextmanager
+            def begin_nested(self):
+                yield
+
         yield Conn()
 
 

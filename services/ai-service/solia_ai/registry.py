@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import bindparam, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
 
@@ -34,6 +34,8 @@ class ModelRecord:
     created_at: datetime
 
 
+# The ``models`` columns a :class:`ModelRecord` is read from (:func:`record_columns`).
+RECORD_FIELDS = ("id", "version", "path", "is_champion", "n_params", "created_at")
 CHAMPION_INDEX = "models_single_champion_idx"
 VERSION_CONSTRAINT = "models_version_key"
 
@@ -49,7 +51,24 @@ RESET_TRADE_COUNT_DECISIONS = tuple(
 )
 
 
-def _to_json(name: str, value: Mapping[str, Any] | None) -> str | None:
+def record_columns(alias: str | None = None) -> str:
+    """The SELECT list of :data:`RECORD_FIELDS`, qualified by a table ``alias`` if given."""
+    return ", ".join(f"{alias}.{f}" if alias else f for f in RECORD_FIELDS)
+
+
+def row_to_record(row: Any) -> ModelRecord:
+    """A :class:`ModelRecord` from a row selected with :func:`record_columns`."""
+    return ModelRecord(
+        id=int(row.id),
+        version=row.version,
+        path=row.path,
+        is_champion=bool(row.is_champion),
+        n_params=None if row.n_params is None else int(row.n_params),
+        created_at=row.created_at,
+    )
+
+
+def to_json(name: str, value: Mapping[str, Any] | None) -> str | None:
     """Serialize for a JSONB column. NaN/Infinity are not JSON, so they are rejected up front
     instead of failing inside PostgreSQL."""
     if value is None:
@@ -74,21 +93,9 @@ def read_champion(engine: Engine) -> ModelRecord | None:
     """
     with engine.connect() as conn:
         row = conn.execute(
-            text(
-                "SELECT id, version, path, is_champion, n_params, created_at "
-                "FROM models WHERE is_champion"
-            )
+            text(f"SELECT {record_columns()} FROM models WHERE is_champion")
         ).one_or_none()
-    if row is None:
-        return None
-    return ModelRecord(
-        id=int(row.id),
-        version=row.version,
-        path=row.path,
-        is_champion=bool(row.is_champion),
-        n_params=None if row.n_params is None else int(row.n_params),
-        created_at=row.created_at,
-    )
+    return None if row is None else row_to_record(row)
 
 
 def last_train_cutoff(engine: Engine) -> datetime | None:
@@ -122,18 +129,43 @@ def register_model(
     (the column is ``UNIQUE``), if a concurrent run promoted another champion first, or if
     ``metrics``/``hyperparams`` hold non-finite numbers.
     """
+    with engine.begin() as conn:
+        return insert_model(
+            conn,
+            version=version,
+            path=path,
+            metrics=metrics,
+            hyperparams=hyperparams,
+            n_params=n_params,
+            is_champion=is_champion,
+        )
+
+
+def insert_model(
+    conn: Connection,
+    *,
+    version: str,
+    path: str,
+    metrics: Mapping[str, Any] | None = None,
+    hyperparams: Mapping[str, Any] | None = None,
+    n_params: int | None = None,
+    is_champion: bool = False,
+) -> ModelRecord:
+    """:func:`register_model` inside the caller's transaction ``conn``, so a promotion can commit
+    together with other writes (e.g. the retrain's ``training_events`` row) or not at all."""
     if not version or not version.strip():
         raise ValueError("version must be a non-empty string")
     params = {
         "version": version,
         "path": str(path),
         "is_champion": is_champion,
-        "metrics": _to_json("metrics", metrics),
-        "hyperparams": _to_json("hyperparams", hyperparams),
+        "metrics": to_json("metrics", metrics),
+        "hyperparams": to_json("hyperparams", hyperparams),
         "n_params": None if n_params is None else int(n_params),
     }
     try:
-        with engine.begin() as conn:
+        # A savepoint: a constraint violation must not abort the caller's whole transaction.
+        with conn.begin_nested():
             if is_champion:
                 conn.execute(text("UPDATE models SET is_champion = FALSE WHERE is_champion"))
             row = conn.execute(

@@ -31,7 +31,7 @@ import json
 import os
 import re
 import warnings
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -163,6 +163,26 @@ def resolve_checkpoint_path(path: str | Path) -> Path:
     return registered  # missing everywhere: let load_checkpoint raise on the registered path
 
 
+def feature_index(columns: Sequence[str]) -> list[int] | None:
+    """Where a model's ``columns`` sit in current-spec windows: ``None`` when it takes them whole
+    (the current spec, or a spec that isn't a subset, which :func:`build_model` refuses), else the
+    indices of an earlier spec's own columns. Shared by serving and the retrain gate, so a
+    champion is fed the same way in both."""
+    if list(columns) == FEATURE_COLUMNS or not set(columns) <= set(FEATURE_COLUMNS):
+        return None
+    return [FEATURE_COLUMNS.index(c) for c in columns]
+
+
+def recorded_min_seq_len(metadata: Mapping[str, Any], seq_len: int) -> int:
+    """The shortest window a checkpoint's model was trained on: its recorded
+    ``hyperparams.model.min_seq_len`` (which defaults to ``seq_len``, as in ``config.py``), or 1
+    when it records no model hyperparams."""
+    model = (metadata.get("hyperparams") or {}).get("model")
+    if not model:
+        return 1
+    return int(model.get("min_seq_len", model.get("seq_len", seq_len)))
+
+
 def build_model(checkpoint: dict[str, Any]) -> SoliaTransformer:
     """Rebuild the model from a checkpoint and load its weights, in eval mode.
 
@@ -247,12 +267,7 @@ class Predictor:
     ) -> None:
         self.model = model.eval()
         # A model trained on an earlier spec takes its own columns out of current-spec windows.
-        self._columns = (
-            None
-            if list(model.feature_columns) == FEATURE_COLUMNS
-            or not set(model.feature_columns) <= set(FEATURE_COLUMNS)
-            else [FEATURE_COLUMNS.index(c) for c in model.feature_columns]
-        )
+        self._columns = feature_index(model.feature_columns)
         self.model_version = model_version
         self.calibration = resolve_calibration(model.horizons, calibration, temperature)
         # The checkpoint's non-weight fields (metrics, created_at, train_end_ts, ...).
@@ -268,13 +283,8 @@ class Predictor:
 
     @property
     def min_seq_len(self) -> int:
-        """The shortest window the champion was trained on: the checkpoint's recorded
-        ``hyperparams.model.min_seq_len`` (which defaults to ``seq_len``, as in ``config.py``), or 1
-        when the checkpoint records no model hyperparams."""
-        model = (self.metadata.get("hyperparams") or {}).get("model")
-        if not model:
-            return 1
-        return int(model.get("min_seq_len", model.get("seq_len", self.seq_len)))
+        """The shortest window the champion was trained on (:func:`recorded_min_seq_len`)."""
+        return recorded_min_seq_len(self.metadata, self.seq_len)
 
     @classmethod
     def from_checkpoint(cls, path: str | Path, *, temperature: float | None = None) -> Predictor:

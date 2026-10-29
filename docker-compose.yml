@@ -117,6 +117,8 @@ services:
     environment:
       <<: *postgres-env
       MODEL_DIR: /app/models
+      # Closed trades between retrains (solia_ai.retrain); same value as the backend's.
+      RETRAIN_EVERY_N_TRADES: ${RETRAIN_EVERY_N_TRADES:-500}
       # Empty = the packaged config.yaml. Point it at a file in the models volume (/app/models/...).
       SOLIA_AI_CONFIG: ${SOLIA_AI_CONFIG:-}
     restart: unless-stopped
