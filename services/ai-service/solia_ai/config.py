@@ -32,6 +32,26 @@ CALIBRATION_DEFAULT_METHOD = "platt"
 # ``loss.pos_weight`` above it is rejected rather than silently clipped.
 MAX_POS_WEIGHT = 1000.0
 
+# solia_ai.promotion's gate knobs and defaults (``config.yaml`` ``promotion``); defined here so
+# validation stays torch-free. ``horizon`` defaults to the middle configured horizon.
+PROMOTION_METRICS = ("roc_auc", "pr_auc")
+PROMOTION_HEADS = ("pump", "rug")
+PROMOTION_DEFAULTS: dict[str, Any] = {
+    "metric": "pr_auc",
+    "head": "pump",
+    "horizon": None,
+    "margin": 0.01,
+    "windows": 3,
+    "seeds": 3,
+    "min_win_share": 2 / 3,
+    "ece_tolerance": 0.01,
+    "secondary_tolerance": 0.02,
+    "pnl_veto": True,
+    "bootstrap_samples": 2000,
+    "confidence": 0.95,
+    "seed": 0,
+}
+
 Lookup = Callable[[str], str | None]
 
 
@@ -216,6 +236,36 @@ def _validate(config: Any, source: str) -> None:
                 f"'features.groups' has unknown group(s): {', '.join(unknown)} "
                 f"(known: {', '.join(FEATURE_GROUPS)})"
             )
+
+    if "promotion" in config:
+        promotion = section("promotion")
+        unknown = [str(k) for k in promotion if k not in PROMOTION_DEFAULTS]
+        if unknown:
+            fail(f"'promotion' has unknown key(s): {', '.join(unknown)}")
+        choices = {"metric": PROMOTION_METRICS, "head": PROMOTION_HEADS, "horizon": horizons}
+        for key, allowed in choices.items():
+            # An explicit null horizon is the default: the middle configured horizon.
+            if key == "horizon" and key in promotion and promotion[key] is None:
+                continue
+            if key in promotion and promotion[key] not in allowed:
+                fail(
+                    f"'promotion.{key}' must be one of {', '.join(map(str, allowed))}, "
+                    f"got {promotion[key]!r}"
+                )
+        for key in ("margin", "ece_tolerance", "secondary_tolerance"):
+            if key in promotion:
+                number("promotion", key)
+        for key in ("windows", "seeds", "bootstrap_samples"):
+            if key in promotion:
+                number("promotion", key, positive=True, integer=True)
+        if "seed" in promotion:
+            number("promotion", "seed", integer=True)
+        if "min_win_share" in promotion and not 0 < number("promotion", "min_win_share") <= 1:
+            fail("'promotion.min_win_share' must be in (0, 1]")
+        if "confidence" in promotion and not 0 < number("promotion", "confidence") < 1:
+            fail("'promotion.confidence' must be in (0, 1)")
+        if not isinstance(promotion.get("pnl_veto", True), bool):
+            fail(f"'promotion.pnl_veto' must be a boolean, got {promotion['pnl_veto']!r}")
 
     labeling = section("labeling")
     if "max_gap_fraction" in labeling and not 0 < number("labeling", "max_gap_fraction") <= 1:

@@ -153,6 +153,13 @@ def group_columns(groups: Iterable[str]) -> list[str]:
     return [col for col in FEATURE_COLUMNS if col in wanted]
 
 
+def is_ordered_subset(columns: Sequence[str], spec: Sequence[str] = FEATURE_COLUMNS) -> bool:
+    """Whether ``columns`` appear in ``spec`` in the same order (gaps allowed): a checkpoint trained
+    on such a spec still loads, on its own columns, after columns were appended or inserted."""
+    remaining = iter(spec)
+    return all(any(c == s for s in remaining) for c in columns)
+
+
 def column_mask(columns: Sequence[str], enabled: Iterable[str]) -> np.ndarray:
     """A ``[len(columns)]`` boolean mask: ``True`` where the column is in ``enabled``.
 

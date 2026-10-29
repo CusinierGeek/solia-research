@@ -51,12 +51,11 @@ from .calibration import settings as calibration_settings
 from .dataset import SequenceDataset, config_samples, embargo_seconds, temporal_split
 from .evaluate import EvaluationReport, ReferencePolicy, evaluate, fmt, json_safe
 from .features import BASELINE_GROUPS, FEATURE_GROUPS, check_group_coverage
+from .lift import PREDICTIVE_METRICS, lift, summarize
 from .train import fit, fit_calibration_window
 
 HEADS = ("pump", "rug")
-PREDICTIVE_METRICS = ("roc_auc", "pr_auc", "ece")
 POLICY_METRICS = ("total_pnl", "avg_pnl")
-LOWER_IS_BETTER = frozenset({"ece"})
 RAW_PREFIX = "raw/"
 
 DEFAULT_WINDOWS = 3
@@ -233,18 +232,6 @@ def run_metrics(report: EvaluationReport) -> dict[str, float | None]:
     return out
 
 
-def summarize(values: Iterable[float | None]) -> dict[str, Any]:
-    """Mean ± standard deviation over the defined values (``None`` ones are skipped; the spread of
-    fewer than two values is undefined)."""
-    defined = np.array([v for v in values if v is not None], dtype=np.float64)
-    n = int(defined.size)
-    return {
-        "n": n,
-        "mean": float(defined.mean()) if n else None,
-        "std": float(defined.std(ddof=1)) if n > 1 else None,
-    }
-
-
 def decide(lifts: Iterable[float | None], margin: float) -> dict[str, Any]:
     """Summarize paired lifts (positive = better) and flag them against ``margin``.
 
@@ -274,9 +261,8 @@ def paired_lifts(
 ) -> list[float | None]:
     """Per-run lift of having the group, oriented so positive is better; ``None`` when either run
     left the metric undefined (e.g. a single-class horizon)."""
-    sign = -1.0 if metric.rsplit("/", 1)[-1] in LOWER_IS_BETTER else 1.0
     return [
-        None if a is None or b is None else sign * (a - b)
+        None if a is None or b is None else lift(a, b, metric)
         for a, b in zip(with_group, without_group, strict=True)
     ]
 
@@ -344,10 +330,10 @@ class AblationReport:
                 f"{name}  ({variant['mode']} group '{variant['group']}' vs {base})",
                 f"{'metric':>22} | {base:>17} | {name:>17} | {'lift':>17} | verdict",
             ]
-            for key, lift in self.lifts[name].items():
+            for key, gain in self.lifts[name].items():
                 lines.append(
                     f"{key:>22} | {_pm(self.summary[base][key]):>17} | "
-                    f"{_pm(self.summary[name][key]):>17} | {_pm(lift):>17} | {lift['verdict']}"
+                    f"{_pm(self.summary[name][key]):>17} | {_pm(gain):>17} | {gain['verdict']}"
                 )
         if self.calibration:
             method = s.get("calibration", {}).get("method", "?")

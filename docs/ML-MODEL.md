@@ -149,6 +149,17 @@ paper-trading account — a single live path has no counterfactual for the champ
 - When building Sprint 7, add **statistical rigor** to the P&L comparison: significance test /
   confidence interval (bootstrap, Deflated Sharpe) and require the lift to hold across **multiple
   windows / seeds**, not a single run. `seed` makes *training* reproducible, not eval-sample luck.
+- **Implementation:** `solia_ai/promotion.py` (pure, config `promotion` in `config.yaml`). Paired
+  `(window, seed)` runs, metrics named as in `ablation.run_metrics`. Promote only if the primary
+  metric (default `pump/5m/pr_auc`) lifts by > `margin` on average **and** on ≥ `min_win_share` of
+  runs, with no ECE / other ROC-AUC·PR-AUC regression beyond tolerance. P&L lift gets a bootstrap
+  CI: it can veto (`pnl_veto`, CI entirely < 0), never promote. No champion → first valid candidate
+  is promoted (`initial`); missing/NaN metrics (candidate or champion), or runs that are not
+  exactly `windows` distinct windows × `seeds` distinct seeds → reject. Only predictive metrics
+  (not P&L, not the uncalibrated `raw/` twins) can reject a candidate for being undefined.
+  `check_rollback` validates restoring the previous champion (exists, checkpoint present and
+  recording its version / feature spec / horizons, feature spec an ordered subset of the code's,
+  same horizons).
 
 ### Ablation: every feature group must earn its place
 

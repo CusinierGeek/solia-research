@@ -42,7 +42,7 @@ from torch import nn
 
 from .calibration import Calibration
 from .dataset import pad_window
-from .features import FEATURE_COLUMNS
+from .features import FEATURE_COLUMNS, is_ordered_subset
 from .model import IncompatibleCheckpointError, SoliaTransformer
 
 # Pinned so the pipeline's ONNXRuntime always sees the same operator set the export was tested
@@ -179,7 +179,7 @@ def build_model(checkpoint: dict[str, Any]) -> SoliaTransformer:
     recorded = checkpoint.get("feature_columns")
     columns = None
     if recorded is not None and list(recorded) != FEATURE_COLUMNS:
-        if not _is_ordered_subset(recorded, FEATURE_COLUMNS):
+        if not is_ordered_subset(recorded, FEATURE_COLUMNS):
             dropped = [c for c in recorded if c not in FEATURE_COLUMNS]
             raise IncompatibleCheckpointError(
                 f"checkpoint {checkpoint.get('version', '?')} was trained on {len(recorded)} "
@@ -194,11 +194,6 @@ def build_model(checkpoint: dict[str, Any]) -> SoliaTransformer:
     state.setdefault("feature_mask", torch.ones(model.n_features, dtype=torch.bool))
     model.load_state_dict(state)
     return model.eval()
-
-
-def _is_ordered_subset(columns: Sequence[str], spec: Sequence[str]) -> bool:
-    remaining = iter(spec)
-    return all(any(c == s for s in remaining) for c in columns)
 
 
 # --------------------------------------------------------------------------- predictions

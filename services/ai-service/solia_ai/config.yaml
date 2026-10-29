@@ -55,6 +55,26 @@ calibration:
 # features:
 #   groups: [price, liquidity, flow, holders, context, buy_pressure, momentum, concentration, burn, venue]
 
+# Promotion gate (solia_ai/promotion.py, docs/ML-MODEL.md "Promotion gate"): candidate vs champion
+# on the same rolling held-out windows x seeds. Promote only when the primary predictive metric
+# beats the champion by `margin` on average AND on at least `min_win_share` of the paired runs,
+# with no ECE / secondary-metric regression beyond tolerance. Reference-policy P&L is a sanity
+# check only: reported with a bootstrap CI, it can veto (`pnl_veto`) but never promote.
+promotion:
+  metric: pr_auc # roc_auc | pr_auc
+  head: pump # pump | rug
+  horizon: "5m" # one of `horizons`
+  margin: 0.01 # minimum lift of the primary metric (candidate - champion)
+  windows: 3 # rolling walk-forward held-out windows (solia_ai.ablation.walk_forward_windows)
+  seeds: 3 # training seeds per window: runs = windows x seeds
+  min_win_share: 0.6667 # share of runs whose lift must clear the margin (2/3: 6 of 9 runs pass)
+  ece_tolerance: 0.01 # max ECE increase on any head/horizon (mean over runs)
+  secondary_tolerance: 0.02 # max ROC-AUC / PR-AUC drop on any other head/horizon
+  pnl_veto: true # reject when the P&L lift CI lies entirely below zero
+  bootstrap_samples: 2000
+  confidence: 0.95 # bootstrap CI level
+  seed: 0 # bootstrap RNG seed (reproducible decisions)
+
 # Prediction horizons.
 horizons: ["30s", "1m", "5m", "15m", "1h"]
 
