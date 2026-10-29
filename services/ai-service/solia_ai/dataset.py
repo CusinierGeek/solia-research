@@ -43,7 +43,7 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
-from .config import MAX_POS_WEIGHT, load_config
+from .config import MAX_POS_WEIGHT, horizon_seconds, load_config
 from .features import (
     BASELINE_GROUPS,
     FEATURE_COLUMNS,
@@ -51,21 +51,8 @@ from .features import (
     check_group_coverage,
 )
 
-_HORIZON_UNITS = {"s": 1, "m": 60, "h": 3600}
-
 DEFAULT_MAX_GAP_FRACTION = 0.25
 DEFAULT_MIN_GAP_SECONDS = 20  # two pipeline snapshot cadences: normal spacing is never a "gap"
-
-
-def horizon_seconds(label: str) -> int:
-    """Parse a horizon like ``'30s'``, ``'5m'``, ``'1h'`` into seconds."""
-    text = label.strip().lower()
-    if len(text) < 2 or text[-1] not in _HORIZON_UNITS or not text[:-1].isdigit():
-        raise ValueError(f"invalid horizon {label!r} (expected e.g. '30s', '5m', '1h')")
-    seconds = int(text[:-1]) * _HORIZON_UNITS[text[-1]]
-    if seconds <= 0:
-        raise ValueError(f"invalid horizon {label!r} (must be positive)")
-    return seconds
 
 
 @dataclass(frozen=True)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import numpy as np
@@ -13,7 +14,9 @@ import solia_ai.db
 import solia_ai.registry
 import solia_ai.train as train_module
 from solia_ai.calibration import Calibration
+from solia_ai.config import DATA_DEFAULTS
 from solia_ai.dataset import SequenceDataset, make_datasets, positive_weights
+from solia_ai.db import DataBounds, DataSettings
 from solia_ai.features import BASELINE_GROUPS, FEATURE_COLUMNS
 from solia_ai.loss import SoliaLoss
 from solia_ai.model import SoliaTransformer
@@ -31,6 +34,21 @@ from solia_ai.train import (
 )
 
 N_FEATURES = len(FEATURE_COLUMNS)
+
+
+# What a stubbed bounded read reports (solia_ai.db.read_training_features).
+BOUNDS = DataBounds(
+    lookback_days=2.0,
+    max_rows=100,
+    window_start=datetime(2026, 1, 8, tzinfo=UTC),
+    window_end=datetime(2026, 1, 10, tzinfo=UTC),
+    rows_in_window=3,
+    tokens_in_window=2,
+    tokens_partial=0,
+    tokens_capped=0,
+    tokens_kept=2,
+    rows_read=2,
+)
 
 
 def small_config() -> dict:
@@ -363,7 +381,12 @@ def test_validate_rejects_a_split_without_labels():
 
 def test_main_prints_the_trained_version(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(solia_ai.db, "make_engine", lambda: "engine")
-    monkeypatch.setattr(solia_ai.db, "read_features", lambda engine, limit=None: pd.DataFrame())
+    reads = []
+    monkeypatch.setattr(
+        solia_ai.db,
+        "read_training_features",
+        lambda engine, data: reads.append(data) or (pd.DataFrame(), BOUNDS),
+    )
     calls = []
 
     def fake_train(df, **kwargs):
@@ -379,8 +402,10 @@ def test_main_prints_the_trained_version(tmp_path, monkeypatch, capsys):
 
     monkeypatch.setattr(train_module, "train", fake_train)
 
-    main(["--version", "v9", "--no-register", "--device", "cpu"])
+    main(["--version", "v9", "--no-register", "--device", "cpu", "--max-rows", "1234"])
 
+    assert reads == [DataSettings(DATA_DEFAULTS["lookback_days"], 1234)]  # the flag wins
+    assert calls[0]["data_bounds"] == BOUNDS.as_dict()
     assert "trained v9: 10 params, best epoch 2, val_total=0.5000" in capsys.readouterr().out
     assert calls[0]["register"] is False
     assert calls[0]["version"] == "v9"

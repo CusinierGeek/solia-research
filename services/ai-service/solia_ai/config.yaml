@@ -99,6 +99,18 @@ retention:
   keep_candidates: 5 # newest registered models kept besides the champion (0 = none)
   rollback_depth: 2 # previous champions kept for rollback (each rollback walks one further back)
 
+# Bounded training read (solia_ai.db.read_training_features, docs/ML-MODEL.md "Bounded training
+# read"): every retrain (CLI, POST /model/retrain, the background trigger), `candidate` and `train`
+# run reads only this much of `features`, so memory never grows with the table. The CLIs'
+# --lookback-days / --max-rows override it.
+data:
+  # Most recent N days, counted back from the newest row (a replay-only database works too). Must
+  # cover (promotion.windows + 1) x the longest horizon (the gate's held-out windows + embargo).
+  lookback_days: 2.0
+  # When the window holds more rows, whole tokens are kept in md5(mint) order (deterministic, not
+  # biased in time; never a partial token history) up to this many rows. Peak RSS ~ rows x size.
+  max_rows: 4000000
+
 # Prediction horizons.
 horizons: ["30s", "1m", "5m", "15m", "1h"]
 

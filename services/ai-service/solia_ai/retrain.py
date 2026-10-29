@@ -12,11 +12,14 @@ One entry point for docs/ML-MODEL.md "Continuous training loop":
 3. **Audit trail.** A ``training_events`` row is written at start (trigger, champion) and completed
    at the end (``finished_at``, ``n_samples``, the gate's comparison, decision, notes). Whatever
    raises after the start ends the row as ``failed`` with the error in ``notes``.
-4. **Train + evaluate** (:func:`train_and_evaluate`): the promotion gate's walk-forward held-out
-   windows are cut once from the refreshed ``features``; one candidate is trained per gate seed
-   (:func:`solia_ai.candidate.train_candidate`, pinned to the first window's start, so it never
-   sees the held-out data); every candidate and the champion are scored on the same windows. The
-   champion is a fixed model, so its metrics on a window are shared by every seed of that window.
+4. **Train + evaluate** (:func:`train_and_evaluate`): ``features`` is read bounded
+   (:func:`solia_ai.db.read_training_features`: the ``data.lookback_days`` window, at most
+   ``data.max_rows`` rows of whole tokens; the bounds used are logged and recorded with the run and
+   the candidate); the promotion gate's walk-forward held-out windows are cut once from it; one
+   candidate is trained per gate seed (:func:`solia_ai.candidate.train_candidate`, pinned to the
+   first window's start, so it never sees the held-out data); every candidate and the champion are
+   scored on the same windows. The champion is a fixed model, so its metrics on a window are shared
+   by every seed of that window.
 5. **Decide + record** (:func:`solia_ai.promotion.decide_promotion`): the first seed's candidate
    always gets a ``models`` row (with its metrics); a promotion flips ``is_champion`` in the same
    transaction that completes the ``training_events`` row. The API re-reads the registry champion
@@ -59,6 +62,8 @@ import numpy as np
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 
+from .config import ConfigError
+from .db import add_data_bounds_arguments
 from .registry import (
     ModelRecord,
     insert_model,
@@ -658,15 +663,18 @@ def run_retrain(
     threshold: int | None = None,
     model_dir: str | os.PathLike[str] | None = None,
     device: Any = None,
-    limit: int | None = None,
+    lookback_days: float | None = None,
+    max_rows: int | None = None,
     evaluate_fn: EvaluateFn = train_and_evaluate,
-    read_features_fn: Callable[..., Any] | None = None,
+    read_data_fn: Callable[..., Any] | None = None,
     load_champion_fn: Callable[..., Any] = load_champion_checkpoint,
     heartbeat_seconds: float = HEARTBEAT_SECONDS,
     on_started: Callable[[int], None] | None = None,
 ) -> RetrainOutcome:
-    """Run one retrain if due (see the module doc). ``evaluate_fn`` / ``read_features_fn`` /
-    ``load_champion_fn`` are injectable so tests stub the training. ``on_started`` is called with
+    """Run one retrain if due (see the module doc). ``lookback_days`` / ``max_rows`` override the
+    config's ``data`` bounds (the CLI flags). ``evaluate_fn`` / ``read_data_fn`` (``(engine,
+    DataSettings) -> (features, DataBounds)``) / ``load_champion_fn`` are injectable so tests stub
+    the training. ``on_started`` is called with
     the ``training_events`` id as soon as the run is recorded (the API answers ``202`` with it
     while the run goes on); it is not called for a skipped run, and an error it raises is only
     logged.
@@ -674,16 +682,19 @@ def run_retrain(
     Raises:
         RetrainBusyError: another run holds the lock (nothing is recorded).
         RetrainLockLostError: the lock was lost mid-run (the run is recorded as failed).
+        ConfigError: invalid data bounds (before anything is locked or recorded).
         Exception: whatever failed the run, after its event was recorded as ``failed``.
     """
     from .config import load_config
+    from .db import DataSettings
     from .promotion import PromotionSettings, decide_promotion
 
     cfg = load_config() if config is None else config
     threshold = retrain_threshold() if threshold is None else threshold
-    if read_features_fn is None:
-        from .db import read_features as read_features_fn
+    if read_data_fn is None:
+        from .db import read_training_features as read_data_fn
     gate = PromotionSettings.from_config(cfg)
+    data_settings = DataSettings.from_config(cfg, lookback_days=lookback_days, max_rows=max_rows)
 
     with retrain_lock(engine, heartbeat_seconds=heartbeat_seconds) as lock:
         trades = count_trades_since_last_train(engine)
@@ -715,8 +726,13 @@ def run_retrain(
         )
         try:
             champion_checkpoint = load_champion_fn(champion, cfg)  # fail before the data scan
-            df = read_features_fn(engine, limit=limit)
-            db_log(engine, "info", f"retrain #{event_id}: {len(df)} feature rows read", context)
+            df, bounds = read_data_fn(engine, data_settings)
+            db_log(
+                engine,
+                "info",
+                f"retrain #{event_id}: {bounds.describe()}",
+                {**context, "data_bounds": bounds.as_dict()},
+            )
             evaluation = evaluate_fn(
                 df,
                 cfg,
@@ -762,6 +778,7 @@ def run_retrain(
                 "counts": candidate.counts,
                 "trades_since_last_train": trades,
                 "threshold": threshold,
+                "data_bounds": bounds.as_dict(),
                 "notes": evaluation.notes,
             }
             lock.ensure_held()
@@ -774,6 +791,7 @@ def run_retrain(
                         {
                             **candidate.metrics,
                             "heldout": heldout_means(evaluation.candidate_runs),
+                            "data_bounds": bounds.as_dict(),
                         }
                     ),
                     hyperparams=candidate.hyperparams,
@@ -787,7 +805,9 @@ def run_retrain(
                     n_samples=candidate.n_samples,
                     candidate_id=record.id,
                     metrics=json_safe(metrics),
-                    notes="; ".join(verdict.reasons + tuple(evaluation.notes)),
+                    notes="; ".join(
+                        verdict.reasons + tuple(evaluation.notes) + (bounds.describe(),)
+                    ),
                 )
         except BaseException as exc:  # an interrupt too: never leave the run in flight
             _fail(engine, event_id, exc)
@@ -1064,7 +1084,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--model-dir", help="checkpoint directory (default: $MODEL_DIR or ./models)"
     )
-    parser.add_argument("--limit", type=int, help="cap the number of feature rows read")
+    add_data_bounds_arguments(parser)
     parser.add_argument("--device", help="torch device (default: cuda if available, else cpu)")
     parser.add_argument(
         "--dry-run", action="store_true", help="prune: list what would be deleted, delete nothing"
@@ -1105,12 +1125,13 @@ def main(argv: list[str] | None = None) -> None:
             force=args.force,
             model_dir=Path(args.model_dir) if args.model_dir else None,
             device=args.device,
-            limit=args.limit,
+            lookback_days=args.lookback_days,
+            max_rows=args.max_rows,
         )
     except RetrainBusyError as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(75) from None  # EX_TEMPFAIL: retry later
-    except (RollbackRefusedError, PruneError) as exc:
+    except (RollbackRefusedError, PruneError, ConfigError) as exc:
         raise SystemExit(str(exc)) from None
     if outcome.status == "skipped":
         print(

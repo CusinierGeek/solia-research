@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
-from test_train import make_features_df, small_config
+from test_train import BOUNDS, make_features_df, small_config
 
 import solia_ai.candidate as candidate_module
 import solia_ai.registry
@@ -362,7 +362,7 @@ def test_main_reads_the_champion_and_honours_scratch(df, champion, tmp_path, mon
     calls = {}
     monkeypatch.setattr(candidate_module, "load_config", lambda: candidate_config())
     monkeypatch.setattr(solia_ai.db, "make_engine", lambda: "engine")
-    monkeypatch.setattr(solia_ai.db, "read_features", lambda engine, limit=None: df)
+    monkeypatch.setattr(solia_ai.db, "read_training_features", lambda engine, data: (df, BOUNDS))
     monkeypatch.setattr(solia_ai.registry, "read_champion", lambda engine: record)
     monkeypatch.setattr(solia_ai.inference, "load_checkpoint", lambda path: champion)
 
@@ -390,7 +390,7 @@ def test_main_falls_back_to_scratch_when_the_champion_cannot_be_loaded(
 
     record = type("Record", (), {"path": "gone.pt"})()
     monkeypatch.setattr(solia_ai.db, "make_engine", lambda: "engine")
-    monkeypatch.setattr(solia_ai.db, "read_features", lambda engine, limit=None: df)
+    monkeypatch.setattr(solia_ai.db, "read_training_features", lambda engine, data: (df, BOUNDS))
     monkeypatch.setattr(solia_ai.registry, "read_champion", lambda engine: record)
 
     def missing(path):

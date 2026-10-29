@@ -77,11 +77,63 @@ RETENTION_DEFAULTS: dict[str, Any] = {
     "rollback_depth": 2,
 }
 
+# The bounded training read's knobs and defaults (``config.yaml`` ``data``, solia_ai.db
+# ``read_training_features``): every retrain / candidate / train run reads only the most recent
+# ``lookback_days`` of ``features`` (relative to the newest row) and at most ``max_rows`` rows of
+# whole tokens. Defined here so validation stays torch-free.
+DATA_DEFAULTS: dict[str, Any] = {
+    "lookback_days": 2.0,
+    "max_rows": 4_000_000,
+}
+
+_HORIZON_UNITS = {"s": 1, "m": 60, "h": 3600}
+
 Lookup = Callable[[str], str | None]
 
 
 class ConfigError(ValueError):
     """Invalid or missing configuration (config file or database environment)."""
+
+
+# --------------------------------------------------------------------------- horizons
+
+
+def horizon_seconds(label: str) -> int:
+    """Parse a horizon like ``'30s'``, ``'5m'``, ``'1h'`` into seconds."""
+    text = label.strip().lower()
+    if len(text) < 2 or text[-1] not in _HORIZON_UNITS or not text[:-1].isdigit():
+        raise ValueError(f"invalid horizon {label!r} (expected e.g. '30s', '5m', '1h')")
+    seconds = int(text[:-1]) * _HORIZON_UNITS[text[-1]]
+    if seconds <= 0:
+        raise ValueError(f"invalid horizon {label!r} (must be positive)")
+    return seconds
+
+
+def min_lookback_seconds(config: Any) -> int:
+    """The shortest lookback the promotion gate can work with: one longest-horizon embargo per
+    held-out window plus one for the training pool before them (``(windows + 1) x embargo``)."""
+    windows = config.get("promotion", {}).get("windows", PROMOTION_DEFAULTS["windows"])
+    return (int(windows) + 1) * max(horizon_seconds(h) for h in config["horizons"])
+
+
+def data_bounds_error(config: Any, lookback_days: Any, max_rows: Any) -> str | None:
+    """Why ``lookback_days`` / ``max_rows`` can't bound a training read under ``config`` (``None``
+    when they can). Shared by the config validation and the CLI overrides."""
+    if isinstance(lookback_days, bool) or not isinstance(lookback_days, int | float):
+        return f"'data.lookback_days' must be a number, got {lookback_days!r}"
+    if not lookback_days > 0:
+        return f"'data.lookback_days' must be > 0, got {lookback_days!r}"
+    if isinstance(max_rows, bool) or not isinstance(max_rows, int):
+        return f"'data.max_rows' must be an integer, got {max_rows!r}"
+    if max_rows < 1:
+        return f"'data.max_rows' must be >= 1, got {max_rows!r}"
+    floor = min_lookback_seconds(config)
+    if lookback_days * 86400 < floor:
+        return (
+            f"'data.lookback_days' ({lookback_days} d) is shorter than the promotion gate needs: "
+            f"(promotion.windows + 1) x the longest horizon's embargo = {floor / 3600:g} h"
+        )
+    return None
 
 
 # --------------------------------------------------------------------------- model shape
@@ -254,6 +306,11 @@ def _validate(config: Any, source: str) -> None:
         or not all(isinstance(h, str) for h in horizons)
     ):
         fail("'horizons' must be a non-empty list of strings")
+    for horizon in horizons:
+        try:
+            horizon_seconds(horizon)
+        except ValueError as exc:
+            fail(f"'horizons': {exc}")
 
     horizon_weights = section("loss").get("horizon_weights")
     if horizon_weights is not None:
@@ -340,6 +397,14 @@ def _validate(config: Any, source: str) -> None:
             fail("'candidate.warm_start_lr_factor' must be in (0, 1]")
 
     validate_retention(config, source)
+
+    data = section("data") if "data" in config else {}
+    unknown = [str(k) for k in data if k not in DATA_DEFAULTS]
+    if unknown:
+        fail(f"'data' has unknown key(s): {', '.join(unknown)}")
+    problem = data_bounds_error(config, *({**DATA_DEFAULTS, **data}[k] for k in DATA_DEFAULTS))
+    if problem:
+        fail(problem)
 
     labeling = section("labeling")
     if "max_gap_fraction" in labeling and not 0 < number("labeling", "max_gap_fraction") <= 1:

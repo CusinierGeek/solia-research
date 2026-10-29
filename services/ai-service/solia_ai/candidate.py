@@ -48,7 +48,7 @@ import pandas as pd
 import torch
 
 from .checkpoints import model_directory
-from .config import CANDIDATE_DEFAULTS, load_config, validate_config
+from .config import CANDIDATE_DEFAULTS, ConfigError, load_config, validate_config
 from .dataset import (
     Samples,
     SequenceDataset,
@@ -56,6 +56,7 @@ from .dataset import (
     embargo_seconds,
     temporal_split,
 )
+from .db import add_data_bounds_arguments
 from .features import BASELINE_GROUPS, FEATURE_COLUMNS, group_mask
 from .model import IncompatibleCheckpointError
 from .train import (
@@ -483,16 +484,22 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--model-dir", help="checkpoint directory (default: $MODEL_DIR or ./models)"
     )
-    parser.add_argument("--limit", type=int, help="cap the number of feature rows read")
+    add_data_bounds_arguments(parser)
     parser.add_argument("--device", help="torch device (default: cuda if available, else cpu)")
     args = parser.parse_args(argv)
 
-    from .db import make_engine, read_features
+    from .db import DataSettings, make_engine, read_training_features
     from .inference import load_checkpoint, resolve_checkpoint_path
     from .registry import read_champion
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     cfg = load_config()
+    try:
+        data = DataSettings.from_config(
+            cfg, lookback_days=args.lookback_days, max_rows=args.max_rows
+        )
+    except ConfigError as exc:
+        raise SystemExit(str(exc)) from None
     if args.warm_start is not None:
         cfg["candidate"] = {**cfg.get("candidate", {}), "warm_start": args.warm_start}
     engine = make_engine()
@@ -503,7 +510,8 @@ def main(argv: list[str] | None = None) -> None:
             champion = load_checkpoint(resolve_checkpoint_path(record.path))
         except Exception as exc:  # missing, unreadable or corrupt: on_incompatible decides
             unavailable = f"champion checkpoint {record.path} could not be loaded: {exc}"
-    df = read_features(engine, limit=args.limit)
+    df, bounds = read_training_features(engine, data)
+    print(bounds.describe())
 
     result = train_candidate(
         df,

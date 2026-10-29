@@ -23,6 +23,8 @@ T0 = datetime(2026, 4, 20, 12, 0, 0, tzinfo=UTC)
 def engine(pg_url):
     eng = create_engine(pg_url)
     with eng.begin() as conn:
+        # The database is shared by the session: start from the rows this module expects.
+        conn.exec_driver_sql("TRUNCATE tokens_history RESTART IDENTITY CASCADE")
         conn.exec_driver_sql(
             "INSERT INTO tokens_history (mint, first_seen_at, last_seen_at) "
             "VALUES ('M1', now(), now()), ('M2', now(), now()), ('M3', now(), now())"

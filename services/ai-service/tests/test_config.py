@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from solia_ai.config import CONFIG_ENV, ConfigError, load_config
+from solia_ai.config import CONFIG_ENV, DATA_DEFAULTS, ConfigError, load_config
 
 VALID = load_config()  # the packaged config is the reference valid document
 
@@ -258,3 +258,64 @@ def test_invalid_candidate_settings_are_rejected(tmp_path, candidate, message):
 
 def test_packaged_candidate_settings_are_valid():
     assert load_config()["candidate"]["on_incompatible"] in ("scratch", "error")
+
+
+# --------------------------------------------------------------------------- data bounds
+
+
+@pytest.mark.parametrize(
+    ("data", "message"),
+    [
+        ("all", "'data' must be a mapping"),
+        ({"lookback": 2}, r"'data' has unknown key\(s\): lookback"),
+        ({"lookback_days": 0}, "'data.lookback_days' must be > 0"),
+        ({"lookback_days": -1.5}, "'data.lookback_days' must be > 0"),
+        ({"lookback_days": "2d"}, "'data.lookback_days' must be a number"),
+        ({"lookback_days": True}, "'data.lookback_days' must be a number"),
+        ({"max_rows": 0}, "'data.max_rows' must be >= 1"),
+        ({"max_rows": 1.5}, "'data.max_rows' must be an integer"),
+        # 3 gate windows + 1, x the 1 h embargo = 4 h > 0.1 d (2.4 h)
+        ({"lookback_days": 0.1}, r"shorter than the promotion gate needs: .* = 4 h"),
+    ],
+)
+def test_invalid_data_bounds_are_rejected(tmp_path, data, message):
+    with pytest.raises(ConfigError, match=message):
+        load_config(write(tmp_path, variant(data=data)))
+
+
+def test_the_lookback_floor_follows_the_gate_windows_and_the_longest_horizon(tmp_path):
+    short = variant(data={"lookback_days": 0.1}, horizons=["30s", "5m"])
+    short["labeling"] = {**short["labeling"]}
+    assert load_config(write(tmp_path, short))["data"]["lookback_days"] == 0.1  # 4 x 5 m fits
+    short["promotion"] = {**short["promotion"], "windows": 50}  # 51 x 5 m = 4.25 h does not
+    with pytest.raises(ConfigError, match="4.25 h"):
+        load_config(write(tmp_path, short))
+
+
+def test_an_unparseable_horizon_is_rejected(tmp_path):
+    with pytest.raises(ConfigError, match="'horizons': invalid horizon '5 min'"):
+        load_config(write(tmp_path, variant(horizons=["5 min"])))
+
+
+def test_data_bounds_default_when_omitted(tmp_path):
+    from solia_ai.db import DataSettings
+
+    cfg = load_config(write(tmp_path, variant(data=None)))
+    assert DataSettings.from_config(cfg) == DataSettings(
+        DATA_DEFAULTS["lookback_days"], DATA_DEFAULTS["max_rows"]
+    )
+
+
+def test_overrides_win_over_the_config_and_are_validated():
+    from solia_ai.db import DataSettings
+
+    cfg = variant(data={"lookback_days": 3, "max_rows": 10})
+    assert DataSettings.from_config(cfg) == DataSettings(3.0, 10)
+    assert DataSettings.from_config(cfg, lookback_days=1.5) == DataSettings(1.5, 10)
+    assert DataSettings.from_config(cfg, max_rows=99) == DataSettings(3.0, 99)
+    with pytest.raises(ConfigError, match="'data.max_rows' must be >= 1"):
+        DataSettings.from_config(cfg, max_rows=0)
+    with pytest.raises(ConfigError, match="'data.lookback_days' must be > 0"):
+        DataSettings.from_config(cfg, lookback_days=-1)
+    with pytest.raises(ConfigError, match="shorter than the promotion gate needs"):
+        DataSettings.from_config(cfg, lookback_days=0.01)

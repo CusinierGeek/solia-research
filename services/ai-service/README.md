@@ -68,6 +68,16 @@ header); `tests/test_requirements_lock.py` keeps the two in step.
 - `solia_ai/db.py` — read-only `read_features` / `read_trades` into pandas, ordered by
   `(mint, time)`. Time bounds are half-open and must be timezone-aware (normalized to UTC);
   `chunksize` streams through a server-side cursor so memory stays bounded.
+- **Bounded training read** (`read_training_features`, config `data`): every retrain — CLI,
+  `POST /model/retrain`, the background trigger — and the `candidate` / `train` CLIs read only the
+  most recent `data.lookback_days` (default 2, counted back from the newest row) and at most
+  `data.max_rows` rows (default 4 000 000) of **whole tokens**, sampled in `md5(mint)` order
+  (deterministic, not a time slice, never a partial history). `--lookback-days` / `--max-rows`
+  override the config on each CLI. Invalid bounds (≤ 0, or a window shorter than
+  `(promotion.windows + 1) ×` the longest horizon) fail at startup. The bounds used are logged and
+  recorded in `training_events.metrics.data_bounds` / `notes` and the candidate's
+  `models.metrics.data_bounds`. Memory numbers: `docs/ML-MODEL.md` "Bounded training read".
+  Not exposed as environment variables: override with `SOLIA_AI_CONFIG` (a file in the models volume).
 - The database tests run against Testcontainers PostgreSQL. Locally they are skipped when Docker
   isn't running; in CI (`CI` set) a missing Docker fails the build instead.
 

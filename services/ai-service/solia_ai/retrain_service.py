@@ -150,10 +150,14 @@ class RetrainService:
     @classmethod
     def from_engine(cls, engine: Callable[[], Any]) -> RetrainService:
         """The database-backed service; ``engine()`` returns the process's shared engine."""
+        from .config import load_config
+        from .db import DataSettings
         from .registry import latest_training_event
         from .retrain import count_trades_since_last_train, recover_abandoned_runs, run_retrain
 
         threshold = retrain_threshold()  # fail fast on a bad RETRAIN_EVERY_N_TRADES
+        # ... and on bad data bounds; each run re-reads them with the config (same as the CLI).
+        DataSettings.from_config(load_config())
 
         def run_fn(*, trigger: str, on_started: Callable[[int], None] | None = None):
             import torch

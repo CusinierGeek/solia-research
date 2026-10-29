@@ -47,13 +47,14 @@ from torch.utils.data import DataLoader
 from .calibration import Calibration
 from .calibration import settings as calibration_settings
 from .checkpoints import model_directory
-from .config import load_config
+from .config import ConfigError, load_config
 from .dataset import (
     SequenceDataset,
     make_datasets,
     make_loaders,
     positive_weights,
 )
+from .db import add_data_bounds_arguments
 from .evaluate import calibrate
 from .features import BASELINE_GROUPS
 from .loss import SoliaLoss
@@ -396,11 +397,13 @@ def train(
     is_champion: bool = True,
     val_fraction: float = 0.2,
     device: str | torch.device | None = None,
+    data_bounds: Mapping[str, Any] | None = None,
 ) -> TrainResult:
     """Train on a ``features`` frame, save a checkpoint, and optionally register it.
 
     ``register`` writes the ``models`` row; it needs an ``engine`` (skipped with a warning-free
-    no-op otherwise, e.g. in tests). The checkpoint is always written.
+    no-op otherwise, e.g. in tests). The checkpoint is always written. ``data_bounds`` (how the
+    frame was read, :meth:`solia_ai.db.DataBounds.as_dict`) is recorded in the row's metrics.
     """
     cfg = load_config() if config is None else config
     train_ds, val_ds = make_datasets(df, cfg, val_fraction=val_fraction)
@@ -435,7 +438,7 @@ def train(
                 engine,
                 version=version,
                 path=str(checkpoint_path),
-                metrics=metrics,
+                metrics=metrics if data_bounds is None else {**metrics, "data_bounds": data_bounds},
                 hyperparams=hyperparams_snapshot(cfg),
                 n_params=model.n_params,
                 is_champion=is_champion,
@@ -464,7 +467,7 @@ def main(argv: list[str] | None = None) -> None:
         "--model-dir", help="checkpoint directory (default: $MODEL_DIR or ./models)"
     )
     parser.add_argument("--val-fraction", type=float, default=0.2)
-    parser.add_argument("--limit", type=int, help="cap the number of feature rows read")
+    add_data_bounds_arguments(parser)
     parser.add_argument("--no-register", action="store_true", help="skip the models registry row")
     parser.add_argument(
         "--not-champion", action="store_true", help="register without promoting to champion"
@@ -472,11 +475,18 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--device", help="torch device (default: cuda if available, else cpu)")
     args = parser.parse_args(argv)
 
-    from .db import make_engine, read_features
+    from .db import DataSettings, make_engine, read_training_features
 
+    try:
+        data = DataSettings.from_config(
+            load_config(), lookback_days=args.lookback_days, max_rows=args.max_rows
+        )
+    except ConfigError as exc:
+        raise SystemExit(str(exc)) from None
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     engine = make_engine()
-    df = read_features(engine, limit=args.limit)
+    df, bounds = read_training_features(engine, data)
+    print(bounds.describe())
 
     result = train(
         df,
@@ -487,6 +497,7 @@ def main(argv: list[str] | None = None) -> None:
         is_champion=not args.not_champion,
         val_fraction=args.val_fraction,
         device=device,
+        data_bounds=bounds.as_dict(),
     )
     print(
         f"trained {result.version}: {result.n_params} params, best epoch {result.best_epoch}, "

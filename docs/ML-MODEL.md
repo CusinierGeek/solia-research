@@ -187,6 +187,46 @@ rollback restores the prior champion (`decision = rollback`); `POST /model/retra
 answers `202` + id, recorded as `manual`. The backend's relay of `/api/v1/model/*` is covered by its own
 end-to-end tests (`services/backend/Solia.Api.Tests/EndToEnd`). About 25 s.
 
+### Bounded training read
+
+A retrain must not read the whole `features` table: a 48 h replay holds ~44 M rows (~34 GB) and live adds
+~0.95 M rows per stream hour. Every training run — `python -m solia_ai.retrain`, `POST /model/retrain`, the
+background trigger, `python -m solia_ai.candidate` and `python -m solia_ai.train` — reads through
+`solia_ai.db.read_training_features`, bounded by config `data` (CLI `--lookback-days` / `--max-rows` override it):
+
+1. **Lookback window** (`data.lookback_days`, default 2): rows in `[newest − N days, newest]`, `newest` being the
+   newest `features` row (not the clock), so a database holding only replayed history works too.
+2. **Whole tokens only**: a token with any row before the window is dropped, never cut.
+3. **Row cap** (`data.max_rows`, default 4 000 000): when the whole tokens hold more rows, tokens are kept in
+   `md5(mint)` order while the running total fits. The subset is deterministic across runs, independent of time
+   (it spans the whole window, unlike a "first/last N rows" cut) and mostly stable as data grows (a prefix of
+   the same order). With an eligibility filter (#149) the cap applies after it.
+
+Only the model's columns are read (no JSONB), NUMERIC cast to `float8` in SQL, streamed by 200 000 rows with
+`mint` / `venue` held as categories until the frame is built (a `str` per row fragments the heap: RSS was ~4×
+the frame without it). Invalid bounds — ≤ 0, or a window shorter than `(promotion.windows + 1) ×` the longest
+horizon (the gate's held-out windows plus the label embargo; 4 h with the defaults) — fail before the run is
+locked or recorded (and at API startup); too few rows still fail on `candidate.min_train_samples`; an empty
+table or a window with no whole token fitting the cap is an error. The bounds used (window start/end, rows and
+tokens in the window, tokens dropped as partial or over the cap, rows read) are logged and recorded in
+`training_events.metrics.data_bounds` + `notes` and in the candidate's `models.metrics.data_bounds`
+(`train.py` records them on its row too). The champion and every candidate are scored on this one frame, so the
+paired comparison stays fair.
+
+Measured on a 48 h replay (2026-10-29, ai-service image, 2-day window holding ~34–38 M rows / ~140 k tokens;
+peak RSS of the process, `ru_maxrss`, read + `config_samples` windows; read times inflated by a replay writing
+to the same PostgreSQL):
+
+| `max_rows` | rows read | tokens kept | frame | peak RSS (read) | peak RSS (+ windows) | read time |
+|-----------:|----------:|------------:|------:|----------------:|---------------------:|----------:|
+| 1 000 000  | 999 043   | 4 215       | 0.45 GB | 1.54 GB | 1.55 GB | 159 s |
+| 2 000 000  | 1 999 402 | 8 607       | 0.89 GB | 2.19 GB | 2.42 GB | 306 s |
+| 4 000 000  | 3 999 144 | 16 455      | 1.78 GB | 3.31 GB | 4.06 GB | 804 s |
+
+≈ 0.9 GB fixed (imports, the chunk being decoded) + ≈ 0.6 GB per million rows read (+ ~0.2 GB/M for the
+windows). The default leaves the rest of the ~16 GB Docker budget to training. Before the bound, every retrain
+(the background trigger included) read the full table with its JSONB columns.
+
 ### Checkpoint retention
 
 Every retrain writes a checkpoint to `MODEL_DIR`; `solia_ai/retention.py` keeps the volume bounded without breaking

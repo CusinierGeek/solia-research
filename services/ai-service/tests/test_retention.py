@@ -23,6 +23,7 @@ from test_retrain import (
     run,
     stub,
 )
+from test_train import BOUNDS
 
 from solia_ai import retrain
 from solia_ai.config import ConfigError, validate_retention
@@ -391,7 +392,7 @@ def test_a_retrain_prunes_once_it_is_recorded(engine, history, monkeypatch):
         trigger="manual",
         threshold=5,
         evaluate_fn=stub(0.4, 0.5),  # rejected: c4 stays champion
-        read_features_fn=lambda engine, limit=None: pd.DataFrame({"x": [1, 2]}),
+        read_data_fn=lambda engine, data: (pd.DataFrame({"x": [1, 2]}), BOUNDS),
         load_champion_fn=lambda champion, config: None,
     )
     assert outcome.status == "rejected"

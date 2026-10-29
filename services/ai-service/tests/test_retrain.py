@@ -18,11 +18,13 @@ import pytest
 import torch
 from sqlalchemy import create_engine, text
 from test_candidate import candidate_config
-from test_train import make_features_df, small_config
+from test_train import BOUNDS, make_features_df, small_config
 
 from solia_ai import promotion, retrain
 from solia_ai.candidate import WarmStart
+from solia_ai.config import DATA_DEFAULTS, ConfigError
 from solia_ai.dataset import config_samples
+from solia_ai.db import DataSettings
 from solia_ai.features import FEATURE_COLUMNS
 from solia_ai.inference import feature_index
 from solia_ai.promotion import PromotionSettings, decide_promotion
@@ -231,7 +233,7 @@ def stub(candidate_value: float, champion_value: float | None = None, *, version
 
 def run(engine, evaluate_fn, **kwargs):
     kwargs.setdefault("trigger", "manual")
-    kwargs.setdefault("read_features_fn", lambda engine, limit=None: pd.DataFrame({"x": [1, 2]}))
+    kwargs.setdefault("read_data_fn", lambda engine, data: (pd.DataFrame({"x": [1, 2]}), BOUNDS))
     kwargs.setdefault("load_champion_fn", lambda champion, config: None)
     return run_retrain(
         engine,
@@ -430,7 +432,7 @@ def test_an_unloadable_champion_fails_before_the_data_is_read(engine, tmp_path):
             engine,
             stub(0.5),
             load_champion_fn=load_champion_checkpoint,
-            read_features_fn=lambda engine, limit=None: reads.append(limit),
+            read_data_fn=lambda engine, data: reads.append(data),
         )
     assert reads == []
     assert events(engine)[0]["decision"] == "failed"
@@ -747,3 +749,121 @@ def test_main_rollback_refusal_exits_non_zero(monkeypatch):
     monkeypatch.setattr(retrain, "rollback", refused)
     with pytest.raises(SystemExit, match="no previous champion"):
         retrain.main(["rollback"])
+
+
+# --------------------------------------------------------------------------- bounded features read
+
+
+def test_a_run_reads_the_configured_bounds_and_records_them(engine):
+    reads = []
+
+    def read(engine, data):
+        reads.append(data)
+        return pd.DataFrame({"x": [1, 2]}), BOUNDS
+
+    cfg = gate_config()
+    cfg["data"] = {"lookback_days": 3, "max_rows": 777}
+    run_retrain(engine, cfg, trigger="manual", evaluate_fn=stub(0.5), read_data_fn=read,
+                load_champion_fn=lambda champion, config: None)  # fmt: skip
+    assert reads == [DataSettings(3.0, 777)]
+    (event,) = events(engine)
+    (model,) = models(engine)
+    assert event["metrics"]["data_bounds"] == BOUNDS.as_dict()
+    assert BOUNDS.describe() in event["notes"]
+    assert model["metrics"]["data_bounds"] == BOUNDS.as_dict()
+    with engine.connect() as conn:
+        logged = conn.execute(
+            text("SELECT context FROM logs WHERE message LIKE '%features window%'")
+        ).scalar_one()
+    assert logged["data_bounds"] == BOUNDS.as_dict()
+
+
+def test_overrides_win_over_the_configured_bounds(engine):
+    reads = []
+
+    def read(engine, data):
+        reads.append(data)
+        return pd.DataFrame(), BOUNDS
+
+    run(engine, stub(0.5), lookback_days=1.5, max_rows=42, read_data_fn=read)
+    assert reads == [DataSettings(1.5, 42)]
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"max_rows": 0}, "'data.max_rows' must be >= 1"),
+        ({"lookback_days": 0}, "'data.lookback_days' must be > 0"),
+        ({"lookback_days": 0.001}, "shorter than the promotion gate needs"),  # 86 s < 3 x 1 m
+    ],
+)
+def test_invalid_bounds_fail_before_anything_is_recorded(engine, override, message):
+    add_trades(engine, 7)
+    with pytest.raises(ConfigError, match=message):
+        run(engine, stub(0.5), **override)
+    assert events(engine) == [] and models(engine) == []
+
+
+def test_the_default_reader_bounds_the_database_read(engine):
+    """The path the background trigger and POST /model/retrain take: no reader injected."""
+    newest = datetime(2026, 1, 10, tzinfo=UTC)
+    with engine.begin() as conn:
+        for mint, first, n in [("OLD", newest - timedelta(days=5), 3), ("NEW", newest, 1),
+                               ("MID", newest - timedelta(hours=8), 4)]:  # fmt: skip
+            conn.execute(text("INSERT INTO tokens_history (mint) VALUES (:m)"), {"m": mint})
+            for i in range(n):
+                conn.execute(
+                    text(
+                        "INSERT INTO features (mint, ts, is_migrated, price, volume, holders, "
+                        "buy_events, sell_events) VALUES (:m, :ts, false, 0.1, 1, 1, 1, 1)"
+                    ),
+                    {"m": mint, "ts": first + timedelta(minutes=i)},
+                )
+    seen = []
+
+    def evaluate_fn(df, config, **kwargs):
+        seen.append(df)
+        return stub(0.5)(df, config, **kwargs)
+
+    run_retrain(engine, gate_config(), trigger="manual", evaluate_fn=evaluate_fn,
+                load_champion_fn=lambda champion, config: None)  # fmt: skip
+    (df,) = seen  # the champion and every candidate are scored on this one frame
+    assert sorted(df["mint"].unique()) == ["MID", "NEW"]  # OLD is past the 2-day window
+    (event,) = events(engine)
+    bounds = event["metrics"]["data_bounds"]
+    assert bounds["rows_read"] == 5 and bounds["tokens_kept"] == 2
+    assert bounds["window_end"] == newest.isoformat()
+    assert bounds["lookback_days"] == DATA_DEFAULTS["lookback_days"]
+
+
+def test_main_passes_the_bound_flags_and_refuses_invalid_ones(monkeypatch):
+    monkeypatch.setattr("solia_ai.db.make_engine", lambda: "engine")
+    seen = {}
+
+    def fake_run(engine, **kwargs):
+        seen.update(kwargs)
+        return retrain.RetrainOutcome("skipped", 3, 500)
+
+    monkeypatch.setattr(retrain, "run_retrain", fake_run)
+    retrain.main(["--device", "cpu", "--lookback-days", "1.5", "--max-rows", "1000"])
+    assert (seen["lookback_days"], seen["max_rows"]) == (1.5, 1000)
+    retrain.main(["--device", "cpu"])
+    assert (seen["lookback_days"], seen["max_rows"]) == (None, None)  # the config decides
+
+    def invalid(engine, **kwargs):
+        raise ConfigError("'data.max_rows' must be >= 1, got 0")
+
+    monkeypatch.setattr(retrain, "run_retrain", invalid)
+    with pytest.raises(SystemExit, match="'data.max_rows' must be >= 1"):
+        retrain.main(["--device", "cpu", "--max-rows", "0"])
+
+
+def test_the_background_service_fails_fast_on_invalid_bounds(monkeypatch):
+    import solia_ai.config
+    from solia_ai.retrain_service import RetrainService
+
+    bad = gate_config()
+    bad["data"] = {"max_rows": -5}
+    monkeypatch.setattr(solia_ai.config, "load_config", lambda: bad)
+    with pytest.raises(ConfigError, match="'data.max_rows' must be >= 1"):
+        RetrainService.from_engine(lambda: None)
