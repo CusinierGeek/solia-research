@@ -133,6 +133,22 @@ predictive. A *learned* policy (e.g. RL) is possible later only if it clearly be
 
 Checkpoints, versioning, comparison, and rollback are first-class — see Sprint 7.
 
+**Candidate training** (`solia_ai/candidate.py`, config `candidate`): the candidate is trained on every
+labeled window ending at or before the held-out start minus the label embargo (held-out = the most
+recent `heldout_fraction` — by default the walk-forward eval share the gate scores, defined once —
+or an explicit start); the newest tail whose forward horizons have not elapsed carries no label and is
+excluded. Closed paper trades only trigger the retrain, they are never labels. `warm_start: true`
+loads the champion's weights (normalizer refit on the new training split) with a fresh
+optimizer/scheduler, a `warm_start_epochs` budget and the peak learning rate scaled by
+`warm_start_lr_factor`; a champion whose feature columns, enabled groups, horizons or model dims
+differ, whose recorded data (`data_end_ts`) reaches past the held-out start minus the embargo (its
+weights would leak held-out windows), or whose checkpoint can't be loaded falls back to scratch
+(logged, recorded in the result and checkpoint) or raises with `on_incompatible: error`. Calibration
+is fit on the candidate's own validation split; the checkpoint's `data_end_ts` (end of that split)
+keeps evaluation off every window the candidate saw. The recorded `hyperparams` are the configured
+ones, with a warm start's effective budget/LR under `hyperparams.warm_start`. The checkpoint is saved
+but never registered; `n_samples` (train + validation) feeds `training_events.n_samples`.
+
 ### Promotion gate: guard against luck-driven false champions
 
 The promotion gate is a **controlled offline comparison**: candidate and champion are scored on the
@@ -262,6 +278,7 @@ python -m solia_ai.search --trials 30 --max-minutes 240 --windows 3 --seeds 0 1 
 | `dataset.py` | Dataset/DataLoader, sequence windowing, labeling |
 | `features.py` | Shared feature spec / parity with pipeline |
 | `train.py` | Initial training entrypoint |
+| `candidate.py` | Candidate training for a retrain (warm start from champion or scratch, refreshed time split, never registered) |
 | `evaluate.py` | Held-out evaluation (predictive metrics + reference-policy P&L) |
 | `ablation.py` | Per-feature-group lift across windows & seeds |
 | `search.py` | Hyperparameter & labeling-threshold search (proposes a `config.yaml` diff) |

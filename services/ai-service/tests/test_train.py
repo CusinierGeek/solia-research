@@ -123,6 +123,21 @@ def test_cosine_warmup_ramps_up_then_decays():
     assert lrs[-1] < 0.05  # decayed almost to zero by the final step
 
 
+def test_cosine_warmup_never_outlasts_half_the_schedule():
+    # warmup_steps sized for a long run, applied to a short (e.g. warm-start) budget.
+    optimizer = torch.optim.AdamW([torch.zeros(1, requires_grad=True)], lr=1.0)
+    scheduler = _cosine_warmup(optimizer, warmup_steps=500, total_steps=10)
+
+    lrs = []
+    for _ in range(10):
+        lrs.append(optimizer.param_groups[0]["lr"])
+        optimizer.step()
+        scheduler.step()
+
+    assert lrs[4] == pytest.approx(1.0)  # peak reached after half the steps
+    assert lrs[-1] < lrs[4]  # and the rate still decays
+
+
 def test_training_feature_rows_covers_only_training_windows():
     df = make_features_df()
     cfg = small_config()
@@ -380,6 +395,8 @@ def test_checkpoint_records_the_last_training_window_end(tmp_path):
 
     assert checkpoint["train_end_ts"] == int(train_ds.samples.end_ts[train_ds.indices].max())
     assert checkpoint["train_end_ts"] < int(val_ds.samples.end_ts[val_ds.indices].min())
+    # data_end_ts: the latest window seen at all, early-stopping validation included.
+    assert checkpoint["data_end_ts"] == int(val_ds.samples.end_ts[val_ds.indices].max())
 
 
 # --- calibration & class weighting ---

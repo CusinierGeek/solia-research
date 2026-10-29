@@ -446,14 +446,15 @@ def holdout_dataset(
 
     Labels follow the **checkpoint's** horizons (not whatever ``config.yaml`` lists today), so
     predictions and truth stay column-aligned. Windows are kept only after the checkpoint's
-    ``train_end_ts`` — or its ``calibration_end_ts`` when later, so the calibration window is never
-    re-scored — + embargo; a legacy checkpoint without it falls back to the time split's
-    validation share, with a warning that overlap with its training data can't be ruled out.
+    ``train_end_ts`` — or its ``calibration_end_ts`` / ``data_end_ts`` when later, so neither the
+    calibration nor the early-stopping validation windows are re-scored — + embargo; a legacy
+    checkpoint without it falls back to the time split's validation share, with a warning that
+    overlap with its training data can't be ruled out.
     """
     cfg = {**config, "horizons": list(predictor.horizons)}
     ends = [
         int(predictor.metadata[key])
-        for key in ("train_end_ts", "calibration_end_ts")
+        for key in ("train_end_ts", "calibration_end_ts", "data_end_ts")
         if predictor.metadata.get(key) is not None
     ]
     if predictor.metadata.get("train_end_ts") is not None:

@@ -48,6 +48,7 @@ import numpy as np
 import pandas as pd
 
 from .calibration import settings as calibration_settings
+from .config import DEFAULT_EVAL_FRACTION
 from .dataset import SequenceDataset, config_samples, embargo_seconds, temporal_split
 from .evaluate import EvaluationReport, ReferencePolicy, evaluate, fmt, json_safe
 from .features import BASELINE_GROUPS, FEATURE_GROUPS, check_group_coverage
@@ -60,7 +61,6 @@ RAW_PREFIX = "raw/"
 
 DEFAULT_WINDOWS = 3
 DEFAULT_SEEDS = (0, 1, 2)
-DEFAULT_EVAL_FRACTION = 0.3
 DEFAULT_VAL_FRACTION = 0.2
 DEFAULT_MARGIN = 0.01
 DEFAULT_PNL_MARGIN = 0.0

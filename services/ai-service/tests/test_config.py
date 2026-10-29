@@ -236,3 +236,25 @@ def test_class_weighting_is_accepted_with_natural_sampling(tmp_path, pos_weight)
 def test_calibration_section_is_optional(tmp_path):
     assert "calibration" not in load_config(write(tmp_path, variant(calibration=None)))
     assert VALID["calibration"]["method"] == "platt"
+
+
+@pytest.mark.parametrize(
+    ("candidate", "message"),
+    [
+        ("scratch", "'candidate' must be a mapping"),
+        ({"warmstart": True}, r"'candidate' has unknown key\(s\): warmstart"),
+        ({"warm_start": "yes"}, "'candidate.warm_start' must be a boolean"),
+        ({"on_incompatible": "ignore"}, "'candidate.on_incompatible' must be one of"),
+        ({"warm_start_epochs": 0}, "'candidate.warm_start_epochs' must be > 0"),
+        ({"min_train_samples": 2.5}, "'candidate.min_train_samples' must be an integer"),
+        ({"heldout_fraction": 1.0}, r"'candidate.heldout_fraction' must be in \(0, 1\)"),
+        ({"val_fraction": 0}, r"'candidate.val_fraction' must be in \(0, 1\)"),
+    ],
+)
+def test_invalid_candidate_settings_are_rejected(tmp_path, candidate, message):
+    with pytest.raises(ConfigError, match=message):
+        load_config(write(tmp_path, variant(candidate=candidate)))
+
+
+def test_packaged_candidate_settings_are_valid():
+    assert load_config()["candidate"]["on_incompatible"] in ("scratch", "error")

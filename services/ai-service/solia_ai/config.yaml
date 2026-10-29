@@ -75,6 +75,22 @@ promotion:
   confidence: 0.95 # bootstrap CI level
   seed: 0 # bootstrap RNG seed (reproducible decisions)
 
+# Candidate training (solia_ai/candidate.py): each retrain fits a candidate on every labeled window
+# ending before the held-out window (the most recent `heldout_fraction`, minus the label embargo),
+# never registering it. Warm start begins from the champion's weights (fresh optimizer/scheduler,
+# `warm_start_epochs` budget); a champion whose spec (feature columns, enabled groups, horizons,
+# model dims) differs from this config, or whose training data reaches into the held-out window,
+# falls back to scratch (logged + recorded) or errors.
+candidate:
+  warm_start: true # false = always train from scratch (e.g. after a feature-spec change)
+  warm_start_epochs: 10 # epoch budget of a warm start (scratch keeps training.epochs)
+  warm_start_lr_factor: 0.1 # warm-start peak LR = training.learning_rate x this (don't re-heat)
+  on_incompatible: scratch # scratch | error
+  # heldout_fraction: most recent share of labeled windows the candidate never sees. Omitted on
+  # purpose: it defaults to the walk-forward eval share the promotion gate scores (0.3).
+  val_fraction: 0.2 # early-stopping/calibration split of the training range
+  min_train_samples: 1000 # fewer training windows is an error, not a candidate
+
 # Prediction horizons.
 horizons: ["30s", "1m", "5m", "15m", "1h"]
 

@@ -52,6 +52,24 @@ PROMOTION_DEFAULTS: dict[str, Any] = {
     "seed": 0,
 }
 
+# The most recent share of labeled windows the walk-forward evaluation holds out
+# (solia_ai.ablation, hence the promotion gate). Defined here, torch-free, so the candidate's
+# held-out cut defaults to the very same share: they can't drift apart.
+DEFAULT_EVAL_FRACTION = 0.3
+
+# solia_ai.candidate's knobs and defaults (``config.yaml`` ``candidate``); defined here so
+# validation stays torch-free.
+CANDIDATE_ON_INCOMPATIBLE = ("scratch", "error")
+CANDIDATE_DEFAULTS: dict[str, Any] = {
+    "warm_start": True,
+    "warm_start_epochs": 10,
+    "warm_start_lr_factor": 0.1,
+    "on_incompatible": "scratch",
+    "heldout_fraction": DEFAULT_EVAL_FRACTION,
+    "val_fraction": 0.2,
+    "min_train_samples": 1000,
+}
+
 Lookup = Callable[[str], str | None]
 
 
@@ -266,6 +284,30 @@ def _validate(config: Any, source: str) -> None:
             fail("'promotion.confidence' must be in (0, 1)")
         if not isinstance(promotion.get("pnl_veto", True), bool):
             fail(f"'promotion.pnl_veto' must be a boolean, got {promotion['pnl_veto']!r}")
+
+    if "candidate" in config:
+        candidate = section("candidate")
+        unknown = [str(k) for k in candidate if k not in CANDIDATE_DEFAULTS]
+        if unknown:
+            fail(f"'candidate' has unknown key(s): {', '.join(unknown)}")
+        if not isinstance(candidate.get("warm_start", True), bool):
+            fail(f"'candidate.warm_start' must be a boolean, got {candidate['warm_start']!r}")
+        policy = candidate.get("on_incompatible", CANDIDATE_DEFAULTS["on_incompatible"])
+        if policy not in CANDIDATE_ON_INCOMPATIBLE:
+            fail(
+                f"'candidate.on_incompatible' must be one of "
+                f"{', '.join(CANDIDATE_ON_INCOMPATIBLE)}, got {policy!r}"
+            )
+        for key in ("warm_start_epochs", "min_train_samples"):
+            if key in candidate:
+                number("candidate", key, positive=True, integer=True)
+        for key in ("heldout_fraction", "val_fraction"):
+            if key in candidate and not 0 < number("candidate", key) < 1:
+                fail(f"'candidate.{key}' must be in (0, 1)")
+        if "warm_start_lr_factor" in candidate and not (
+            0 < number("candidate", "warm_start_lr_factor") <= 1
+        ):
+            fail("'candidate.warm_start_lr_factor' must be in (0, 1]")
 
     labeling = section("labeling")
     if "max_gap_fraction" in labeling and not 0 < number("labeling", "max_gap_fraction") <= 1:

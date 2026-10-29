@@ -182,7 +182,9 @@ def training_feature_rows(dataset: SequenceDataset) -> np.ndarray:
 
 
 def _cosine_warmup(optimizer: AdamW, warmup_steps: int, total_steps: int) -> LambdaLR:
-    warmup = max(1, int(warmup_steps))
+    # The warmup never takes more than half the schedule: a budget shorter than warmup_steps (a
+    # warm start, a small dataset) still decays instead of holding the peak learning rate.
+    warmup = max(1, min(int(warmup_steps), int(total_steps) // 2))
     decay = max(1, total_steps - warmup)
 
     def scale(step: int) -> float:
@@ -239,6 +241,7 @@ def build_checkpoint(
     train_end_ts: int | None = None,
     calibration: Calibration | None = None,
     calibration_end_ts: int | None = None,
+    data_end_ts: int | None = None,
 ) -> dict[str, Any]:
     """The serialized checkpoint: weights plus everything needed to rebuild and identify it.
 
@@ -246,7 +249,9 @@ def build_checkpoint(
     scores windows strictly after it (plus the label embargo), so held-out metrics never re-score
     data the model was fit on, whatever window the evaluation run reads. ``calibration`` (applied
     at inference; ``None`` = identity) was fit on windows ending by ``calibration_end_ts``, which
-    pushes that boundary later still.
+    pushes that boundary later still. ``data_end_ts`` is the end of the latest window the model saw
+    in any way — gradient steps, early stopping or calibration (the whole validation split) — so
+    evaluation and a warm start's leakage check never treat it as unseen.
     """
     return {
         "version": version,
@@ -260,6 +265,7 @@ def build_checkpoint(
         "train_end_ts": train_end_ts,
         "calibration": None if calibration is None else calibration.as_dict(),
         "calibration_end_ts": calibration_end_ts,
+        "data_end_ts": data_end_ts,
     }
 
 
@@ -295,11 +301,17 @@ def fit(
     config: Mapping[str, Any],
     *,
     device: str | torch.device | None = None,
+    init_state: Mapping[str, Any] | None = None,
 ) -> FitResult:
-    """The training loop alone: fit a fresh model on ``train_ds``, early-stopping on ``val_ds``.
+    """The training loop alone: fit a model on ``train_ds``, early-stopping on ``val_ds``.
 
-    Seeds torch from ``training.seed``. Writes nothing — :func:`train` saves and registers; the
-    ablation harness only scores the in-memory model.
+    The model starts fresh or, with ``init_state`` (a champion's ``model_state``: a warm start),
+    from those weights. Either way the normalizer is fit on ``train_ds`` — a warm start never
+    keeps statistics of older data, so warm and scratch candidates share their preprocessing —
+    and the optimizer and scheduler are fresh. The caller checks the state matches ``config``'s
+    architecture (:func:`solia_ai.candidate.warm_start_problems`); loading still refuses other
+    horizons or feature columns. Seeds torch from ``training.seed``. Writes nothing —
+    :func:`train` saves and registers; the ablation harness only scores the in-memory model.
     """
     cfg = config
     training = cfg["training"]
@@ -316,6 +328,8 @@ def fit(
     )
 
     model = SoliaTransformer.from_config(cfg).to(device)
+    if init_state is not None:
+        model.load_state_dict(init_state)
     model.fit_normalizer(training_feature_rows(train_ds))
     pos_weight = resolve_pos_weight(train_ds, cfg)
     loss_fn = SoliaLoss.from_config(cfg, pos_weight=pos_weight).to(device)
@@ -401,6 +415,7 @@ def train(
     directory.mkdir(parents=True, exist_ok=True)
     checkpoint_path = directory / f"{version}.pt"
     train_end_ts = int(train_ds.samples.end_ts[train_ds.indices].max())
+    data_end_ts = max(train_end_ts, int(val_ds.samples.end_ts[val_ds.indices].max()))
     calibration, calibration_end_ts = fit_calibration_window(model, val_ds, cfg)
     checkpoint = build_checkpoint(
         model,
@@ -410,6 +425,7 @@ def train(
         train_end_ts=train_end_ts,
         calibration=calibration,
         calibration_end_ts=calibration_end_ts,
+        data_end_ts=data_end_ts,
     )
     save_checkpoint(checkpoint, checkpoint_path)
 
