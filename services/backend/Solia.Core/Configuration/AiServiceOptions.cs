@@ -24,6 +24,15 @@ public sealed class AiServiceOptions
     [Range(typeof(TimeSpan), "00:00:00.010", "01:00:00")]
     public TimeSpan AttemptTimeout { get; set; } = TimeSpan.FromSeconds(4);
 
+    /// <summary>
+    /// Upper bound for <c>POST /model/retrain</c> (one attempt, never retried), in place of <see cref="TotalTimeout"/>
+    /// and <see cref="AttemptTimeout"/>. The ai-service answers once the run is recorded and gives up after 20 s
+    /// (its <c>DEFAULT_START_TIMEOUT_SECONDS</c>), so this must stay above that: timing out first would report a
+    /// failure for a run that did start.
+    /// </summary>
+    [Range(typeof(TimeSpan), "00:00:00.010", "01:00:00")]
+    public TimeSpan RetrainTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
     /// <summary>Retries after the first attempt on transient failures of idempotent calls (0 disables).</summary>
     [Range(0, 10)]
     public int MaxRetryAttempts { get; set; } = 2;

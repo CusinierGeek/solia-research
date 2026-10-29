@@ -76,6 +76,26 @@ public class AiProxyEndpointsTests
     }
 
     [Fact]
+    public async Task Retrain_already_running_on_the_ai_service_is_a_409_conflict_envelope()
+    {
+        var ai = new StubAiClient
+        {
+            Retrain = () => throw new AiServiceException(
+                AiServiceErrorKind.Busy, "a retrain is already running; try again later", 409, "retrain_in_progress"),
+        };
+        (WebApplicationFactory<Program> factory, HttpClient client) = Host(ai);
+        using (factory)
+        {
+            HttpResponseMessage response = await client.PostAsync("/api/v1/model/retrain", null);
+
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            JsonElement error = await ErrorAsync(response);
+            Assert.Equal("conflict", error.GetProperty("code").GetString());
+            Assert.Equal("a retrain is already running", error.GetProperty("message").GetString());
+        }
+    }
+
+    [Fact]
     public async Task Ai_service_unavailable_on_retrain_is_a_503_envelope_without_upstream_details()
     {
         var ai = new StubAiClient { Retrain = () => throw StubAiClient.Unreachable() };

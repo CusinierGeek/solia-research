@@ -14,10 +14,18 @@ from test_inference import saved_checkpoint
 
 import solia_ai.api
 import solia_ai.registry
-from solia_ai.api import LoadedChampion, check_model_dir_writable, create_app, registry_loader
+from solia_ai.api import (
+    LoadedChampion,
+    check_model_dir_writable,
+    create_app,
+    lazy_engine,
+    registry_loader,
+)
 from solia_ai.features import DB_FEATURE_COLUMNS, FEATURE_COLUMNS, VENUE_COLUMNS, VENUE_OTHER
 from solia_ai.inference import Predictor
 from solia_ai.model import IncompatibleCheckpointError, SoliaTransformer
+from solia_ai.retrain import RetrainOutcome
+from solia_ai.retrain_service import RetrainService
 
 HORIZONS = ("30s", "1m", "5m")
 N_FEATURES = len(FEATURE_COLUMNS)
@@ -50,7 +58,30 @@ def _static_loader(current=None) -> LoadedChampion:
     return current or _champion()
 
 
+LATEST_RUN = {
+    "id": 7,
+    "trigger": "n_trades",
+    "started_at": "2026-04-21T08:00:00+00:00",
+    "finished_at": "2026-04-21T08:20:00+00:00",
+    "decision": "rejected",
+}
+
+
+def _service(run_fn=None, *, trades: int = 142, threshold: int = 500, **kwargs) -> RetrainService:
+    """A retrain service over stubs (no database): ``run_fn`` defaults to a run recorded as #17."""
+
+    def recorded(*, trigger, on_started=None):
+        if on_started:
+            on_started(17)
+        return RetrainOutcome("rejected", trades, threshold, event_id=17)
+
+    return RetrainService(
+        run_fn or recorded, lambda: (trades, threshold), lambda: LATEST_RUN, **kwargs
+    )
+
+
 def _client(loader=None, **kwargs) -> TestClient:
+    kwargs.setdefault("retrain", _service())
     return TestClient(create_app(loader or _static_loader, **kwargs))
 
 
@@ -100,6 +131,184 @@ def test_model_status_reports_the_champion():
     assert body["metrics"] == {"val_total": 0.3}
     assert body["seq_len"] == 8
     assert body["min_seq_len"] == 1  # no hyperparams recorded: any non-empty window is accepted
+    assert body["trades_since_last_train"] == 142
+    assert body["retrain_threshold"] == 500
+    assert body["latest_run"] == LATEST_RUN
+
+
+def test_model_status_reports_no_progress_when_the_count_fails():
+    def down():
+        raise ConnectionError("database down")
+
+    service = RetrainService(lambda **_: None, down, down)
+    body = _client(retrain=service).get("/model/status").json()
+
+    assert body["champion_version"] == "test-v1"  # the champion is still served
+    # Both counters null together, so the backend falls back to its own consistent pair.
+    assert body["trades_since_last_train"] is None
+    assert body["retrain_threshold"] is None
+    assert body["latest_run"] is None
+
+
+def test_model_status_without_any_run_has_a_null_latest_run():
+    service = RetrainService(lambda **_: None, lambda: (0, 500), lambda: None)
+    body = _client(retrain=service).get("/model/status").json()
+
+    assert (body["trades_since_last_train"], body["retrain_threshold"]) == (0, 500)
+    assert body["latest_run"] is None
+
+
+# --------------------------------------------------------------------------- retrain
+
+
+def test_retrain_returns_202_with_the_training_event_id():
+    calls = []
+
+    def run_fn(*, trigger, on_started=None):
+        calls.append(trigger)
+        on_started(17)
+        return RetrainOutcome("promoted", 0, 500, event_id=17)
+
+    response = _client(retrain=_service(run_fn)).post("/model/retrain", json={"trigger": "manual"})
+
+    assert response.status_code == 202
+    assert response.json() == {"training_event_id": 17}
+    assert calls == ["manual"]
+
+
+def test_retrain_answers_202_before_the_run_finishes_and_409_while_it_runs():
+    release = threading.Event()
+    finished = threading.Event()
+
+    def long_run(*, trigger, on_started=None):
+        on_started(21)
+        release.wait(10)
+        finished.set()
+        return RetrainOutcome("rejected", 0, 500, event_id=21)
+
+    service = _service(long_run)
+    client = _client(retrain=service)
+    try:
+        first = client.post("/model/retrain", json={"trigger": "manual"})
+        assert first.status_code == 202 and first.json() == {"training_event_id": 21}
+        assert service.busy and not finished.is_set()
+
+        second = client.post("/model/retrain", json={"trigger": "manual"})
+        assert second.status_code == 409
+        assert second.json()["error"]["code"] == "retrain_in_progress"
+
+        # Training runs off the request threads: predict and health keep answering meanwhile.
+        started = time.monotonic()
+        assert client.get("/health").status_code == 200
+        assert client.post("/predict", json={"features": _list_rows()}).status_code == 200
+        assert time.monotonic() - started < 5
+    finally:
+        release.set()
+    assert finished.wait(5)
+    deadline = time.monotonic() + 5
+    while service.busy and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert client.post("/model/retrain", json={"trigger": "manual"}).status_code == 202
+
+
+def test_retrain_is_409_when_another_process_holds_the_lock():
+    from solia_ai.retrain import RetrainBusyError
+
+    def busy(*, trigger, on_started=None):
+        raise RetrainBusyError("another retrain or rollback is running; try again later")
+
+    response = _client(retrain=_service(busy)).post("/model/retrain", json={"trigger": "manual"})
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "retrain_in_progress"
+
+
+def test_retrain_is_503_when_the_run_cannot_be_started():
+    def down(*, trigger, on_started=None):
+        raise ConnectionError("database down")
+
+    response = _client(retrain=_service(down)).post("/model/retrain", json={"trigger": "manual"})
+
+    assert response.status_code == 503
+    body = response.json()["error"]
+    assert body["code"] == "retrain_unavailable" and "database down" in body["message"]
+
+
+def test_retrain_is_503_when_the_run_is_not_recorded_in_time():
+    release = threading.Event()
+
+    def stuck(*, trigger, on_started=None):
+        release.wait(10)
+
+    service = _service(stuck, start_timeout=0.05)
+    try:
+        response = _client(retrain=service).post("/model/retrain", json={"trigger": "manual"})
+    finally:
+        release.set()
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "retrain_unavailable"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{}, {"trigger": "n_trades"}, {"trigger": "MANUAL"}, {"trigger": 1}, [], "manual"],
+)
+def test_retrain_rejects_an_invalid_body(body):
+    calls = []
+    service = _service(lambda **kw: calls.append(kw))
+
+    response = _client(retrain=service).post("/model/retrain", json=body)
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_request"
+    assert calls == []
+
+
+def test_retrain_without_a_body_is_rejected():
+    response = _client().post("/model/retrain")
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_request"
+
+
+def test_the_app_lifespan_starts_and_stops_the_scheduler():
+    from solia_ai.retrain_service import SchedulerSettings
+
+    service = _service(settings=SchedulerSettings(enabled=True, interval_seconds=3600))
+    with _client(retrain=service):
+        assert service._scheduler is not None and service._scheduler.is_alive()
+    assert service._scheduler is None
+
+
+def test_the_app_lifespan_recovers_abandoned_runs_in_the_background():
+    recovered = threading.Event()
+
+    def recover():
+        recovered.set()
+        return [3]
+
+    with _client(retrain=_service(recover_fn=recover)) as client:
+        assert recovered.wait(5)
+        assert client.get("/health").status_code == 200
+
+
+def test_a_custom_loader_without_a_retrain_service_touches_no_database(monkeypatch):
+    # An invalid retrain env would fail the database-backed service at build time.
+    monkeypatch.setenv("RETRAIN_SCHEDULER_ENABLED", "maybe")
+    monkeypatch.setenv("RETRAIN_EVERY_N_TRADES", "nope")
+    monkeypatch.setattr(
+        RetrainService, "from_engine", lambda engine: pytest.fail("built the database service")
+    )
+
+    with TestClient(create_app(_static_loader)) as client:
+        body = client.get("/model/status").json()
+        retrain = client.post("/model/retrain", json={"trigger": "manual"})
+
+    assert body["champion_version"] == "test-v1"
+    assert body["trades_since_last_train"] is None and body["latest_run"] is None
+    assert retrain.status_code == 503
+    assert retrain.json()["error"]["code"] == "retrain_unavailable"
 
 
 # --------------------------------------------------------------------------- predict
@@ -262,7 +471,9 @@ def test_an_unexpected_error_keeps_the_error_shape():
         raise RuntimeError("kaboom")
 
     champion.predictor.predict = boom
-    client = TestClient(create_app(lambda current: champion), raise_server_exceptions=False)
+    client = TestClient(
+        create_app(lambda current: champion, retrain=_service()), raise_server_exceptions=False
+    )
 
     response = client.post("/predict", json={"features": _list_rows()})
 
@@ -515,7 +726,7 @@ def test_registry_loader_reuses_one_engine_and_skips_unchanged_versions(tmp_path
     _, path = saved_checkpoint(tmp_path, version="champ-1")
     engines = []
     monkeypatch.setattr(solia_ai.registry, "read_champion", lambda engine: _record(path))
-    loader = registry_loader(_counting_factory(engines))
+    loader = registry_loader(lazy_engine(_counting_factory(engines)))
 
     first = loader(None)
     again = loader(first)
@@ -532,7 +743,7 @@ def test_registry_loader_loads_a_new_champion_version(tmp_path, monkeypatch):
     _, path = saved_checkpoint(tmp_path, version="champ-1")
     records = {"current": _record(path)}
     monkeypatch.setattr(solia_ai.registry, "read_champion", lambda engine: records["current"])
-    loader = registry_loader(object)
+    loader = registry_loader(lazy_engine(object))
     first = loader(None)
 
     records["current"] = _record(path, version="champ-2")
@@ -545,7 +756,7 @@ def test_registry_loader_loads_a_new_champion_version(tmp_path, monkeypatch):
 def test_registry_loader_without_a_champion_raises_lookup_error(monkeypatch):
     engines = []
     monkeypatch.setattr(solia_ai.registry, "read_champion", lambda engine: None)
-    loader = registry_loader(_counting_factory(engines))
+    loader = registry_loader(lazy_engine(_counting_factory(engines)))
 
     for _ in range(3):  # polled before the first promotion
         with pytest.raises(LookupError, match="no champion"):

@@ -283,6 +283,50 @@ def start_event(engine: Engine, *, trigger: str, champion_id: int | None) -> int
         )
 
 
+ABANDONED_NOTE = "abandoned: its process stopped before the run finished"
+
+
+def close_abandoned_runs(engine: Engine) -> list[int]:
+    """Record every in-flight ``training_events`` row as ``failed``; return their ids.
+
+    Call it only while holding the retrain lock: a run holds that lock from its ``start_event`` to
+    its decision, so under it any row still in flight belongs to a process that died (its daemon
+    worker never reached :func:`_fail`)."""
+    with engine.begin() as conn:
+        ids = (
+            conn.execute(
+                text(
+                    "UPDATE training_events SET finished_at = now(), decision = 'failed', "
+                    "notes = :notes WHERE finished_at IS NULL RETURNING id"
+                ),
+                {"notes": ABANDONED_NOTE},
+            )
+            .scalars()
+            .all()
+        )
+    return sorted(int(i) for i in ids)
+
+
+def recover_abandoned_runs(engine: Engine) -> list[int]:
+    """At startup: close the runs a previous process left in flight (see
+    :func:`close_abandoned_runs`). Nothing is closed while another process holds the lock — its
+    run is alive, and the next run closes whatever is left."""
+    try:
+        with retrain_lock(engine):
+            ids = close_abandoned_runs(engine)
+    except RetrainBusyError:
+        return []
+    if ids:
+        db_log(
+            engine,
+            "warn",
+            f"retrain run(s) {', '.join(f'#{i}' for i in ids)} abandoned by a stopped process: "
+            "recorded as failed",
+            {"training_event_ids": ids},
+        )
+    return ids
+
+
 def finish_event(
     conn: Connection,
     event_id: int,
@@ -619,9 +663,13 @@ def run_retrain(
     read_features_fn: Callable[..., Any] | None = None,
     load_champion_fn: Callable[..., Any] = load_champion_checkpoint,
     heartbeat_seconds: float = HEARTBEAT_SECONDS,
+    on_started: Callable[[int], None] | None = None,
 ) -> RetrainOutcome:
     """Run one retrain if due (see the module doc). ``evaluate_fn`` / ``read_features_fn`` /
-    ``load_champion_fn`` are injectable so tests stub the training.
+    ``load_champion_fn`` are injectable so tests stub the training. ``on_started`` is called with
+    the ``training_events`` id as soon as the run is recorded (the API answers ``202`` with it
+    while the run goes on); it is not called for a skipped run, and an error it raises is only
+    logged.
 
     Raises:
         RetrainBusyError: another run holds the lock (nothing is recorded).
@@ -646,8 +694,16 @@ def run_retrain(
             )
             return RetrainOutcome("skipped", trades, threshold)
 
+        abandoned = close_abandoned_runs(engine)  # under the lock: left by a dead process
+        if abandoned:
+            logger.warning("closed abandoned retrain run(s) %s as failed", abandoned)
         champion = read_champion(engine)
         event_id = start_event(engine, trigger=trigger, champion_id=champion and champion.id)
+        if on_started is not None:
+            try:
+                on_started(event_id)
+            except Exception:
+                logger.exception("retrain #%s: the on_started callback failed", event_id)
         context = {"training_event_id": event_id, "trigger": trigger}
         db_log(
             engine,

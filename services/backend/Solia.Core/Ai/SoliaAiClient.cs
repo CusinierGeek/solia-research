@@ -194,6 +194,7 @@ internal sealed class SoliaAiClient(HttpClient http) : ISoliaAiClient
         HttpStatusCode.UnprocessableEntity when code == "window_too_short" => AiServiceErrorKind.InsufficientHistory,
         HttpStatusCode.BadRequest or HttpStatusCode.UnprocessableEntity => AiServiceErrorKind.InvalidRequest,
         HttpStatusCode.ServiceUnavailable when IsNoChampionCode(code) => AiServiceErrorKind.NoChampion,
+        HttpStatusCode.Conflict => AiServiceErrorKind.Busy,
         HttpStatusCode.ServiceUnavailable
             or HttpStatusCode.RequestTimeout
             or HttpStatusCode.TooManyRequests

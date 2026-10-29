@@ -167,6 +167,14 @@ checkpoint is missing or incompatible. Steps are logged to stdout and `logs` (se
 re-reads the registry champion every 30 s (`api.DEFAULT_REFRESH_SECONDS`), so a promotion or rollback is
 served without a restart.
 
+**In the API process** (`solia_ai/retrain_service.py`): `POST /model/retrain` starts a `manual` run on a worker
+thread and answers `202` with its `training_event_id` once recorded (`409` while a retrain runs here or holds the
+lock elsewhere). With `RETRAIN_SCHEDULER_ENABLED` (on in compose) a background trigger reads the counter every
+`RETRAIN_CHECK_INTERVAL_SECONDS` (default 300) and starts an `n_trades` run at the threshold; a tick never overlaps
+a running retrain, and a failed check or run is logged and retried on the next tick. Training never runs on a
+request thread: `/predict` and `/health` keep serving. `/model/status` adds `trades_since_last_train`,
+`retrain_threshold` and `latest_run` (see `docs/API-CONTRACTS.md`).
+
 ### Checkpoint retention
 
 Every retrain writes a checkpoint to `MODEL_DIR`; `solia_ai/retention.py` keeps the volume bounded without breaking
@@ -322,6 +330,7 @@ python -m solia_ai.search --trials 30 --max-minutes 240 --windows 3 --seeds 0 1 
 | `search.py` | Hyperparameter & labeling-threshold search (proposes a `config.yaml` diff) |
 | `inference.py` | Load champion, run predictions (+ ONNX export) |
 | `retrain.py` | Continuous-training orchestrator: trade-count trigger, one run at a time, `training_events` audit, promote/reject, rollback, prune |
+| `retrain_service.py` | Retrains inside the API: manual start (`POST /model/retrain`), background trade-count trigger, status progress |
 | `retention.py` | Checkpoint retention policy: keep champion + rollback chain + newest candidates, mark pruned rows |
 | `api.py` | FastAPI app (`/predict`, `/model/status`, `/model/retrain`) |
 | `config.yaml` | All hyperparameters & thresholds |

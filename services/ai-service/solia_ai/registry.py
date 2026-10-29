@@ -133,6 +133,32 @@ def last_train_cutoff(engine: Engine) -> datetime | None:
         ).scalar_one()
 
 
+def latest_training_event(engine: Engine) -> dict[str, Any] | None:
+    """The newest ``training_events`` row (any decision, in flight too) as the API's run summary
+    — ``id``, ``trigger``, ``started_at`` / ``finished_at`` (ISO 8601) and ``decision`` — or
+    ``None`` before any run."""
+    with engine.connect() as conn:
+        row = (
+            conn.execute(
+                text(
+                    "SELECT id, trigger, started_at, finished_at, decision FROM training_events "
+                    "ORDER BY started_at DESC, id DESC LIMIT 1"
+                )
+            )
+            .mappings()
+            .first()
+        )
+    if row is None:
+        return None
+    return {
+        "id": int(row["id"]),
+        "trigger": row["trigger"],
+        "started_at": row["started_at"].isoformat() if row["started_at"] else None,
+        "finished_at": row["finished_at"].isoformat() if row["finished_at"] else None,
+        "decision": row["decision"],
+    }
+
+
 def register_model(
     engine: Engine,
     *,

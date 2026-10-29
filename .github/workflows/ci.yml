@@ -161,7 +161,7 @@ jobs:
           envs postgres '"POSTGRES_DB","POSTGRES_PASSWORD","POSTGRES_USER"'
           envs db-migrate "$pg"
           envs data-pipeline "$pg"',"ENRICH_HOLDERS","INGEST","PUMPAPI_REPLAY_BASE_URL","PUMPAPI_WS_URL","STREAM_PROBE"'
-          envs ai-service "$pg"',"MODEL_DIR","RETRAIN_EVERY_N_TRADES","SOLIA_AI_CONFIG"'
+          envs ai-service "$pg"',"MODEL_DIR","RETRAIN_CHECK_INTERVAL_SECONDS","RETRAIN_EVERY_N_TRADES","RETRAIN_SCHEDULER_ENABLED","SOLIA_AI_CONFIG"'
           envs backend "$pg"',"AI_SERVICE_URL","PAPER_BOT_ENABLED","PAPER_MAX_CONCURRENT_POSITIONS","PAPER_STARTING_BALANCE","RETRAIN_EVERY_N_TRADES","SOLIA_MASTER_KEY"'
           envs dashboard '"ASPNETCORE_ENVIRONMENT","BACKEND_URL"'
           # Every interpolated key, in both compose files, `${VAR…}` or bare `$VAR` (`$$` is an escape), is

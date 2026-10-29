@@ -130,6 +130,25 @@ public class AiContractsTests
     }
 
     [Theory]
+    [InlineData("142", "500", 142, 500)]
+    [InlineData("null", "null", null, null)] // the ai-service's count failed: both null together
+    public void Model_status_reads_the_retrain_orchestrator_payload(
+        string count, string threshold, int? expectedCount, int? expectedThreshold)
+    {
+        string json = $$$"""
+            {"champion_version":"v3","created_at":"2026-10-01T12:00:00+00:00","param_count":123456,"metrics":{},
+             "seq_len":64,"min_seq_len":8,"trades_since_last_train":{{{count}}},"retrain_threshold":{{{threshold}}},
+             "latest_run":{"id":17,"trigger":"n_trades","started_at":"2026-10-02T08:00:00+00:00","finished_at":null,"decision":null}}
+            """;
+
+        AiModelStatus status = JsonSerializer.Deserialize<AiModelStatus>(json, AiJson.Options)!;
+
+        Assert.Equal("v3", status.ChampionVersion);
+        Assert.Equal(expectedCount, status.TradesSinceLastTrain);
+        Assert.Equal(expectedThreshold, status.RetrainThreshold);
+    }
+
+    [Theory]
     [InlineData("""{"mint":null,"predictions":[]}""")]
     [InlineData("""{"mint":null,"model_version":"v3","predictions":null}""")]
     [InlineData("""{"mint":null,"model_version":"v3","predictions":[{"pump_prob":0.1,"rug_prob":0.1,"expected_return":0,"confidence":1}]}""")]

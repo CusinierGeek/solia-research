@@ -20,9 +20,9 @@ public static class AiClientServiceCollectionExtensions
     /// <summary>
     /// Binds and validates <see cref="AiServiceOptions"/> ("AiService" section, AI_SERVICE_URL overlay) and
     /// registers <see cref="ISoliaAiClient"/> as a typed <see cref="HttpClient"/> whose pipeline is, outermost
-    /// first: total timeout → retry (exponential backoff + jitter; availability failures of idempotent calls
+    /// first: total timeout (<c>RetrainTimeout</c> for <c>/model/retrain</c>) → retry (exponential backoff + jitter; availability failures of idempotent calls
     /// only — never a 4xx, a 500 or a 503 <c>no_champion</c>, never <c>/model/retrain</c>) → circuit breaker
-    /// (same failures) → per-attempt timeout → response buffering. One pipeline — hence one breaker — per
+    /// (same failures) → per-attempt timeout (<c>RetrainTimeout</c> again for <c>/model/retrain</c>) → response buffering. One pipeline — hence one breaker — per
     /// route, so a failing <c>/model/retrain</c> never blocks <c>/predict</c>. A probe (<c>/health</c>) is one
     /// attempt the breaker ignores: a readiness check must report the service as it is now, inside the check's
     /// own timeout, not wait out retries or a break opened by earlier probes. Returns the client builder so
@@ -52,8 +52,10 @@ public static class AiClientServiceCollectionExtensions
             .AddResilienceHandler(PipelineName, (pipeline, context) =>
             {
                 AiServiceOptions options = context.ServiceProvider.GetRequiredService<IOptions<AiServiceOptions>>().Value;
+                // /model/retrain waits for the run to be recorded: it gets its own, longer bound (never retried).
+                bool retrain = IsRetrainPipeline(context.InstanceName);
 
-                pipeline.AddTimeout(options.TotalTimeout);
+                pipeline.AddTimeout(retrain ? options.RetrainTimeout : options.TotalTimeout);
 
                 if (options.MaxRetryAttempts > 0)
                 {
@@ -79,7 +81,7 @@ public static class AiClientServiceCollectionExtensions
                         : IsAvailabilityFailureAsync(args.Outcome),
                 });
 
-                pipeline.AddTimeout(options.AttemptTimeout);
+                pipeline.AddTimeout(retrain ? options.RetrainTimeout : options.AttemptTimeout);
             })
             .SelectPipelineBy(_ => request => request.RequestUri?.AbsolutePath ?? string.Empty);
 
@@ -135,6 +137,10 @@ public static class AiClientServiceCollectionExtensions
             return null;
         }
     }
+
+    /// <summary>Whether the route-keyed pipeline (the request's absolute path) is <c>/model/retrain</c>'s.</summary>
+    internal static bool IsRetrainPipeline(string pipelineKey) =>
+        pipelineKey.EndsWith("/" + SoliaAiClient.RetrainPath, StringComparison.Ordinal);
 
     private static bool IsIdempotent(ResilienceContext context) =>
         context.GetRequestMessage() is not { } request

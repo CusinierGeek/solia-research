@@ -138,7 +138,7 @@ backend's count — closed trades (same set as `/stats/*`) closed strictly after
 
 ### `POST /model/retrain`
 Manually trigger a retrain (proxied to ai-service, never retried). Returns `202 Accepted` +
-`{ "training_event_id": 17 }`.
+`{ "training_event_id": 17 }`; `409 conflict` while a retrain is already running.
 
 ### Live hub (SignalR) — `/hubs/live`
 Server → client push so the dashboard updates without a reload. Mapped at **`/hubs/live`** on the backend host,
@@ -202,11 +202,37 @@ Base: `/`
 ```
 
 ### `GET /model/status`
-Champion version, `created_at`, metrics, `param_count`, and its window bounds `seq_len` / `min_seq_len`.
-Trades-since-last-train and the retrain threshold are added by the retrain orchestrator (Sprint 7).
+```jsonc
+{ "champion_version": "v3", "created_at": "...", "param_count": 123456, "metrics": {...},
+  "seq_len": 64, "min_seq_len": 8,
+  "trades_since_last_train": 142, "retrain_threshold": 500,
+  "latest_run": { "id": 17, "trigger": "n_trades", "started_at": "...", "finished_at": null, "decision": null } }
+```
+The champion fields as before; `503 no_champion` / `champion_incompatible` / `champion_unavailable` while none
+can be served (the backend then reports its own progress). `trades_since_last_train` / `retrain_threshold` are the
+orchestrator's (same rule as the backend's count, against `RETRAIN_EVERY_N_TRADES`) and always come as a pair:
+both `null` when the database read fails. `latest_run` is the newest `training_events` row — `finished_at` and
+`decision` `null` while it runs — or `null` before any run (or when the read fails).
 
 ### `POST /model/retrain`
-Kick off the retrain orchestrator. Body: `{ "trigger": "manual" }`. Returns `202` + `training_event_id`.
+```jsonc
+// request
+{ "trigger": "manual" }
+// 202
+{ "training_event_id": 17 }
+```
+Starts a `manual` run of the retrain orchestrator in the background (training never runs on a request thread:
+`/predict` and `/health` keep answering) and answers once its `training_events` row is recorded. Errors:
+`409 retrain_in_progress` (a retrain — manual, scheduled or another process's — is running),
+`422 invalid_request` (missing body, or a `trigger` other than `manual`), `503 retrain_unavailable` (the run could
+not be started, e.g. database down, or was not recorded within 20 s — below the backend's 30 s
+`AiService:RetrainTimeout`, so the backend always hears the answer). A run whose process stopped mid-training is
+recorded as `failed` at the next startup (or by the next run), so `latest_run` never stays in flight forever.
+
+**Background trigger.** While `RETRAIN_SCHEDULER_ENABLED` (default off; on in compose), the ai-service checks the
+closed-trade counter every `RETRAIN_CHECK_INTERVAL_SECONDS` (default 300) and starts an `n_trades` run once it
+reaches `RETRAIN_EVERY_N_TRADES`. A check never overlaps a running retrain; a failed check (database blip) or a
+failed run is logged and retried on the next tick.
 
 ### `GET /health`, `GET /health/ready`, `GET /health/live`
 Probes (outside `/api/v1`). `/health/live` checks nothing (process up); `/health/ready` checks the database and

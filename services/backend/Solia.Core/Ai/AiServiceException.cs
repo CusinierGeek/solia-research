@@ -26,6 +26,12 @@ public enum AiServiceErrorKind
     /// </summary>
     Unavailable,
 
+    /// <summary>
+    /// A retrain is already running (409 <c>retrain_in_progress</c>): refused, not queued — retry once it finished.
+    /// Never retried.
+    /// </summary>
+    Busy,
+
     /// <summary>The ai-service failed (500 <c>internal_error</c>, an unexpected status or an unreadable body).</summary>
     UpstreamError,
 }
@@ -34,7 +40,8 @@ public enum AiServiceErrorKind
 /// A failed ai-service call, already mapped to the public error envelope: <see cref="AiServiceErrorKind.InvalidRequest"/>
 /// → 400 <c>invalid_request</c>, <see cref="AiServiceErrorKind.InsufficientHistory"/> → 422 <c>insufficient_history</c>,
 /// <see cref="AiServiceErrorKind.NoChampion"/> / <see cref="AiServiceErrorKind.Unavailable"/>
-/// → 503 <c>unavailable</c>, <see cref="AiServiceErrorKind.UpstreamError"/> → 502 <c>internal_error</c>. The public
+/// → 503 <c>unavailable</c>, <see cref="AiServiceErrorKind.Busy"/> → 409 <c>conflict</c>,
+/// <see cref="AiServiceErrorKind.UpstreamError"/> → 502 <c>internal_error</c>. The public
 /// message is fixed per kind: the upstream one can carry predictor internals (the ai-service echoes exception
 /// text), so it stays in <see cref="UpstreamMessage"/> for logging only, with the upstream status/code.
 /// </summary>
@@ -70,6 +77,7 @@ public sealed class AiServiceException : ApiException
         AiServiceErrorKind.InvalidRequest => 400,
         AiServiceErrorKind.InsufficientHistory => 422,
         AiServiceErrorKind.NoChampion or AiServiceErrorKind.Unavailable => 503,
+        AiServiceErrorKind.Busy => 409,
         _ => 502,
     };
 
@@ -78,6 +86,7 @@ public sealed class AiServiceException : ApiException
         AiServiceErrorKind.InvalidRequest => ApiErrorCodes.InvalidRequest,
         AiServiceErrorKind.InsufficientHistory => ApiErrorCodes.InsufficientHistory,
         AiServiceErrorKind.NoChampion or AiServiceErrorKind.Unavailable => ApiErrorCodes.Unavailable,
+        AiServiceErrorKind.Busy => ApiErrorCodes.Conflict,
         _ => ApiErrorCodes.InternalError,
     };
 
@@ -87,6 +96,7 @@ public sealed class AiServiceException : ApiException
         AiServiceErrorKind.InsufficientHistory => "not enough feature history yet to score this token",
         AiServiceErrorKind.NoChampion => "no champion model is available yet",
         AiServiceErrorKind.Unavailable => "the prediction service is unavailable",
+        AiServiceErrorKind.Busy => "a retrain is already running",
         _ => "the prediction service failed",
     };
 }

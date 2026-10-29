@@ -1,6 +1,6 @@
 """The internal FastAPI the backend calls (docs/API-CONTRACTS.md "ai-service").
 
-Three endpoints, all JSON:
+Four endpoints, all JSON:
 
 * ``POST /predict`` — **stateless** inference: the caller sends the token's recent feature window
   (docs/ARCHITECTURE.md §5 — the REST path reads features from the request, never Postgres) and
@@ -10,8 +10,17 @@ Three endpoints, all JSON:
   training ``min_seq_len`` is a ``422 window_too_short``; a longer one keeps its latest
   ``seq_len`` rows.
 * ``GET /model/status`` — the loaded champion's identity, parameter count, training metrics and
-  window bounds (``seq_len`` / ``min_seq_len``).
+  window bounds (``seq_len`` / ``min_seq_len``), plus the retrain progress: closed trades since the
+  last training against the threshold, and the latest run (:mod:`solia_ai.retrain_service`).
+* ``POST /model/retrain`` — start a ``manual`` retrain in the background: ``202`` with its
+  ``training_event_id`` once the run is recorded, ``409 retrain_in_progress`` while one runs.
 * ``GET /health`` — liveness.
+
+Retrains run on a worker thread (:class:`solia_ai.retrain_service.RetrainService`), never on a
+request thread or the event loop. The background trigger (``RETRAIN_SCHEDULER_ENABLED``) is
+started and stopped with the app's lifespan, which also records the runs a stopped process left in
+flight as ``failed`` (in the background). An app built over a caller-supplied ``load_champion``
+without a ``retrain`` service has no database-backed retrains.
 
 The champion is loaded **lazily, cached and refreshed**: importing the app and serving
 ``/health`` never touch the database, so the process starts even before a model is promoted; the
@@ -33,10 +42,11 @@ import os
 import tempfile
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -49,6 +59,8 @@ from starlette.exceptions import HTTPException
 from .features import FEATURE_COLUMNS, build_feature_matrix
 from .inference import NO_CHAMPION, Predictor
 from .model import IncompatibleCheckpointError
+from .retrain import RetrainBusyError
+from .retrain_service import RetrainService, RetrainStartError
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +115,13 @@ class PredictRequest(BaseModel):
         if not rows:
             raise ValueError("the feature window must hold at least one row")
         return rows
+
+
+class RetrainRequest(BaseModel):
+    """``POST /model/retrain`` body: only ``manual`` runs are started over the API (the scheduler
+    starts the ``n_trades`` ones itself)."""
+
+    trigger: Literal["manual"]
 
 
 class ApiError(HTTPException):
@@ -179,20 +198,59 @@ def check_model_dir_writable() -> bool:
     return True
 
 
+def lazy_engine(engine_factory: Callable[[], Any] | None = None) -> Callable[[], Any]:
+    """The process's one database engine, created on first use (so importing the app needs no
+    database) and shared by the champion loader and the retrain service."""
+    engine: Any = None
+    lock = threading.Lock()
+
+    def get() -> Any:
+        nonlocal engine
+        with lock:
+            if engine is None:
+                from .db import make_engine
+
+                engine = (engine_factory or make_engine)()
+            return engine
+
+    return get
+
+
 def create_app(
     load_champion: ChampionLoader | None = None,
     *,
+    retrain: RetrainService | None = None,
     refresh_seconds: float = DEFAULT_REFRESH_SECONDS,
     clock: Callable[[], float] = time.monotonic,
 ) -> FastAPI:
-    """Build the ai-service app. ``load_champion`` resolves (and refreshes) the champion; the
-    default reads the registry + checkpoint over one shared database engine. The registry is
-    re-checked at most every ``refresh_seconds`` (``clock`` is injectable for tests)."""
+    """Build the ai-service app. ``load_champion`` resolves (and refreshes) the champion and
+    ``retrain`` runs the retrains; the defaults work over one shared database engine. The registry
+    is re-checked at most every ``refresh_seconds`` (``clock`` is injectable for tests)."""
     if refresh_seconds < 0:
         raise ValueError(f"refresh_seconds must be >= 0, got {refresh_seconds}")
     check_model_dir_writable()
-    app = FastAPI(title="Solia ai-service", version="0.1.0")
-    app.state.load_champion = load_champion or registry_loader()
+    engine = lazy_engine()
+    if retrain is not None:
+        service = retrain
+    elif load_champion is not None:
+        # A caller-supplied loader (a test, an embedding) gets no database-backed retrains: no env
+        # read, no scheduler, no progress query against a database it never asked for.
+        service = RetrainService.unavailable()
+    else:
+        service = RetrainService.from_engine(engine)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        service.recover_in_background()
+        service.start_scheduler()
+        try:
+            yield
+        finally:
+            service.stop_scheduler()
+
+    app = FastAPI(title="Solia ai-service", version="0.1.0", lifespan=lifespan)
+    app.state.load_champion = load_champion or registry_loader(engine)
+    app.state.retrain = service
     app.state.champion = None
     lock = threading.Lock()
     checked_at = 0.0
@@ -240,7 +298,19 @@ def create_app(
             "metrics": loaded.metrics or {},
             "seq_len": loaded.predictor.seq_len,
             "min_seq_len": loaded.predictor.min_seq_len,
+            **service.progress(),
         }
+
+    @app.post("/model/retrain", status_code=202)
+    def retrain_now(request: RetrainRequest) -> dict[str, int]:
+        try:
+            event_id = service.start(request.trigger)
+        except RetrainBusyError as exc:
+            raise ApiError(409, "retrain_in_progress", str(exc)) from exc
+        except RetrainStartError as exc:
+            logger.error("manual retrain not started: %s", exc)
+            raise ApiError(503, "retrain_unavailable", str(exc)) from exc
+        return {"training_event_id": event_id}
 
     @app.post("/predict")
     def predict(request: PredictRequest) -> dict[str, Any]:
@@ -297,24 +367,20 @@ def _first_error(exc: RequestValidationError) -> str:
     return f"{location}: {message}" if location else message
 
 
-def registry_loader(engine_factory: Callable[[], Any] | None = None) -> ChampionLoader:
-    """The database-backed loader: reads the registry champion over **one** engine, created on
-    first use (so importing the app needs no database) and reused by every later call.
+def registry_loader(engine: Callable[[], Any] | None = None) -> ChampionLoader:
+    """The database-backed loader: reads the registry champion over ``engine()`` — the shared
+    :func:`lazy_engine` getter (one engine, created on first use, so importing the app needs no
+    database); a fresh one when omitted.
 
     The checkpoint is only loaded when the registry's champion version differs from the cached
     one; the predictor is stamped with the registry version — the identity callers echo back.
     """
-    engine: Any = None
+    get_engine = engine or lazy_engine()
 
     def load(current: LoadedChampion | None) -> LoadedChampion:
-        nonlocal engine
         from .registry import read_champion
 
-        if engine is None:
-            from .db import make_engine
-
-            engine = (engine_factory or make_engine)()
-        record = read_champion(engine)
+        record = read_champion(get_engine())
         if record is None:
             raise LookupError(NO_CHAMPION)
         if current is not None and current.version == record.version:

@@ -1,7 +1,7 @@
 # ai-service (Python 3.11 · PyTorch · FastAPI)
 
 The Transformer model: dataset building, training, inference (+ ONNX export for the .NET fast
-path), and an internal prediction API. Continuous retraining lands in Sprint 7.
+path), an internal prediction API, and continuous retraining (Sprint 7).
 
 - **Design:** [ML-MODEL.md](../../docs/ML-MODEL.md) · [API-CONTRACTS.md](../../docs/API-CONTRACTS.md) · [ARCHITECTURE.md](../../docs/ARCHITECTURE.md) (§5 inference paths)
 - **Sprint:** [Sprint 2](../../docs/sprints/SPRINT-02-ai-model.md)
@@ -9,8 +9,8 @@ path), and an internal prediction API. Continuous retraining lands in Sprint 7.
 ## Status
 
 Sprint 2 complete: feature spec, dataset/labeling, Transformer model, training + checkpoints,
-inference + ONNX export, evaluation, and the internal prediction API. Continuous retraining
-(`retrain.py` + `/model/retrain`) lands in Sprint 7.
+inference + ONNX export, evaluation, and the internal prediction API. Sprint 7 adds continuous
+retraining (`retrain.py` + `/model/retrain` + the background trigger, see below).
 
 ## Dev setup
 
@@ -118,6 +118,9 @@ The champion is loaded lazily and cached, so the process starts before a model i
 uvicorn solia_ai.api:app --port 8000
 ```
 
-## Planned modules
+## Continuous retraining
 
-`retrain.py` (continuous-training orchestrator + `/model/retrain`) arrives in Sprint 7.
+`retrain.py` is the orchestrator (`python -m solia_ai.retrain`, see `docs/ML-MODEL.md`); inside the API,
+`retrain_service.py` serves `POST /model/retrain` (`{"trigger": "manual"}` → `202 {"training_event_id"}`,
+`409` while one runs) and the background trigger: `RETRAIN_SCHEDULER_ENABLED` (default `false`; `true` in
+compose), `RETRAIN_CHECK_INTERVAL_SECONDS` (default 300), `RETRAIN_EVERY_N_TRADES` (default 500).

@@ -25,7 +25,8 @@ public static class ModelEndpoints
             .WithName("TriggerRetrain").WithTags("model")
             .WithSummary("Kick off a manual retrain on the ai-service.")
             .ProducesError(
-                StatusCodes.Status400BadRequest, StatusCodes.Status502BadGateway, StatusCodes.Status503ServiceUnavailable);
+                StatusCodes.Status400BadRequest, StatusCodes.Status409Conflict, StatusCodes.Status502BadGateway,
+                StatusCodes.Status503ServiceUnavailable);
         return group;
     }
 
@@ -98,7 +99,10 @@ public static class ModelEndpoints
         return await closed.LongCountAsync(cancellationToken);
     }
 
-    /// <summary>Kicks off a manual retrain on the ai-service: <c>202 Accepted</c> + the run's <c>training_event_id</c>.</summary>
+    /// <summary>
+    /// Kicks off a manual retrain on the ai-service: <c>202 Accepted</c> + the run's <c>training_event_id</c>;
+    /// <c>409 conflict</c> while a retrain is already running.
+    /// </summary>
     internal static async Task<Accepted<RetrainResponse>> RetrainAsync(ISoliaAiClient ai, CancellationToken cancellationToken)
     {
         AiRetrainResponse response = await ai.TriggerRetrainAsync(cancellationToken);

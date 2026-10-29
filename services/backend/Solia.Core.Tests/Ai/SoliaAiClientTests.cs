@@ -274,6 +274,21 @@ public class SoliaAiClientTests
         Assert.Equal(AiServiceErrorKind.Unavailable, ex.Kind);
     }
 
+    [Fact]
+    public async Task Retrain_already_running_is_a_busy_conflict_and_never_retried()
+    {
+        var handler = new StubHandler(
+            Error(HttpStatusCode.Conflict, "retrain_in_progress", "a retrain is already running; try again later"));
+        using ServiceProvider provider = AiClientTestHost.Build(handler);
+
+        var ex = await Assert.ThrowsAsync<AiServiceException>(() => provider.Client().TriggerRetrainAsync());
+
+        Assert.Equal(1, handler.Calls);
+        Assert.Equal(AiServiceErrorKind.Busy, ex.Kind);
+        Assert.Equal(409, ex.StatusCode);
+        Assert.Equal("retrain_in_progress", ex.UpstreamCode);
+    }
+
     // ------------------------------------------------------------------ error envelopes
 
     [Theory]
@@ -284,6 +299,8 @@ public class SoliaAiClientTests
     [InlineData(HttpStatusCode.ServiceUnavailable, "no_champion", AiServiceErrorKind.NoChampion, 503, ApiErrorCodes.Unavailable)]
     [InlineData(HttpStatusCode.ServiceUnavailable, "champion_incompatible", AiServiceErrorKind.NoChampion, 503, ApiErrorCodes.Unavailable)]
     [InlineData(HttpStatusCode.ServiceUnavailable, "champion_unavailable", AiServiceErrorKind.Unavailable, 503, ApiErrorCodes.Unavailable)]
+    [InlineData(HttpStatusCode.Conflict, "retrain_in_progress", AiServiceErrorKind.Busy, 409, ApiErrorCodes.Conflict)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, "retrain_unavailable", AiServiceErrorKind.Unavailable, 503, ApiErrorCodes.Unavailable)]
     [InlineData(HttpStatusCode.InternalServerError, "internal_error", AiServiceErrorKind.UpstreamError, 502, ApiErrorCodes.InternalError)]
     [InlineData(HttpStatusCode.NotFound, "http_error", AiServiceErrorKind.UpstreamError, 502, ApiErrorCodes.InternalError)]
     public async Task Error_envelope_maps_to_a_typed_exception_and_the_public_error_shape(
@@ -419,6 +436,51 @@ public class SoliaAiClientTests
         Assert.IsType<TimeoutRejectedException>(ex.InnerException);
         Assert.Equal(2, handler.Calls);
     }
+
+    [Fact]
+    public async Task Retrain_waits_past_the_attempt_timeout_up_to_the_retrain_timeout()
+    {
+        // The ai-service answers once the run is recorded, which may take longer than an ordinary call.
+        var handler = new StubHandler(async (request, ct) =>
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(300), ct);
+            return await Json(HttpStatusCode.Accepted, """{"training_event_id":5}""")(request, ct);
+        });
+        using ServiceProvider provider = AiClientTestHost.Build(handler, new Dictionary<string, string?>
+        {
+            ["AiService:AttemptTimeout"] = "00:00:00.050",
+            ["AiService:TotalTimeout"] = "00:00:00.200",
+            ["AiService:MaxRetryAttempts"] = "0",
+            ["AiService:RetrainTimeout"] = "00:00:05",
+        });
+
+        AiRetrainResponse response = await provider.Client().TriggerRetrainAsync();
+
+        Assert.Equal(5, response.TrainingEventId);
+    }
+
+    [Fact]
+    public async Task Retrain_timeout_bounds_the_retrain_call_without_a_retry()
+    {
+        var handler = new StubHandler(Hangs());
+        using ServiceProvider provider = AiClientTestHost.Build(handler, new Dictionary<string, string?>
+        {
+            ["AiService:RetrainTimeout"] = "00:00:00.100",
+        });
+
+        var ex = await Assert.ThrowsAsync<AiServiceException>(() => provider.Client().TriggerRetrainAsync());
+
+        Assert.Equal(AiServiceErrorKind.Unavailable, ex.Kind);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Theory]
+    [InlineData("/model/retrain", true)]
+    [InlineData("/root/model/retrain", true)]
+    [InlineData("/model/status", false)]
+    [InlineData("/predict", false)]
+    public void Only_the_retrain_route_gets_the_retrain_timeout(string path, bool retrain) =>
+        Assert.Equal(retrain, AiClientServiceCollectionExtensions.IsRetrainPipeline(path));
 
     [Fact]
     public async Task Total_timeout_bounds_the_whole_call()
@@ -571,6 +633,7 @@ public class SoliaAiClientTests
     [InlineData("AiService:MaxFeatureWindowSize", "0")]
     [InlineData("AiService:MaxFeatureWindowSize", "4097")]
     [InlineData("AiService:RetrainThreshold", "0")]
+    [InlineData("AiService:RetrainTimeout", "00:00:00")]
     [InlineData("RETRAIN_EVERY_N_TRADES", "-5")]
     public void Invalid_options_fail_validation(string key, string value)
     {
@@ -588,6 +651,8 @@ public class SoliaAiClientTests
         Assert.True(options.HasConsistentTimeouts());
         Assert.Equal(256, options.MaxFeatureWindowSize); // a cap above the model's seq_len (64), which the ai-service applies
         Assert.Equal(500, options.RetrainThreshold); // RETRAIN_EVERY_N_TRADES in .env.example
+        // Above the ai-service's 20 s start timeout (DEFAULT_START_TIMEOUT_SECONDS), so it answers first.
+        Assert.True(options.RetrainTimeout > TimeSpan.FromSeconds(20));
     }
 
     [Theory]

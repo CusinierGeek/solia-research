@@ -26,7 +26,7 @@ from solia_ai.dataset import config_samples
 from solia_ai.features import FEATURE_COLUMNS
 from solia_ai.inference import feature_index
 from solia_ai.promotion import PromotionSettings, decide_promotion
-from solia_ai.registry import read_champion, register_model
+from solia_ai.registry import latest_training_event, read_champion, register_model
 from solia_ai.retrain import (
     Evaluation,
     RetrainBusyError,
@@ -295,6 +295,57 @@ def test_a_manual_or_forced_run_bypasses_the_threshold(engine):
     assert outcome.status != "skipped"
 
 
+def test_on_started_gets_the_recorded_event_id_before_the_run_ends(engine):
+    seen = []
+
+    def on_started(event_id):
+        row = events(engine)[-1]
+        seen.append((event_id, row["id"], row["decision"]))  # recorded, still in flight
+
+    outcome = run(engine, stub(0.5), on_started=on_started)
+
+    assert seen == [(outcome.event_id, outcome.event_id, None)]
+
+
+def test_on_started_is_not_called_for_a_skipped_run_and_its_errors_are_only_logged(engine):
+    seen = []
+    assert run(engine, stub(0.5), trigger="n_trades", on_started=seen.append).status == "skipped"
+    assert seen == []
+
+    def broken(event_id):
+        raise RuntimeError("callback bug")
+
+    assert run(engine, stub(0.5), on_started=broken).status == "promoted"
+
+
+def test_latest_training_event_summarizes_the_newest_run(engine):
+    assert latest_training_event(engine) is None
+    add_event(engine, "rejected", T0)
+    newest = add_event(engine, None, T0 + timedelta(minutes=5))
+
+    assert latest_training_event(engine) == {
+        "id": newest,
+        "trigger": "manual",
+        "started_at": (T0 + timedelta(minutes=5)).isoformat(),
+        "finished_at": None,
+        "decision": None,
+    }
+
+
+def test_the_api_service_reads_progress_from_the_database(engine, monkeypatch):
+    from solia_ai.retrain_service import RetrainService
+
+    monkeypatch.setenv("RETRAIN_EVERY_N_TRADES", "7")
+    add_trades(engine, 3)
+    event = add_event(engine, "promoted", T0 - timedelta(minutes=1))
+
+    progress = RetrainService.from_engine(lambda: engine).progress()
+
+    assert (progress["trades_since_last_train"], progress["retrain_threshold"]) == (3, 7)
+    assert progress["latest_run"]["id"] == event
+    assert progress["latest_run"]["decision"] == "promoted"
+
+
 def test_a_concurrent_run_is_refused_not_queued(engine):
     fn = stub(0.5)
     with retrain_lock(engine):
@@ -304,6 +355,37 @@ def test_a_concurrent_run_is_refused_not_queued(engine):
             rollback(engine, gate_config())
     assert fn.calls == [] and events(engine) == []
     assert run(engine, fn).status == "promoted"  # the lock was released
+
+
+def test_recovery_records_runs_left_in_flight_as_failed(engine):
+    done = add_event(engine, "rejected", T0 - timedelta(hours=2))
+    stale = add_event(engine, None, T0 - timedelta(hours=1))  # its process died mid-training
+
+    assert retrain.recover_abandoned_runs(engine) == [stale]
+
+    rows = {row["id"]: row for row in events(engine)}
+    assert rows[stale]["decision"] == "failed" and rows[stale]["finished_at"] is not None
+    assert rows[stale]["notes"] == retrain.ABANDONED_NOTE
+    assert rows[done]["decision"] == "rejected"  # finished runs are left alone
+    assert retrain.recover_abandoned_runs(engine) == []  # idempotent
+    assert latest_training_event(engine)["decision"] == "failed"  # no longer "running"
+
+
+def test_recovery_leaves_a_live_run_alone(engine):
+    live = add_event(engine, None, T0)
+    with retrain_lock(engine):  # another process is training
+        assert retrain.recover_abandoned_runs(engine) == []
+    assert events(engine)[0]["id"] == live and events(engine)[0]["decision"] is None
+
+
+def test_a_run_closes_an_abandoned_run_before_recording_its_own(engine):
+    stale = add_event(engine, None, T0 - timedelta(hours=1))
+
+    outcome = run(engine, stub(0.5))
+
+    rows = {row["id"]: row for row in events(engine)}
+    assert rows[stale]["decision"] == "failed"
+    assert rows[outcome.event_id]["decision"] == "promoted"
 
 
 def test_a_lost_lock_is_detected_and_released(engine):
