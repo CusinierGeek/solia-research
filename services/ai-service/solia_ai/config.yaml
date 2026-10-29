@@ -91,6 +91,14 @@ candidate:
   val_fraction: 0.2 # early-stopping/calibration split of the training range
   min_train_samples: 1000 # fewer training windows is an error, not a candidate
 
+# Checkpoint retention (solia_ai/retention.py): after each retrain (and `python -m solia_ai.retrain
+# prune`), checkpoint files in MODEL_DIR are deleted except the champion's, those of the previous
+# champions a rollback walks back to, and the newest candidates. A pruned model keeps its `models`
+# row (pruned_at set), so its history stays and a rollback to it is refused.
+retention:
+  keep_candidates: 5 # newest registered models kept besides the champion (0 = none)
+  rollback_depth: 2 # previous champions kept for rollback (each rollback walks one further back)
+
 # Prediction horizons.
 horizons: ["30s", "1m", "5m", "15m", "1h"]
 

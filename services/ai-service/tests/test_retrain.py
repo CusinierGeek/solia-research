@@ -142,6 +142,12 @@ def test_a_failed_unlock_never_masks_the_run():
 # --------------------------------------------------------------------------- database
 
 
+@pytest.fixture(autouse=True)
+def isolated_model_dir(tmp_path, monkeypatch):
+    """Runs prune their checkpoint directory afterwards: never let it default to ./models."""
+    monkeypatch.setenv("MODEL_DIR", str(tmp_path / "model-dir"))
+
+
 @pytest.fixture
 def engine(pg_url):
     eng = create_engine(pg_url)

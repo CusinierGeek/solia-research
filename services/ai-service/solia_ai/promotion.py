@@ -365,7 +365,7 @@ def check_rollback(
     is that version's, its feature spec still loads on ``feature_columns`` (an ordered subset, as
     :func:`solia_ai.inference.build_model` requires) and it serves the configured ``horizons``.
     A checkpoint that does not record its version, feature spec or horizons cannot be verified,
-    so it is refused rather than trusted.
+    so it is refused rather than trusted; one the retention policy pruned (``pruned_at``) is gone.
     """
     reasons: list[str] = []
     if current is None:
@@ -375,7 +375,12 @@ def check_rollback(
         return RollbackCheck(False, tuple(reasons), None)
     if current is not None and previous.id == current.id:
         reasons.append(f"model {previous.version} is already the champion")
-    if checkpoint is None:
+    if previous.pruned_at is not None:
+        reasons.append(
+            f"checkpoint of {previous.version} was pruned by the retention policy at "
+            f"{previous.pruned_at.isoformat()}"
+        )
+    elif checkpoint is None:
         reasons.append(f"checkpoint of {previous.version} not found at {previous.path}")
     else:
         unrecorded = [name for name in ROLLBACK_METADATA if checkpoint.get(name) is None]

@@ -197,6 +197,7 @@ Model registry / versioning.
 | metrics | JSONB | validation metrics at promotion |
 | hyperparams | JSONB | config snapshot |
 | n_params | BIGINT | |
+| pruned_at | TIMESTAMPTZ | when the retention policy deleted the checkpoint file (added by 0011); NULL = never pruned. The row is kept for its history; never set on the champion (`models_champion_not_pruned_check`), and a rollback to a pruned model is refused |
 
 Only one row should have `is_champion = true`.
 

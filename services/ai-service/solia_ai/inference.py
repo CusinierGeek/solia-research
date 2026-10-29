@@ -28,8 +28,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import re
 import warnings
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -41,6 +39,7 @@ import torch
 from torch import nn
 
 from .calibration import Calibration
+from .checkpoints import resolve_checkpoint_path  # noqa: F401  (re-exported for callers)
 from .dataset import pad_window
 from .features import FEATURE_COLUMNS, is_ordered_subset
 from .model import IncompatibleCheckpointError, SoliaTransformer
@@ -141,26 +140,6 @@ def load_checkpoint(path: str | Path) -> dict[str, Any]:
     if not isinstance(checkpoint, dict) or "model_state" not in checkpoint:
         raise ValueError(f"{path} is not a Solia checkpoint (no 'model_state')")
     return checkpoint
-
-
-def resolve_checkpoint_path(path: str | Path) -> Path:
-    """The registered checkpoint ``path`` if it exists here, else the same file name in
-    ``$MODEL_DIR``.
-
-    The registry stores the absolute path where training wrote the checkpoint, which is only
-    valid on that machine: a champion trained on the host (``./models``) and served from the
-    container (``/app/models`` volume) is found by name in the serving process's model directory.
-    """
-    registered = Path(path)
-    if registered.is_file():
-        return registered
-    model_dir = os.environ.get("MODEL_DIR")
-    if model_dir:
-        # Split on both separators: a Windows-registered path read on Linux has no "/" in it.
-        candidate = Path(model_dir) / re.split(r"[\\/]", str(path))[-1]
-        if candidate.is_file():
-            return candidate
-    return registered  # missing everywhere: let load_checkpoint raise on the registered path
 
 
 def feature_index(columns: Sequence[str]) -> list[int] | None:

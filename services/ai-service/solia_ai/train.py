@@ -46,6 +46,7 @@ from torch.utils.data import DataLoader
 
 from .calibration import Calibration
 from .calibration import settings as calibration_settings
+from .checkpoints import model_directory
 from .config import load_config
 from .dataset import (
     SequenceDataset,
@@ -57,8 +58,6 @@ from .evaluate import calibrate
 from .features import BASELINE_GROUPS
 from .loss import SoliaLoss
 from .model import SoliaTransformer
-
-DEFAULT_MODEL_DIR = "models"
 
 
 @dataclass
@@ -409,9 +408,7 @@ def train(
     model, metrics = fitted.model, fitted.metrics
 
     version = version or default_version()
-    directory = Path(
-        model_dir if model_dir is not None else os.environ.get("MODEL_DIR") or DEFAULT_MODEL_DIR
-    ).resolve()
+    directory = model_directory(model_dir).resolve()
     directory.mkdir(parents=True, exist_ok=True)
     checkpoint_path = directory / f"{version}.pt"
     train_end_ts = int(train_ds.samples.end_ts[train_ds.indices].max())

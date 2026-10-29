@@ -28,6 +28,11 @@ One entry point for docs/ML-MODEL.md "Continuous training loop":
 checkpoint, and records a ``rollback`` event. Refused (:class:`RollbackRefusedError`) when there is
 no previous champion, its checkpoint is missing or it no longer fits the config.
 
+**Retention** (:func:`prune`): after each run that recorded a decision, and on demand
+(``python -m solia_ai.retrain prune [--dry-run] [--delete-orphans]``), old checkpoint files are
+deleted under the same lock (:mod:`solia_ai.retention`; a dry run only reads, without it). A failed
+prune is only logged: the run already committed.
+
 Every step of a run is logged to stdout and to the ``logs`` table (service ``ai-service``); a skip
 (not due) only to stdout. DB writes are raw
 SQL; the data-pipeline tables are only read. Paper trading only: nothing here places an order.
@@ -58,10 +63,20 @@ from .registry import (
     ModelRecord,
     insert_model,
     last_train_cutoff,
+    previous_champion,
     read_champion,
-    record_columns,
-    row_to_record,
     to_json,
+)
+from .retention import (
+    PruneError,
+    PruneOutcome,
+    PrunePlan,
+    RetentionSettings,
+    apply_prune,
+    describe,
+    fallback_directory,
+    model_directory,
+    plan_prune,
 )
 
 logger = logging.getLogger(__name__)
@@ -587,6 +602,7 @@ class RetrainOutcome:
     candidate_id: int | None = None
     candidate_version: str | None = None
     reasons: tuple[str, ...] = ()
+    pruned: tuple[str, ...] = ()  # versions whose checkpoint the retention policy pruned
 
 
 def run_retrain(
@@ -728,6 +744,7 @@ def run_retrain(
             + "; ".join(verdict.reasons),
             {**context, "decision": verdict.event_decision, "reasons": list(verdict.reasons)},
         )
+        pruned = _prune_after_run(engine, cfg, lock, model_dir, event_id)
         return RetrainOutcome(
             verdict.event_decision,
             trades,
@@ -736,6 +753,7 @@ def run_retrain(
             candidate_id=record.id,
             candidate_version=candidate.version,
             reasons=verdict.reasons,
+            pruned=pruned,
         )
 
 
@@ -768,23 +786,6 @@ class RollbackOutcome:
     replaced: ModelRecord
 
 
-def previous_champion(engine: Engine, current: ModelRecord) -> ModelRecord | None:
-    """The champion ``current`` replaced: the ``champion_model_id`` of the latest ``promoted`` run
-    that crowned it (``None`` for a first champion or one promoted outside a retrain). Rolling back
-    again from the restored model therefore walks further back, never in a loop."""
-    with engine.connect() as conn:
-        row = conn.execute(
-            text(
-                f"SELECT {record_columns('m')} "
-                "FROM training_events e JOIN models m ON m.id = e.champion_model_id "
-                "WHERE e.decision = 'promoted' AND e.candidate_model_id = :current "
-                "ORDER BY e.started_at DESC, e.id DESC LIMIT 1"
-            ),
-            {"current": current.id},
-        ).one_or_none()
-    return None if row is None else row_to_record(row)
-
-
 def rollback(engine: Engine, config: Mapping[str, Any] | None = None) -> RollbackOutcome:
     """Restore the previous champion and record a ``rollback`` event.
 
@@ -801,7 +802,7 @@ def rollback(engine: Engine, config: Mapping[str, Any] | None = None) -> Rollbac
         current = read_champion(engine)
         previous = previous_champion(engine, current) if current else None
         checkpoint = None
-        if previous is not None:
+        if previous is not None and previous.pruned_at is None:
             try:
                 checkpoint = load_checkpoint(resolve_checkpoint_path(previous.path))
             except Exception as exc:
@@ -848,16 +849,159 @@ def rollback(engine: Engine, config: Mapping[str, Any] | None = None) -> Rollbac
         )
 
 
+# --------------------------------------------------------------------------- retention
+
+
+def _logged_before(engine: Engine, level: str, message: str) -> bool:
+    """Whether this exact line is already in the ``logs`` table (a failed read counts as no)."""
+    try:
+        with engine.connect() as conn:
+            return (
+                conn.execute(
+                    text(
+                        "SELECT 1 FROM logs WHERE service = :service AND level = :level "
+                        "AND message = :message LIMIT 1"
+                    ),
+                    {"service": SERVICE, "level": level, "message": message},
+                ).first()
+                is not None
+            )
+    except Exception:
+        return False
+
+
+def _log_prune(engine: Engine, outcome: PruneOutcome, label: str) -> None:
+    """Log what changed. Refused models and orphans are lasting states found again on every run:
+    each one is warned about once (its message carries no run label), not after every retrain."""
+    plan = outcome.plan
+    context = {
+        "model_dir": str(plan.directory),
+        "pruned": list(outcome.marked),
+        "missing": [m.version for m in plan.missing],
+        "orphans": [str(p) for p in plan.orphans + plan.recent_orphans],
+        "orphans_deleted": [str(p) for p in outcome.orphans_deleted],
+        "refused": [{"version": m.version, "reason": why} for m, why in plan.refused],
+    }
+    if outcome.marked or outcome.orphans_deleted:
+        db_log(
+            engine,
+            "info",
+            f"{label}: pruned {len(outcome.marked)} checkpoint(s)"
+            + (f" ({', '.join(outcome.marked)})" if outcome.marked else "")
+            + (f", deleted {len(outcome.orphans_deleted)} orphan(s)" if outcome.orphans_deleted
+               else ""),
+            context,
+        )  # fmt: skip
+    deleted = set(outcome.orphans_deleted)
+    warnings = [
+        f"retention: orphan checkpoint {orphan} has no models row "
+        "(kept; delete with prune --delete-orphans)"
+        for orphan in plan.orphans
+        if orphan not in deleted
+    ] + [f"retention: {model.version} not pruned: {why}" for model, why in plan.refused]
+    for message in warnings:
+        if not _logged_before(engine, "warn", message):
+            db_log(engine, "warn", message, context)
+    for error in outcome.errors:
+        db_log(engine, "error", f"{label}: {error}", context)
+
+
+def _plan(
+    engine: Engine, config: Mapping[str, Any], model_dir: str | os.PathLike[str] | None
+) -> PrunePlan:
+    return plan_prune(
+        engine,
+        RetentionSettings.from_config(config),
+        model_directory(model_dir),
+        fallback_dir=fallback_directory(model_dir),
+    )
+
+
+def _prune_locked(
+    engine: Engine,
+    config: Mapping[str, Any],
+    lock: RetrainLock,
+    model_dir: str | os.PathLike[str] | None,
+    *,
+    delete_orphans: bool,
+    label: str,
+) -> PruneOutcome:
+    outcome = apply_prune(
+        engine,
+        _plan(engine, config, model_dir),
+        delete_orphans=delete_orphans,
+        ensure_held=lock.ensure_held,
+    )
+    _log_prune(engine, outcome, label)
+    return outcome
+
+
+def _prune_after_run(
+    engine: Engine,
+    config: Mapping[str, Any],
+    lock: RetrainLock,
+    model_dir: str | os.PathLike[str] | None,
+    event_id: int,
+) -> tuple[str, ...]:
+    """Prune once a run is recorded; never raises (the run already committed)."""
+    try:
+        outcome = _prune_locked(
+            engine,
+            config,
+            lock,
+            model_dir,
+            delete_orphans=False,
+            label=f"retention after retrain #{event_id}",
+        )
+    except Exception as exc:
+        db_log(
+            engine,
+            "warn",
+            f"retention after retrain #{event_id} failed: {type(exc).__name__}: {exc}",
+            {"training_event_id": event_id},
+        )
+        return ()
+    return outcome.marked
+
+
+def prune(
+    engine: Engine,
+    config: Mapping[str, Any] | None = None,
+    *,
+    model_dir: str | os.PathLike[str] | None = None,
+    dry_run: bool = False,
+    delete_orphans: bool = False,
+) -> PruneOutcome:
+    """Apply the retention policy now (see :mod:`solia_ai.retention`). A dry run changes nothing
+    and only reads, so it runs without the retrain lock, even during a retrain.
+
+    Raises:
+        RetrainBusyError: a retrain or rollback is running (not for a dry run).
+        PruneError: no registered checkpoint is found in the directory (nothing is changed).
+    """
+    from .config import load_config
+
+    cfg = load_config() if config is None else config
+    if dry_run:
+        return apply_prune(engine, _plan(engine, cfg, model_dir), dry_run=True)
+    with retrain_lock(engine) as lock:
+        return _prune_locked(
+            engine, cfg, lock, model_dir, delete_orphans=delete_orphans, label="retention"
+        )
+
+
 # --------------------------------------------------------------------------- CLI
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        description="Retrain the model when due (promote or reject the candidate), or roll back."
+        description="Retrain the model when due (promote or reject the candidate), roll back, or "
+        "prune old checkpoints."
     )
     parser.add_argument(
-        "command", nargs="?", choices=("run", "rollback"), default="run",
-        help="run a retrain (default) or restore the previous champion",
+        "command", nargs="?", choices=("run", "rollback", "prune"), default="run",
+        help="run a retrain (default), restore the previous champion, or apply the checkpoint "
+        "retention policy",
     )  # fmt: skip
     parser.add_argument("--trigger", choices=RUN_TRIGGERS, default="n_trades")
     parser.add_argument("--force", action="store_true", help="skip the closed-trades check")
@@ -866,6 +1010,13 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--limit", type=int, help="cap the number of feature rows read")
     parser.add_argument("--device", help="torch device (default: cuda if available, else cpu)")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="prune: list what would be deleted, delete nothing"
+    )
+    parser.add_argument(
+        "--delete-orphans", action="store_true",
+        help="prune: also delete checkpoint files that have no models row",
+    )  # fmt: skip
     args = parser.parse_args(argv)
 
     from .db import make_engine
@@ -876,6 +1027,17 @@ def main(argv: list[str] | None = None) -> None:
         if args.command == "rollback":
             done = rollback(engine)
             print(f"rolled back to {done.restored.version} (event {done.event_id})")
+            return
+        if args.command == "prune":
+            pruned = prune(
+                engine,
+                model_dir=Path(args.model_dir) if args.model_dir else None,
+                dry_run=args.dry_run,
+                delete_orphans=args.delete_orphans,
+            )
+            print("\n".join(describe(pruned)))
+            if pruned.errors:
+                raise SystemExit(1)
             return
         if args.device is None:
             import torch
@@ -892,7 +1054,7 @@ def main(argv: list[str] | None = None) -> None:
     except RetrainBusyError as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(75) from None  # EX_TEMPFAIL: retry later
-    except RollbackRefusedError as exc:
+    except (RollbackRefusedError, PruneError) as exc:
         raise SystemExit(str(exc)) from None
     if outcome.status == "skipped":
         print(

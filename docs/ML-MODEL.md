@@ -167,6 +167,26 @@ checkpoint is missing or incompatible. Steps are logged to stdout and `logs` (se
 re-reads the registry champion every 30 s (`api.DEFAULT_REFRESH_SECONDS`), so a promotion or rollback is
 served without a restart.
 
+### Checkpoint retention
+
+Every retrain writes a checkpoint to `MODEL_DIR`; `solia_ai/retention.py` keeps the volume bounded without breaking
+serving or rollback. It runs after each run that recorded a decision (a failed prune is only logged: the run
+already committed) and on demand, `python -m solia_ai.retrain prune [--dry-run] [--delete-orphans]`, under the
+retrain lock (`--dry-run` only reads: no lock, changes nothing). Kept: the **champion**, the
+`retention.rollback_depth` (default 2) **previous champions** a rollback walks back to, and the
+`retention.keep_candidates` (default 5) **newest** other models whose checkpoint is still there. Every other
+checkpoint file is deleted, but its `models` row stays (version, metrics, history) with `pruned_at` set (migration
+0011; the champion can never be pruned, CHECK), so `check_rollback` refuses a rollback to it cleanly. Files are
+found as serving finds them (`solia_ai/checkpoints.py`: registered path, else the file name in `--model-dir` /
+`$MODEL_DIR`). A model whose file is not found is reported as missing and left unmarked; if no registered
+checkpoint at all is found in the directory, the prune is refused (wrong directory). The planned rows are locked
+and re-checked before deletion (a model promoted meanwhile is skipped); a file that can't be deleted is reported
+and left unmarked. Only files resolving inside `MODEL_DIR` are deleted (symlinks / `..` resolved first): a row
+pointing elsewhere is refused, and a file that is (or may be, through the file-name fallback) a kept model's
+checkpoint is never deleted. Orphan `*.pt` files (no `models` row, e.g. a crashed run's) are reported and only
+deleted with `--delete-orphans`, and only once older than an hour (a training run outside the retrain lock writes
+its checkpoint before its row). Refused models and orphans are warned about once in `logs`, not after every run.
+
 ### Promotion gate: guard against luck-driven false champions
 
 The promotion gate is a **controlled offline comparison**: candidate and champion are scored on the
@@ -301,7 +321,8 @@ python -m solia_ai.search --trials 30 --max-minutes 240 --windows 3 --seeds 0 1 
 | `ablation.py` | Per-feature-group lift across windows & seeds |
 | `search.py` | Hyperparameter & labeling-threshold search (proposes a `config.yaml` diff) |
 | `inference.py` | Load champion, run predictions (+ ONNX export) |
-| `retrain.py` | Continuous-training orchestrator: trade-count trigger, one run at a time, `training_events` audit, promote/reject, rollback |
+| `retrain.py` | Continuous-training orchestrator: trade-count trigger, one run at a time, `training_events` audit, promote/reject, rollback, prune |
+| `retention.py` | Checkpoint retention policy: keep champion + rollback chain + newest candidates, mark pruned rows |
 | `api.py` | FastAPI app (`/predict`, `/model/status`, `/model/retrain`) |
 | `config.yaml` | All hyperparameters & thresholds |
 

@@ -70,6 +70,13 @@ CANDIDATE_DEFAULTS: dict[str, Any] = {
     "min_train_samples": 1000,
 }
 
+# solia_ai.retention's knobs and defaults (``config.yaml`` ``retention``); defined here so
+# validation stays torch-free.
+RETENTION_DEFAULTS: dict[str, Any] = {
+    "keep_candidates": 5,
+    "rollback_depth": 2,
+}
+
 Lookup = Callable[[str], str | None]
 
 
@@ -124,6 +131,29 @@ def validate_config(config: Any, source: str = "config") -> None:
     """Raise :class:`ConfigError` unless ``config`` is a valid config mapping (the rules
     :func:`load_config` applies to a file), e.g. for a config built in memory."""
     _validate(config, source)
+
+
+def validate_retention(config: Any, source: str = "config") -> None:
+    """Raise :class:`ConfigError` unless the ``retention`` section (optional) is valid. Checks only
+    that section, so retention keeps working when an unrelated section is broken."""
+    if not isinstance(config, dict):
+        raise ConfigError(
+            f"{source}: expected a mapping at the top level, got {type(config).__name__}"
+        )
+    if "retention" not in config:
+        return
+    retention = config["retention"]
+    if not isinstance(retention, dict):
+        raise ConfigError(f"{source}: 'retention' must be a mapping")
+    unknown = [str(k) for k in retention if k not in RETENTION_DEFAULTS]
+    if unknown:
+        raise ConfigError(f"{source}: 'retention' has unknown key(s): {', '.join(unknown)}")
+    for key in RETENTION_DEFAULTS:
+        value = retention.get(key, 0)
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ConfigError(f"{source}: 'retention.{key}' must be an integer, got {value!r}")
+        if value < 0:
+            raise ConfigError(f"{source}: 'retention.{key}' must be >= 0, got {value!r}")
 
 
 def _validate(config: Any, source: str) -> None:
@@ -308,6 +338,8 @@ def _validate(config: Any, source: str) -> None:
             0 < number("candidate", "warm_start_lr_factor") <= 1
         ):
             fail("'candidate.warm_start_lr_factor' must be in (0, 1]")
+
+    validate_retention(config, source)
 
     labeling = section("labeling")
     if "max_gap_fraction" in labeling and not 0 < number("labeling", "max_gap_fraction") <= 1:

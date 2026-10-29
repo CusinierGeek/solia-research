@@ -32,10 +32,13 @@ class ModelRecord:
     is_champion: bool
     n_params: int | None
     created_at: datetime
+    # When the retention policy deleted its checkpoint file (:mod:`solia_ai.retention`); the row is
+    # kept for its history. Never set on the champion (CHECK, migration 0011).
+    pruned_at: datetime | None = None
 
 
 # The ``models`` columns a :class:`ModelRecord` is read from (:func:`record_columns`).
-RECORD_FIELDS = ("id", "version", "path", "is_champion", "n_params", "created_at")
+RECORD_FIELDS = ("id", "version", "path", "is_champion", "n_params", "created_at", "pruned_at")
 CHAMPION_INDEX = "models_single_champion_idx"
 VERSION_CONSTRAINT = "models_version_key"
 
@@ -65,6 +68,7 @@ def row_to_record(row: Any) -> ModelRecord:
         is_champion=bool(row.is_champion),
         n_params=None if row.n_params is None else int(row.n_params),
         created_at=row.created_at,
+        pruned_at=row.pruned_at,
     )
 
 
@@ -94,6 +98,23 @@ def read_champion(engine: Engine) -> ModelRecord | None:
     with engine.connect() as conn:
         row = conn.execute(
             text(f"SELECT {record_columns()} FROM models WHERE is_champion")
+        ).one_or_none()
+    return None if row is None else row_to_record(row)
+
+
+def previous_champion(engine: Engine, current: ModelRecord) -> ModelRecord | None:
+    """The champion ``current`` replaced: the ``champion_model_id`` of the latest ``promoted`` run
+    that crowned it (``None`` for a first champion or one promoted outside a retrain). Rolling back
+    again from the restored model therefore walks further back, never in a loop."""
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                f"SELECT {record_columns('m')} "
+                "FROM training_events e JOIN models m ON m.id = e.champion_model_id "
+                "WHERE e.decision = 'promoted' AND e.candidate_model_id = :current "
+                "ORDER BY e.started_at DESC, e.id DESC LIMIT 1"
+            ),
+            {"current": current.id},
         ).one_or_none()
     return None if row is None else row_to_record(row)
 

@@ -216,6 +216,7 @@ public sealed class SoliaDbContext(DbContextOptions<SoliaDbContext> options) : D
             e.Property(x => x.Metrics).HasColumnName("metrics").HasColumnType("jsonb");
             e.Property(x => x.Hyperparams).HasColumnName("hyperparams").HasColumnType("jsonb");
             e.Property(x => x.NParams).HasColumnName("n_params");
+            e.Property(x => x.PrunedAt).HasColumnName("pruned_at");
             e.HasIndex(x => x.Version).IsUnique();
         });
 

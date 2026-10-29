@@ -47,6 +47,7 @@ import numpy as np
 import pandas as pd
 import torch
 
+from .checkpoints import model_directory
 from .config import CANDIDATE_DEFAULTS, load_config, validate_config
 from .dataset import (
     Samples,
@@ -58,7 +59,6 @@ from .dataset import (
 from .features import BASELINE_GROUPS, FEATURE_COLUMNS, group_mask
 from .model import IncompatibleCheckpointError
 from .train import (
-    DEFAULT_MODEL_DIR,
     build_checkpoint,
     default_version,
     fit,
@@ -422,9 +422,7 @@ def train_candidate(
     model, metrics = fitted.model, fitted.metrics
 
     version = version or default_version()
-    directory = Path(
-        model_dir if model_dir is not None else os.environ.get("MODEL_DIR") or DEFAULT_MODEL_DIR
-    ).resolve()
+    directory = model_directory(model_dir).resolve()
     directory.mkdir(parents=True, exist_ok=True)
     checkpoint_path = directory / f"{version}.pt"
     calibration, calibration_end_ts = fit_calibration_window(model, split.val, cfg)

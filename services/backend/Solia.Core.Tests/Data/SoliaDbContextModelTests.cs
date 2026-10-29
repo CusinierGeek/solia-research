@@ -72,6 +72,7 @@ public class SoliaDbContextModelTests
         Assert.Equal("features_snapshot", Column<Trade>(ctx, nameof(Trade.FeaturesSnapshot)));
         Assert.Equal("candidate_model_id", Column<TrainingEvent>(ctx, nameof(TrainingEvent.CandidateModelId)));
         Assert.Equal("n_params", Column<ModelRecord>(ctx, nameof(ModelRecord.NParams)));
+        Assert.Equal("pruned_at", Column<ModelRecord>(ctx, nameof(ModelRecord.PrunedAt)));
     }
 
     [Fact]

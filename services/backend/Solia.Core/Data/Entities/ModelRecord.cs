@@ -27,4 +27,10 @@ public sealed class ModelRecord
     public string? Hyperparams { get; set; }
 
     public long? NParams { get; set; }
+
+    /// <summary>
+    /// When the retention policy deleted the checkpoint file (migration 0011); the row is kept for its history.
+    /// Never set on the champion. <c>null</c> = never pruned.
+    /// </summary>
+    public DateTimeOffset? PrunedAt { get; set; }
 }

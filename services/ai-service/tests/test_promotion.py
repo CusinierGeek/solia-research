@@ -3,6 +3,7 @@
 import copy
 import json
 import math
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -407,3 +408,14 @@ def test_rollback_refused(current, previous, checkpoint, reason):
 
     assert not check.possible and check.target is None
     assert any(reason in r for r in check.reasons)
+
+
+@pytest.mark.parametrize("checkpoint", [CHECKPOINT, None])
+def test_rollback_to_a_pruned_model_is_refused(checkpoint):
+    pruned = replace(PREVIOUS, pruned_at=datetime(2026, 10, 1, tzinfo=UTC))
+    check = check_rollback(CURRENT, pruned, checkpoint=checkpoint, horizons=HORIZONS)
+
+    assert not check.possible and check.target is None
+    assert check.reasons == (
+        "checkpoint of v1 was pruned by the retention policy at 2026-10-01T00:00:00+00:00",
+    )
