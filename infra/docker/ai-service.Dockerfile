@@ -1,25 +1,34 @@
 # syntax=docker/dockerfile:1
-# Solia ai-service — FastAPI + PyTorch (CPU), serving solia_ai.api:app on port 8000.
+# Solia ai-service — FastAPI + PyTorch, serving solia_ai.api:app on port 8000.
 # Build context = repo root (shared by every infra/docker/*.Dockerfile):
 #   docker build -f infra/docker/ai-service.Dockerfile -t solia-ai-service .
+# TORCH_VARIANT picks the torch build: `cpu` (default: CI, any machine) or `cu130` (NVIDIA GPU, see
+# docker-compose.gpu.yml). Training uses CUDA when torch sees a GPU and falls back to the CPU otherwise.
 
-# ---- build: locked deps into a venv (cached on requirements.lock only), then the package ----
+# ---- build: locked deps into a venv (cached on the locks only), then the package ----
 FROM python:3.11-slim AS build
+ARG TORCH_VARIANT=cpu
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 RUN python -m venv /opt/venv
 ENV PATH=/opt/venv/bin:$PATH
 WORKDIR /src
 
-# Dependency layer: only requirements.lock is copied, so neither a .py edit nor a dev/tooling
-# change in pyproject.toml reinstalls torch. The lock pins every runtime package exactly
-# (transitives included; tests/test_requirements_lock.py keeps it in sync with pyproject.toml),
-# torch as its +cpu build, which only the PyTorch CPU index serves: no CUDA wheels can slip in.
-# --no-deps installs exactly the lock, nothing re-resolved; `pip check` proves it is complete.
+# Dependency layer: only the locks are copied, so neither a .py edit nor a dev/tooling change in
+# pyproject.toml reinstalls torch. A lock pins every runtime package exactly (transitives included;
+# tests/test_requirements_lock.py keeps both in sync with pyproject.toml and each other), torch as
+# its +cpu (requirements.lock) or +cu130 (requirements-cu130.lock) build, which only that PyTorch
+# index serves: the CPU image can't pull CUDA wheels in. --no-deps installs exactly the lock, nothing
+# re-resolved; `pip check` proves it is complete.
 # The pip cache mount keeps downloaded wheels across builds without landing in a layer.
-COPY services/ai-service/requirements.lock .
+COPY services/ai-service/requirements*.lock ./
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-deps --extra-index-url https://download.pytorch.org/whl/cpu \
-        -r requirements.lock \
+    case "$TORCH_VARIANT" in \
+        cpu) lock=requirements.lock ;; \
+        cu130) lock=requirements-cu130.lock ;; \
+        *) echo "unknown TORCH_VARIANT '$TORCH_VARIANT' (cpu | cu130)" >&2; exit 1 ;; \
+    esac \
+ && pip install --no-deps --extra-index-url "https://download.pytorch.org/whl/$TORCH_VARIANT" \
+        -r "$lock" \
  && pip check
 
 # The package itself (with its config.yaml), without re-resolving dependencies.

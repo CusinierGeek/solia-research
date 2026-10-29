@@ -28,6 +28,23 @@ Python **3.11**. CPU PyTorch is fine for development. Dependencies are pinned ex
 `pyproject.toml` (the versions the suite is tested with); bump them deliberately. Run the tools
 from this directory so they pick up its `pyproject.toml` settings — CI does the same.
 
+### GPU (NVIDIA) image
+
+The default image is CPU-only (`requirements.lock`, torch `+cpu`). On a host with an NVIDIA GPU
+(driver with CUDA 13.0 support; Docker Desktop's WSL 2 backend or the NVIDIA Container Toolkit), the
+`docker-compose.gpu.yml` override builds the ai-service with `TORCH_VARIANT=cu130`
+(`requirements-cu130.lock`, tagged `solia-ai-service-cu130`) and reserves the GPUs for it:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+```
+
+Nothing else changes: training — `python -m solia_ai.retrain` and the background trigger alike —
+picks `cuda` whenever torch sees a GPU (`--device` overrides it). Only the model runs on the GPU;
+reading `features` and building the dataset still use host RAM. `requirements-cu130.lock` is the
+CPU lock with torch swapped for its CUDA build (regenerate it after `requirements.lock`, see its
+header); `tests/test_requirements_lock.py` keeps the two in step.
+
 ## Configuration
 
 - `solia_ai/config.yaml` — the single source of model hyperparameters, training settings, loss

@@ -142,6 +142,16 @@ jobs:
             | jq -e '[.services.postgres.ports[] | {host_ip, target, published: (.published | tostring)}]
                      == [{"host_ip":"127.0.0.1","target":5432,"published":"5432"}]' \
             > /dev/null || fail "dev override must publish 127.0.0.1:5432"
+          # The GPU override only swaps the ai-service's torch build (own image tag) and reserves the GPUs.
+          docker compose -f docker-compose.yml -f docker-compose.gpu.yml config --format json > gpu.json
+          jq -e '.services["ai-service"] | .build.args.TORCH_VARIANT == "cu130" and .image == "solia-ai-service-cu130"
+                 and (.deploy.resources.reservations.devices
+                      == [{"driver":"nvidia","count":-1,"capabilities":["gpu"]}])' gpu.json \
+            > /dev/null || fail "gpu override: ai-service must build cu130, tag solia-ai-service-cu130, reserve all GPUs"
+          jq -e '[.services[] | select(.deploy.resources.reservations.devices != null)] | length == 1' gpu.json \
+            > /dev/null || fail "gpu override must reserve GPUs for the ai-service only"
+          docker compose config --format json | jq -e '.services["ai-service"].build.args.TORCH_VARIANT == null' \
+            > /dev/null || fail "the default stack must build the CPU ai-service"
           echo ok
       # .env reaches the containers by interpolation: each service gets exactly its own keys
       # (SOLIA_MASTER_KEY: backend only), `.env.example` covers every interpolated key and works as-is.
