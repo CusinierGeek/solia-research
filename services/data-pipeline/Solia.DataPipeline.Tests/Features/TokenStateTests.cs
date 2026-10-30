@@ -107,6 +107,7 @@ public class TokenStateTests
     {
         var state = new TokenState("M", windowSeconds: 60, emaSpan: 20, rsiPeriod: 14, firstSeen: T0);
         state.Apply(Trade(EventKind.Buy, 2m, 1m, "A", 200));
+        state.Snapshot(T0.AddSeconds(200));                    // T+200 is applied
         state.Apply(Trade(EventKind.Sell, 1m, 1m, "B", 190)); // arrives late, still inside the window
         state.Apply(Trade(EventKind.Buy, 9m, 1m, "C", 10));   // arrives late, outside the window
 
@@ -117,6 +118,77 @@ public class TokenStateTests
         Assert.Equal(1, s.SellEvents);
         Assert.Equal(2.0, s.Ema!.Value, 10);    // late prices don't enter the EMA
         Assert.Equal(T0.AddSeconds(200), state.LastActivity);
+    }
+
+    [Fact]
+    public void Events_received_out_of_order_between_snapshots_are_applied_in_time_order()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(Trade(EventKind.Buy, 2m, 1m, "A", 20));
+        state.Apply(Trade(EventKind.Buy, 1m, 1m, "B", 10)); // received late, before any snapshot
+
+        FeatureSnapshot s = state.Snapshot(T0.AddSeconds(30));
+
+        Assert.Equal(2m, s.Price); // the newest by time wins
+        Assert.Equal(2, s.BuyEvents);
+        double alpha = 2.0 / 21.0;
+        Assert.Equal(1.0 + (alpha * (2.0 - 1.0)), s.Ema!.Value, 10); // EMA built 1 then 2, as if in order
+    }
+
+    [Fact]
+    public void An_event_dated_after_the_snapshot_is_left_out_of_every_field_until_its_time()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0);
+        state.Apply(Trade(EventKind.Buy, 1m, 1m, "A", 0) with { MarketCap = 10m, QuoteInPool = 5m, PoolId = "P1" });
+        state.Apply(Trade(EventKind.Buy, 9m, 4m, "B", 15) with
+        {
+            MarketCap = 90m,
+            QuoteInPool = 50m,
+            Venue = "raydium",
+            PoolId = "P2",
+            IsMigrated = true,
+            Supply = 7m,
+        });
+
+        FeatureSnapshot before = state.Snapshot(T0.AddSeconds(10));
+
+        Assert.Equal(1m, before.Price);
+        Assert.Equal(10m, before.MarketCap);
+        Assert.Equal(5m, before.Liquidity);
+        Assert.Equal("pumpfun", before.Venue);
+        Assert.Equal("P1", before.PoolAddress);
+        Assert.False(before.IsMigrated);
+        Assert.Null(before.OnchainSignals["supply"]);
+        Assert.Equal(1, before.Holders);
+        Assert.Equal(1, before.BuyEvents);
+        Assert.Equal(1m, before.Volume);
+        Assert.Equal(1.0, before.Ema!.Value, 10);
+        Assert.Equal(T0.AddSeconds(15), state.LastActivity); // still known to the store (pruning, recency)
+
+        FeatureSnapshot after = state.Snapshot(T0.AddSeconds(20));
+
+        Assert.Equal(9m, after.Price);
+        Assert.Equal(90m, after.MarketCap);
+        Assert.Equal(50m, after.Liquidity);
+        Assert.Equal("raydium", after.Venue);
+        Assert.Equal("P2", after.PoolAddress);
+        Assert.True(after.IsMigrated);
+        Assert.Equal(7m, after.OnchainSignals["supply"]);
+        Assert.Equal(2, after.Holders);
+        Assert.Equal(2, after.BuyEvents); // applied once, not lost or double-counted
+        Assert.Equal(5m, after.Volume);
+
+        Assert.Equal(2, state.Snapshot(T0.AddSeconds(30)).BuyEvents);
+    }
+
+    [Fact]
+    public void A_token_whose_only_event_is_in_the_future_has_no_activity_yet()
+    {
+        var state = new TokenState("M", 300, 20, 14, T0.AddSeconds(50));
+        state.Apply(Trade(EventKind.Buy, 1m, 1m, "A", 50));
+
+        Assert.False(state.HasActivityInWindow(T0.AddSeconds(10)));
+        Assert.True(state.HasActivityInWindow(T0.AddSeconds(50)));
     }
 
     [Fact]

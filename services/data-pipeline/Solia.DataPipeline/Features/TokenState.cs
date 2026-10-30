@@ -9,8 +9,12 @@ namespace Solia.DataPipeline.Features;
 /// price history for volatility/RSI, an EMA, and the previous snapshot's values so growth
 /// rates/derivatives can be computed. <see cref="Snapshot"/> produces one <see cref="FeatureSnapshot"/>.
 /// <para>
+/// Causal: <see cref="Apply"/> only queues an event; a snapshot at <c>now</c> first applies the
+/// queued events dated at or before <c>now</c>, in timestamp order, so no field — not even the
+/// "latest" facts — sees an event dated after the snapshot. Later ones stay queued until their time
+/// is reached (each applied exactly once).
 /// Tolerates out-of-order events: trades are kept sorted by timestamp, and only an event at least
-/// as new as the latest one seen updates the "latest" facts (price, market cap, venue, ...).
+/// as new as the latest one applied updates the "latest" facts (price, market cap, venue, ...).
 /// Prices are a SOL series: a migrated token often trades on several pools at once, each quoted in
 /// its own currency (SOL, USDC, another token...), and taking every trade's price would jump by
 /// orders of magnitude between pools. Only SOL-quoted events (and events reporting no quote mint)
@@ -51,6 +55,7 @@ internal sealed class TokenState
     private readonly decimal _largeBuySol;
     private readonly MomentumWindows _momentum;
 
+    private readonly List<RawEvent> _pending = []; // received, not yet applied; sorted by Timestamp
     private readonly List<Observation> _window = []; // sorted by Ts
     private readonly Queue<PricePoint> _prices = new(); // in Ts order (late prices are not appended)
     private readonly List<Anchor> _anchors = []; // in Ts order, at most one per second
@@ -68,6 +73,7 @@ internal sealed class TokenState
     private double? _burned;
     private double? _ema;
 
+    private DateTimeOffset? _latestApplied;
     private DateTimeOffset _firstSeen;
     private DateTimeOffset _createdAt;
     private bool _hasCreate;
@@ -95,15 +101,46 @@ internal sealed class TokenState
 
     public string Mint { get; }
 
-    /// <summary>Timestamp of the newest event applied.</summary>
+    /// <summary>Timestamp of the newest event received (applied or still queued).</summary>
     public DateTimeOffset LastActivity { get; private set; }
 
+    /// <summary>Queues an event; it is applied by the first snapshot at or after its timestamp.</summary>
     public void Apply(RawEvent e)
     {
-        bool isLatest = e.Timestamp >= LastActivity;
-        if (isLatest)
+        if (e.Timestamp > LastActivity)
         {
             LastActivity = e.Timestamp;
+        }
+
+        // In-order events (the common case) append in O(1).
+        int i = _pending.Count;
+        while (i > 0 && _pending[i - 1].Timestamp > e.Timestamp)
+        {
+            i--;
+        }
+
+        _pending.Insert(i, e);
+    }
+
+    /// <summary>Applies the queued events dated at or before <paramref name="now"/>, oldest first.</summary>
+    private void Advance(DateTimeOffset now)
+    {
+        int due = 0;
+        while (due < _pending.Count && _pending[due].Timestamp <= now)
+        {
+            ApplyNow(_pending[due]);
+            due++;
+        }
+
+        _pending.RemoveRange(0, due);
+    }
+
+    private void ApplyNow(RawEvent e)
+    {
+        bool isLatest = _latestApplied is not { } latest || e.Timestamp >= latest;
+        if (isLatest)
+        {
+            _latestApplied = e.Timestamp;
         }
 
         if (e.Timestamp < _firstSeen)
@@ -187,6 +224,7 @@ internal sealed class TokenState
 
     public bool HasActivityInWindow(DateTimeOffset now)
     {
+        Advance(now);
         Prune(now);
         foreach (Observation o in _window)
         {
@@ -201,6 +239,7 @@ internal sealed class TokenState
 
     public FeatureSnapshot Snapshot(DateTimeOffset now)
     {
+        Advance(now);
         Prune(now);
 
         int buys = 0;

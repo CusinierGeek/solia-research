@@ -71,6 +71,26 @@ public class PipelineEngineTests
     }
 
     [Fact]
+    public async Task An_event_dated_past_the_flush_time_only_shows_in_the_snapshot_that_reaches_it()
+    {
+        var sink = new RecordingSink();
+        RawEvent early = Buy("M", 66) with { Price = 9m }; // beyond the skew: the clock doesn't follow it
+        RawEvent[] events = [.. Seconds("M", 0, 5), early, .. Seconds("N", 6, 80)];
+
+        await Engine(events, sink, window: 300).RunAsync(default);
+
+        FeatureSnapshot[] m = sink.Batches.SelectMany(b => b.Snapshots).Where(s => s.Mint == "M").ToArray();
+        Assert.All(m.Where(s => s.Ts < early.Timestamp), s =>
+        {
+            Assert.Equal(1m, s.Price);
+            Assert.Equal(6, s.BuyEvents);
+        });
+        FeatureSnapshot reached = m.First(s => s.Ts >= early.Timestamp);
+        Assert.Equal(9m, reached.Price);
+        Assert.Equal(7, reached.BuyEvents);
+    }
+
+    [Fact]
     public async Task Late_events_never_move_the_clock_backwards()
     {
         var sink = new RecordingSink();
