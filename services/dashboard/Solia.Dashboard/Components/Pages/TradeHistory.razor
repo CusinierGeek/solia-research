@@ -8,6 +8,8 @@
 
 <PageHeader Title="Trade history" Description="Simulated trades opened and closed by the paper-trading bot, newest first." />
 
+<BotSessionSelector Value="_state.Filter.Session ?? SessionSelection.Current" ValueChanged="SelectSession" />
+
 <FilterBar TFilter="TradeHistoryFilter" Value="_state.Filter" Empty="TradeHistoryFilter.None" OnApply="ApplyFilter">
     <MudSelect T="TradeStatus?" Label="Status" Value="context.Draft.Status" Variant="Variant.Outlined"
                Margin="Margin.Dense" Clearable="true" Class="solia-filter-status" ToStringFunc="Wire"
@@ -213,7 +215,12 @@
         return _table?.ReloadAsync() ?? Task.CompletedTask;
     }
 
-    private void ApplyFilter(TradeHistoryFilter filter) => Navigate(_state with { Filter = filter, Page = 1 });
+    // The session is picked above the filter bar, and kept when the bar applies or clears its own filters.
+    private void ApplyFilter(TradeHistoryFilter filter) =>
+        Navigate(_state with { Filter = filter with { Session = _state.Filter.Session }, Page = 1 });
+
+    private void SelectSession(SessionSelection session) =>
+        Navigate(_state with { Filter = _state.Filter with { Session = session == SessionSelection.Current ? null : session }, Page = 1 });
 
     private void GoToPage(int page) => Navigate(_state with { Page = page });
 

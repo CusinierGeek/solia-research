@@ -23,6 +23,7 @@ tokens_history (mint) 1──┬──* features
                          └──* trades
 models (id) 1──* predictions
 models (id) 1──* training_events
+models (id) 1──* bot_sessions 1──* trades
 tokens_live  = hot view / table of currently tracked tokens
 logs         = standalone
 ```
@@ -158,8 +159,31 @@ Paper-trading bot activity. One row per closed (or open) position. Amounts are S
 | exit_reason | TEXT | `tp` / `sl` / `signal` / `timeout` |
 | features_snapshot | JSONB | features at entry (for training) |
 | status | TEXT | `open` / `closed` |
+| session_id | BIGINT | FK → bot_sessions: the session the trade was opened in (nullable: rows written outside the bot) |
 
-Indexes: `(mint)`, `(status)`, `(closed_at)`, `(prediction_id)`.
+Indexes: `(mint)`, `(status)`, `(closed_at)`, `(prediction_id)`, `(session_id, closed_at)`.
+
+### `bot_sessions`
+A run of the paper bot under one configuration and one champion (migration 0012, #169), so trades are read per
+regime. Written only by the bot (`PostgresBotSessionStore`, raw SQL). On every start the bot fingerprints its
+effective options (normalized JSON of `BotOptions` minus `SessionLabel`, plus the traded horizon) and the champion
+version: same fingerprint as the current session → it continues (across restarts); different → the current one
+ends and a new one starts. The bot re-checks every 30 s before opening a trade, so a promotion while it runs also
+opens a new session; a trade keeps the session it was opened in. Backfill: trades opened before 2026-10-30
+20:26:42 UTC → `naive fills (pre-#165)` (ended), later ones → `realistic fills (#165)` (current, adopted by the
+bot's first start if its champion is unchanged).
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | BIGSERIAL PK | |
+| started_at | TIMESTAMPTZ | default `now()` |
+| ended_at | TIMESTAMPTZ | NULL for the current session (at most one: partial unique index) |
+| config_hash | TEXT | SHA-256 of normalized options + champion version; NULL when backfilled |
+| options | JSONB | effective bot options at the start (entry rule, exits, fill model, sizing, horizon) |
+| model_id | BIGINT | FK → models, `ON DELETE SET NULL`: the champion at the start |
+| model_version | TEXT | |
+| label | TEXT | optional human label (`Bot:SessionLabel`, applied when a new session starts) |
+| resumed_after_trade_id | BIGINT | open trades with `id ≤` the current session's value were left by an earlier bot run: orphans |
 
 ### `training_events`
 Audit trail of training/retrain runs.

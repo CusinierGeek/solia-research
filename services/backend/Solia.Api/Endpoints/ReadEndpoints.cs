@@ -7,6 +7,7 @@ public static class ReadEndpoints
         group.MapTokensEndpoints()
             .MapPredictionsEndpoints()
             .MapTradesEndpoints()
+            .MapBotSessionsEndpoints()
             .MapStatsEndpoints()
             .MapLogsEndpoints();
 }

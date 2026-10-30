@@ -141,6 +141,48 @@ public class SoliaApiClientTests
     }
 
     [Fact]
+    public async Task Stats_send_their_session_and_read_its_scope_and_exits()
+    {
+        var (client, handler) = Create(new StubHttpHandler(
+            StubHttpHandler.Respond("""
+                { "winrate": 0.5, "wins": 1, "losses": 1, "break_even": 0, "window": "all", "session": 2,
+                  "exits": { "tp": 1, "sl": 0, "signal": 0, "timeout": 1 } }
+                """),
+            StubHttpHandler.Respond("""{ "points": [], "total_pnl": 0, "session": null }"""),
+            StubHttpHandler.Respond("""{ "items": [], "page": 1, "page_size": 50, "total": 0 }""")));
+
+        WinRateResponse winrate = await client.GetWinRateAsync(StatsWindow.All, SessionSelection.Of(2));
+        PerformanceResponse performance = await client.GetPerformanceAsync(10, SessionSelection.All);
+        await client.GetTradeHistoryAsync(new TradeHistoryQuery { Session = SessionSelection.Current });
+
+        Assert.Equal(
+            ["/api/v1/stats/winrate?window=all&session=2", "/api/v1/stats/performance?limit=10&session=all",
+             "/api/v1/trades/history?session=current"],
+            handler.Requests.Select(r => r.PathAndQuery));
+        Assert.Equal(2, winrate.Session);
+        Assert.Equal(new ExitBreakdown(1, 0, 0, 1), winrate.Exits);
+        Assert.Null(performance.Session);
+    }
+
+    [Fact]
+    public async Task Bot_sessions_are_read_with_their_counts_and_options()
+    {
+        var (client, handler) = Create("""
+            [ { "id": 2, "started_at": "2026-10-30T20:26:42Z", "ended_at": null, "label": "realistic fills (#165)",
+                "model_id": 1, "model_version": "v1", "options": { "minPumpProb": 0.25 }, "is_current": true,
+                "trades": 15, "closed": 14, "open": 1, "orphaned": 0, "total_pnl": -0.12, "committed": 0.2 } ]
+            """);
+
+        IReadOnlyList<BotSessionDto> sessions = await client.GetBotSessionsAsync();
+
+        Assert.Equal("/api/v1/bot/sessions", Requested(handler));
+        BotSessionDto session = Assert.Single(sessions);
+        Assert.True(session.IsCurrent);
+        Assert.Equal((2L, 1L, 0L, -0.12m, 0.2m), (session.Id, session.Open, session.Orphaned, session.TotalPnl, session.Committed));
+        Assert.Equal(0.25, session.Options!.Value.GetProperty("minPumpProb").GetDouble());
+    }
+
+    [Fact]
     public async Task Bot_logs_sends_level_service_and_limit()
     {
         var (client, handler) = Create("[]");

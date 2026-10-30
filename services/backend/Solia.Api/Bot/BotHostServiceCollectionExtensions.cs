@@ -1,6 +1,8 @@
+using Microsoft.Extensions.Options;
 using Solia.Bot;
 using Solia.Bot.Configuration;
 using Solia.Bot.Intake;
+using Solia.Bot.Sessions;
 using Solia.Core.Data;
 
 namespace Solia.Api.Bot;
@@ -24,6 +26,8 @@ public static class BotHostServiceCollectionExtensions
                 $"Bot:Horizon must be one of {string.Join(", ", PredictionHorizons.All)} (the predictions table's horizons).")
             .ValidateOnStart();
 
+        // The horizon traded on is part of the bot's regime: changing it opens a new bot session.
+        services.AddSingleton(sp => new BotRegimePart("horizon", sp.GetRequiredService<IOptions<BotHostOptions>>().Value.Horizon));
         services.AddSingleton<PostgresPredictionStore>();
         services.AddSingleton<ChampionEligibility>();
         services.AddSingleton<IBotEventSource, DbBotEventSource>();

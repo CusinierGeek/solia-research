@@ -73,14 +73,39 @@ public sealed record TradeDto(
     string? ExitReason,
     string Status);
 
-/// <summary><c>GET /stats/winrate</c>.</summary>
-public sealed record WinRateResponse(double Winrate, int Wins, int Losses, int BreakEven, string Window);
+/// <summary><c>GET /stats/winrate</c>: <paramref name="Session"/> is the bot session read (null: every trade).</summary>
+public sealed record WinRateResponse(
+    double Winrate, int Wins, int Losses, int BreakEven, string Window, long? Session = null, ExitBreakdown? Exits = null);
+
+/// <summary>How the closed trades of a <c>/stats/winrate</c> scope exited.</summary>
+public sealed record ExitBreakdown(int Tp, int Sl, int Signal, int Timeout);
 
 /// <summary>One equity-curve point: the equity right after the trade closed at <paramref name="Ts"/>, and its P&amp;L.</summary>
 public sealed record EquityPoint(DateTimeOffset Ts, decimal Equity, decimal Pnl);
 
-/// <summary><c>GET /stats/performance</c>.</summary>
-public sealed record PerformanceResponse(IReadOnlyList<EquityPoint> Points, decimal TotalPnl);
+/// <summary><c>GET /stats/performance</c>: <paramref name="Session"/> is the bot session read (null: every trade).</summary>
+public sealed record PerformanceResponse(IReadOnlyList<EquityPoint> Points, decimal TotalPnl, long? Session = null);
+
+/// <summary>
+/// A paper bot session (<c>GET /bot/sessions</c>): one configuration + champion. <paramref name="Open"/> /
+/// <paramref name="Committed"/> are the positions the bot still holds; <paramref name="Orphaned"/> the open trades an
+/// earlier bot run left behind.
+/// </summary>
+public sealed record BotSessionDto(
+    long Id,
+    DateTimeOffset StartedAt,
+    DateTimeOffset? EndedAt,
+    string? Label,
+    long? ModelId,
+    string? ModelVersion,
+    JsonElement? Options,
+    bool IsCurrent,
+    long Trades,
+    long Closed,
+    long Open,
+    long Orphaned,
+    decimal TotalPnl,
+    decimal Committed);
 
 /// <summary>
 /// The hub's <c>stats_changed</c> signal, sent right after every <c>trade_closed</c>: the <c>/stats/*</c> figures

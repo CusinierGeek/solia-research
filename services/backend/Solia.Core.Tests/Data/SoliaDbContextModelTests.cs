@@ -35,6 +35,7 @@ public class SoliaDbContextModelTests
     [InlineData(typeof(ModelRecord), "models")]
     [InlineData(typeof(TrainingEvent), "training_events")]
     [InlineData(typeof(LogEntry), "logs")]
+    [InlineData(typeof(BotSessionRecord), "bot_sessions")]
     public void Every_entity_maps_to_its_sprint1_table(Type clrType, string table)
     {
         using SoliaDbContext ctx = BuildContext();
@@ -42,12 +43,12 @@ public class SoliaDbContextModelTests
     }
 
     [Fact]
-    public void All_eight_schema_tables_are_mapped()
+    public void All_nine_schema_tables_are_mapped()
     {
         using SoliaDbContext ctx = BuildContext();
         string[] tables = ctx.Model.GetEntityTypes().Select(e => e.GetTableName()!).OrderBy(t => t).ToArray();
         Assert.Equal(
-            new[] { "features", "logs", "models", "predictions", "tokens_history", "tokens_live", "trades", "training_events" },
+            new[] { "bot_sessions", "features", "logs", "models", "predictions", "tokens_history", "tokens_live", "trades", "training_events" },
             tables);
     }
 
@@ -122,6 +123,7 @@ public class SoliaDbContextModelTests
     [InlineData(typeof(TokenHistory), nameof(TokenHistory.Metadata))]
     [InlineData(typeof(ModelRecord), nameof(ModelRecord.Metrics))]
     [InlineData(typeof(LogEntry), nameof(LogEntry.Context))]
+    [InlineData(typeof(BotSessionRecord), nameof(BotSessionRecord.Options))]
     public void Jsonb_columns_map_to_jsonb(Type clrType, string property)
     {
         using SoliaDbContext ctx = BuildContext();
@@ -197,7 +199,7 @@ public class SoliaDbContextModelTests
     public void Every_sql_foreign_key_is_mapped()
     {
         using SoliaDbContext ctx = BuildContext();
-        Assert.Equal(9, ctx.Model.GetEntityTypes().SelectMany(e => e.GetForeignKeys()).Count());
+        Assert.Equal(11, ctx.Model.GetEntityTypes().SelectMany(e => e.GetForeignKeys()).Count());
     }
 
     [Fact]
@@ -220,6 +222,7 @@ public class SoliaDbContextModelTests
         new ModelRecord { Version = "v", Path = "p" },
         new TrainingEvent(),
         new LogEntry { Service = "backend", Level = "info", Message = "x" },
+        new BotSessionRecord(),
     ];
 
     [Theory]

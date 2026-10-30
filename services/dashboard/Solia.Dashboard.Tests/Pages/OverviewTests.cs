@@ -71,7 +71,7 @@ public class OverviewTests : MudTestContext
 
         IElement card = Card(page, "winrate");
         Assert.Equal("—", Text(card, ".solia-stat-card__value"));
-        Assert.Equal("No closed trades in this window.", Text(card, ".solia-winrate__empty"));
+        Assert.Equal("No closed trades in this window of the session.", Text(card, ".solia-winrate__empty"));
         Assert.Null(card.QuerySelector(".solia-winrate__breakdown")); // no redundant 0 · 0 · 0
     }
 
@@ -314,4 +314,36 @@ public class OverviewTests : MudTestContext
 
     private static TradeDto Trade(long id) =>
         new(id, "mint", null, Now.AddMinutes(-5), Now, 1m, 1.1m, 1m, 300, 0.1m, 0.1, "buy", 70, "tp", "closed");
+
+    [Fact]
+    public async Task The_cards_read_the_current_session_until_another_is_picked()
+    {
+        IRenderedComponent<Overview> page = RenderLoaded();
+        Assert.Equal([SessionSelection.Current], _api.WinRateSessions);
+        Assert.Equal([SessionSelection.Current], _api.PerformanceSessions);
+        Assert.Contains("the session's closed paper trades", Text(Card(page, "pnl"), ".solia-pnl__scope"));
+
+        await page.InvokeAsync(() =>
+            page.FindComponent<MudBlazor.MudSelect<SessionSelection>>().Instance.ValueChanged.InvokeAsync(SessionSelection.All));
+
+        page.WaitForAssertion(() =>
+        {
+            Assert.Equal(SessionSelection.All, _api.WinRateSessions[^1]);
+            Assert.Equal(SessionSelection.All, _api.PerformanceSessions[^1]);
+        });
+        Assert.Equal("all", page.Find(".solia-session").GetAttribute("data-session"));
+        Assert.Contains("every closed paper trade", Text(Card(page, "pnl"), ".solia-pnl__scope"));
+    }
+
+    [Fact]
+    public async Task A_close_also_refreshes_the_sessions_open_positions()
+    {
+        IRenderedComponent<Overview> page = RenderLoaded();
+        page.WaitForAssertion(() => Assert.Equal(1, _api.BotSessionsCalls));
+
+        await _feed.PushAsync(LiveFeedEvents.StatsChanged, new StatsChangedDto(1, Now));
+        _clock.Elapse(Overview.RefreshDelay);
+
+        page.WaitForAssertion(() => Assert.Equal(2, _api.BotSessionsCalls));
+    }
 }

@@ -42,11 +42,13 @@ public class TradeHistoryStateTests
     [Fact]
     public void Url_parameters_round_trip_and_omit_defaults()
     {
-        var state = new TradeHistoryState(new TradeHistoryFilter(TradeStatus.Open, From, To), Page: 4, PageSize: 100);
+        var state = new TradeHistoryState(
+            new TradeHistoryFilter(TradeStatus.Open, From, To, SessionSelection.Of(3)), Page: 4, PageSize: 100);
 
         IReadOnlyDictionary<string, object?> parameters = state.ToQueryParameters();
 
         Assert.Equal("open", parameters["status"]);
+        Assert.Equal("3", parameters["session"]);
         Assert.Equal("2026-10-01T00:00:00Z", parameters["from"]);
         Assert.Equal("4", parameters["page"]);
         Assert.Equal("100", parameters["pageSize"]);
@@ -71,6 +73,24 @@ public class TradeHistoryStateTests
     [InlineData("?status=open", false)]
     [InlineData("?from=2026-10-01", false)]
     [InlineData("?to=2026-10-01", false)]
+    [InlineData("?session=current", true)] // the current session is the default, live pushes are its trades
+    [InlineData("?session=all", false)]
+    [InlineData("?session=2", false)]
     public void Only_the_first_unfiltered_page_is_live(string query, bool live) =>
         Assert.Equal(live, TradeHistoryState.FromUri(Base + query).IsLive);
+
+    [Theory]
+    [InlineData("?session=all", "all")]
+    [InlineData("?session=ALL", "all")]
+    [InlineData("?session=12", "12")]
+    [InlineData("?session=current", null)]
+    [InlineData("?session=0", null)]
+    [InlineData("?session=abc", null)]
+    public void The_session_is_read_from_the_url_with_the_current_one_left_implicit(string query, string? wire)
+    {
+        TradeHistoryState state = TradeHistoryState.FromUri(Base + query);
+
+        Assert.Equal(wire, state.Filter.Session?.Wire);
+        Assert.Equal(wire, state.ToQuery().Session?.Wire);
+    }
 }

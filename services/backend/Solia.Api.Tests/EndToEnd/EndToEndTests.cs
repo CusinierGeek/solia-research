@@ -40,9 +40,10 @@ public class EndToEndTests(EndToEndFixture e2e) : IClassFixture<EndToEndFixture>
     {
         { "/api/v1/tokens/live", null, "", LiveTokenFields },
         { "/api/v1/tokens/history", PageFields, "items", TokenHistoryFields },
-        { "/api/v1/trades/history?status=closed", PageFields, "items", TradeFields },
-        { "/api/v1/stats/winrate", "break_even,losses,window,winrate,wins", null, null },
-        { "/api/v1/stats/performance", "points,total_pnl", "points", "equity,pnl,ts" },
+        // The seeded trades predate the hosted bot's session: every session is read.
+        { "/api/v1/trades/history?status=closed&session=all", PageFields, "items", TradeFields },
+        { "/api/v1/stats/winrate?session=all", "break_even,exits,losses,session,window,winrate,wins", null, null },
+        { "/api/v1/stats/performance?session=all", "points,session,total_pnl", "points", "equity,pnl,ts" },
         { "/api/v1/logs/bot", null, "", "context,id,level,message,service,ts" },
         { "/api/v1/model/status", "champion_version,created_at,metrics,retrain_threshold,trades_since_last_train", null, null },
     };

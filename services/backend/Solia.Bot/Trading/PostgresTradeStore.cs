@@ -2,6 +2,7 @@ using System.Text.Json;
 using Npgsql;
 using NpgsqlTypes;
 using Solia.Bot.Policy;
+using Solia.Bot.Sessions;
 using static Solia.Shared.Data.NpgsqlParameters;
 
 namespace Solia.Bot.Trading;
@@ -12,12 +13,14 @@ namespace Solia.Bot.Trading;
 /// reach the database, so a bad value fails with an error naming the field rather than a constraint
 /// violation. The FKs are respected, not satisfied: the mint must already be in <c>tokens_history</c>
 /// (written by the data pipeline) and a non-null <c>prediction_id</c> must exist in <c>predictions</c>.
+/// With <paramref name="sessions"/> (the bot), every opened trade records its <see cref="BotSessions">bot session</see>;
+/// without (a standalone store), <c>session_id</c> stays null.
 /// </summary>
-public sealed class PostgresTradeStore(NpgsqlDataSource dataSource) : ITradeStore, IClosedTradeCounter
+public sealed class PostgresTradeStore(NpgsqlDataSource dataSource, BotSessions? sessions = null) : ITradeStore, IClosedTradeCounter
 {
     private const string OpenSql =
-        "INSERT INTO trades (mint, prediction_id, opened_at, entry_price, size, strategy, confidence, features_snapshot, status) " +
-        "VALUES (@mint, @prediction, @opened, @entry, @size, @strategy, @confidence, @features, 'open') " +
+        "INSERT INTO trades (mint, prediction_id, opened_at, entry_price, size, strategy, confidence, features_snapshot, session_id, status) " +
+        "VALUES (@mint, @prediction, @opened, @entry, @size, @strategy, @confidence, @features, @session, 'open') " +
         "RETURNING id";
 
     // Only an open row is closed, so a repeated or unknown close matches nothing (as InMemoryTradeStore rejects it).
@@ -38,6 +41,8 @@ public sealed class PostgresTradeStore(NpgsqlDataSource dataSource) : ITradeStor
             throw new ArgumentOutOfRangeException(nameof(opening), confidence, "Confidence must be within [0, 100].");
         }
 
+        long? session = sessions is null ? null : await sessions.CurrentIdAsync(cancellationToken);
+
         await using NpgsqlCommand cmd = dataSource.CreateCommand(OpenSql);
         cmd.Parameters.Add(Param("mint", NpgsqlDbType.Text, opening.Mint));
         cmd.Parameters.Add(Param("prediction", NpgsqlDbType.Bigint, opening.Prediction.PredictionId));
@@ -47,6 +52,7 @@ public sealed class PostgresTradeStore(NpgsqlDataSource dataSource) : ITradeStor
         cmd.Parameters.Add(Param("strategy", NpgsqlDbType.Text, opening.Strategy.ToCode()));
         cmd.Parameters.Add(Param("confidence", NpgsqlDbType.Double, confidence));
         cmd.Parameters.Add(Param("features", NpgsqlDbType.Jsonb, FeaturesJson(opening.Prediction.Features)));
+        cmd.Parameters.Add(Param("session", NpgsqlDbType.Bigint, session));
 
         try
         {

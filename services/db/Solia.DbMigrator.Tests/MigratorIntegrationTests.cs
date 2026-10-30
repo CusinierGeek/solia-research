@@ -293,4 +293,59 @@ public sealed class MigratorIntegrationTests(EmptyPostgresFixture db) : IClassFi
             Assert.Equal(PostgresErrorCodes.CheckViolation, ex.SqlState);
         }
     }
+
+    [Fact]
+    public async Task BotSessions_BackfillSplitsTheTradesAtTheRealisticFillsCutover()
+    {
+        // #169: 0012 puts every trade opened before 2026-10-30 20:26:42 UTC in a closed "naive fills" session and every
+        // later one in the current "realistic fills" session, each with the champion most of its trades came from.
+        string conn = await db.CreateDatabaseAsync();
+        string[] repo = Directory.GetFiles(PostgresFixture.FindMigrationsDir(), "*.sql").Order().ToArray();
+        foreach (string file in repo.Where(f => string.CompareOrdinal(Path.GetFileName(f), "0012") < 0))
+        {
+            File.Copy(file, Path.Combine(_dir, Path.GetFileName(file)));
+        }
+        Assert.Equal(Migrator.Success, (await RunAsync(conn, _dir)).Code);
+        await ExecuteAsync(conn, """
+            INSERT INTO tokens_history (mint) VALUES ('M');
+            INSERT INTO models (id, version, path, is_champion) VALUES (1, 'v1', 'models/v1.pt', TRUE);
+            INSERT INTO predictions (id, mint, model_id, ts, horizon) VALUES (10, 'M', 1, '2026-10-30T14:00:00Z', '15m');
+            INSERT INTO trades (id, mint, prediction_id, opened_at, closed_at, pnl, status) VALUES
+                (1, 'M', 10,   '2026-10-30T14:06:10Z', '2026-10-30T14:10:00Z', 1, 'closed'),
+                (2, 'M', NULL, '2026-10-30T20:15:04Z', NULL, NULL, 'open'),
+                (3, 'M', 10,   '2026-10-30T20:26:42Z', '2026-10-30T20:30:00Z', -1, 'closed');
+            """);
+        foreach (string file in repo.Where(f => string.CompareOrdinal(Path.GetFileName(f), "0012") >= 0))
+        {
+            File.Copy(file, Path.Combine(_dir, Path.GetFileName(file)));
+        }
+
+        var result = await RunAsync(conn, _dir);
+
+        Assert.True(result.Code == Migrator.Success, result.Err);
+        Assert.Equal(
+            "naive fills (pre-#165)|2026-10-30 14:06:10+00|2026-10-30 20:26:42+00|v1;realistic fills (#165)|2026-10-30 20:26:42+00||v1",
+            await ScalarAsync<string>(conn, """
+                SELECT string_agg(concat_ws('|', label, started_at::text, coalesce(ended_at::text, ''), model_version), ';' ORDER BY id)
+                FROM bot_sessions
+                """));
+        Assert.Equal("1=naive fills (pre-#165);2=naive fills (pre-#165);3=realistic fills (#165)", await ScalarAsync<string>(conn,
+            "SELECT string_agg(t.id || '=' || s.label, ';' ORDER BY t.id) FROM trades t JOIN bot_sessions s ON s.id = t.session_id"));
+        Assert.Null(await ScalarAsync<string>(conn, "SELECT config_hash FROM bot_sessions WHERE config_hash IS NOT NULL LIMIT 1"));
+
+        // At most one current session.
+        var second = await Assert.ThrowsAsync<PostgresException>(() => ExecuteAsync(conn, "INSERT INTO bot_sessions DEFAULT VALUES"));
+        Assert.Equal(PostgresErrorCodes.UniqueViolation, second.SqlState);
+    }
+
+    [Fact]
+    public async Task BotSessions_BackfillOnADatabaseWithoutTradesInsertsNothing()
+    {
+        string conn = await db.CreateDatabaseAsync();
+
+        var result = await RunAsync(conn, PostgresFixture.FindMigrationsDir());
+
+        Assert.True(result.Code == Migrator.Success, result.Err);
+        Assert.Equal(0L, await ScalarAsync<long>(conn, "SELECT count(*) FROM bot_sessions"));
+    }
 }

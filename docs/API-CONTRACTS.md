@@ -91,28 +91,52 @@ Paginated predictions, newest `ts` first. `?mint=` (exact, case-sensitive) `&hor
 Items: the `/predictions/live` item, `{ id, mint, symbol, ts, horizon, pump_prob, rug_prob, strategy,
 confidence, position_size, take_profit, stop_loss, model_version }`.
 
+### Bot sessions — `?session=` (#169)
+The paper bot's trades are segmented by **bot session**: a run of the bot under one configuration and one
+champion (see `GET /bot/sessions`). `/trades/history`, `/stats/winrate` and `/stats/performance` take
+`?session=` `current` (default) | `all` | a session id, and read only that session's trades — so a regime change
+(naive → realistic fills, a new champion, a recalibrated entry rule) never mixes into the figures. `current` is
+the session without an `ended_at`; before the bot has recorded any, it reads every trade. An unknown id →
+`404 not_found`; anything else that isn't `current`, `all` or a positive id → `400 invalid_request`.
+
+### `GET /bot/sessions`
+The bot's sessions, newest first, as a plain array. `options` is the effective bot configuration the session
+started with (`null` for a backfilled session); `open` / `committed` (SOL) are the positions the bot still holds;
+`orphaned` counts the trades still `open` that an earlier bot run left behind (a restart empties the bot's book,
+so nothing will close them) — never counted in `open` / `committed`.
+```jsonc
+[ { "id": 2, "started_at": "...", "ended_at": null, "label": "realistic fills (#165)", "model_id": 1,
+    "model_version": "solia-...", "options": { "minPumpProb": 0.25, ... }, "is_current": true,
+    "trades": 15, "closed": 14, "open": 1, "orphaned": 0, "total_pnl": -0.12, "committed": 0.2 } ]
+```
+
 ### `GET /trades/history`
-Paginated paper trades, most recently opened first. `?status=` `open` | `closed`; `?from=&to=` bound
-`opened_at`; `?page=&pageSize=`.
+Paginated paper trades of a bot session (`?session=`, default the current one), most recently opened first.
+`?status=` `open` | `closed`; `?from=&to=` bound `opened_at`; `?page=&pageSize=`.
 Items: `{ id, mint, prediction_id, opened_at, closed_at, entry_price, exit_price, size, duration_sec, pnl,
 pnl_pct, strategy, confidence, exit_reason, status }`.
 
 ### `GET /stats/winrate`
 `wins / closed trades` — the backtest's (`ReplayResult`) definition: win = `pnl > 0`, loss = `pnl < 0`,
 break-even (`0` or no P&L) is neither but still counts in the denominator; `0` when nothing closed. Closed
-trades = `status = 'closed'` with a `closed_at` (the same set as `/stats/performance`). `?window=` `all`
-(default) | `24h` | `7d` | `30d`: closed strictly after now − window, by `closed_at`.
+trades = `status = 'closed'` with a `closed_at` (the same set as `/stats/performance`) of the bot session
+`?session=` (default the current one). `?window=` `all` (default) | `24h` | `7d` | `30d`: closed strictly after
+now − window, by `closed_at`; `?since=` (ISO-8601): closed strictly after it (both bounds apply together).
+`session` is the session read (`null` = every trade); `exits` counts the closed trades by `exit_reason`.
 ```jsonc
-{ "winrate": 0.58, "wins": 290, "losses": 190, "break_even": 20, "window": "all" }
+{ "winrate": 0.58, "wins": 290, "losses": 190, "break_even": 20, "window": "all", "session": 2,
+  "exits": { "tp": 120, "sl": 200, "signal": 30, "timeout": 150 } }
 ```
 
 ### `GET /stats/performance`
-Equity curve points for the dashboard chart: one point per closed trade in `closed_at` order, limited to the
-latest `?limit=` (1–10000, default 1000), `equity` = the bot's configured starting balance
-(`Bot:StartingBalance` / `PAPER_STARTING_BALANCE`) + realized P&L so far (earlier trades included), `pnl` =
-that trade's P&L; `total_pnl` covers every closed trade.
+Equity curve points for the dashboard chart: one point per closed trade of the bot session `?session=`
+(default the current one) closed after `?since=` (optional), in `closed_at` order, limited to the latest
+`?limit=` (1–10000, default 1000). `equity` = the session's starting balance (the `startingBalance` recorded in
+its options; for `all` or a backfilled session, the configured `Bot:StartingBalance` / `PAPER_STARTING_BALANCE`)
++ realized P&L so far in that scope (earlier trades of the scope included), `pnl` = that trade's P&L;
+`total_pnl` covers every closed trade of the scope. `session` is the session read (`null` = every trade).
 ```jsonc
-{ "points": [ { "ts": "...", "equity": 11.5, "pnl": 1.5 } ], "total_pnl": 3.2 }
+{ "points": [ { "ts": "...", "equity": 11.5, "pnl": 1.5 } ], "total_pnl": 3.2, "session": 2 }
 ```
 
 ### `GET /logs/bot`

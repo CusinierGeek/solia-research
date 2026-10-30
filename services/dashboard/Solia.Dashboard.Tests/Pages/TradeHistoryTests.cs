@@ -209,6 +209,28 @@ public class TradeHistoryTests : MudTestContext
     }
 
     [Fact]
+    public void Picking_a_session_puts_it_in_the_url_back_to_page_one_and_keeps_it_across_filters()
+    {
+        Navigation.NavigateTo("trades?status=closed&page=3");
+        Returns(total: 500, Opened(1));
+        IRenderedComponent<TradeHistory> page = RenderLoaded();
+
+        page.InvokeAsync(() => page.FindComponent<MudSelect<SessionSelection>>().Instance.ValueChanged.InvokeAsync(SessionSelection.Of(2)));
+
+        page.WaitForAssertion(() => Assert.Equal("?status=closed&session=2", Query));
+        page.WaitForAssertion(() => Assert.Equal(
+            new TradeHistoryQuery { Status = TradeStatus.Closed, Session = SessionSelection.Of(2), Page = 1, PageSize = 50 },
+            _api.TradeHistoryCalls[^1]));
+
+        page.Find("button.solia-filter-reset").Click();
+        Assert.Equal("?session=2", Query);
+
+        // Back to the current session: the default, so it leaves the URL.
+        page.InvokeAsync(() => page.FindComponent<MudSelect<SessionSelection>>().Instance.ValueChanged.InvokeAsync(SessionSelection.Current));
+        page.WaitForAssertion(() => Assert.Equal("", Query));
+    }
+
+    [Fact]
     public void Reset_clears_every_filter_from_the_url()
     {
         Navigation.NavigateTo("trades?status=closed&page=2");

@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using Npgsql;
 using Solia.Bot.Intake;
 using Solia.Bot.Logging;
+using Solia.Bot.Sessions;
 using Solia.Bot.Trading;
 using Solia.Shared.Configuration;
 using Solia.Shared.Data;
@@ -30,7 +31,8 @@ public static class BotServiceCollectionExtensions
 
     /// <summary>
     /// Registers <see cref="PostgresTradeStore"/> as the <see cref="ITradeStore"/> and
-    /// <see cref="IClosedTradeCounter"/>, on a data source whose connection string comes from
+    /// <see cref="IClosedTradeCounter"/> (recording each trade's <see cref="BotSessions">bot session</see> when
+    /// one is registered, as <see cref="AddPaperTradingEngine"/> does), on a data source whose connection string comes from
     /// <see cref="DbConnectionSettings"/> (SOLIA_DB_CONNECTION, else POSTGRES_*). Reuses an
     /// <see cref="NpgsqlDataSource"/> the host already registered.
     /// </summary>
@@ -58,8 +60,8 @@ public static class BotServiceCollectionExtensions
 
     /// <summary>
     /// Wires everything the paper-trading bot runs on, without hosting it: validated <see cref="BotOptions"/>,
-    /// the Postgres trade store, the Postgres operational log sink (service = 'bot') and the
-    /// <see cref="PositionManager"/> engine.
+    /// the Postgres trade store, the bot sessions its trades are recorded in (<see cref="BotSessions"/>), the
+    /// Postgres operational log sink (service = 'bot') and the <see cref="PositionManager"/> engine.
     /// <para>The caller <strong>must</strong> register an <see cref="IBotEventSource"/> first (the live/DB
     /// feed in Sprint 4, an <see cref="InMemoryBotEventSource"/> for a replay) — there is deliberately no
     /// default, since an empty feed would leave the host up but trading nothing; a missing source throws
@@ -81,6 +83,8 @@ public static class BotServiceCollectionExtensions
         services.AddPostgresTradeStore(configuration);
         services.TryAddSingleton<IBotLogSink, PostgresBotLogSink>();
         services.TryAddSingleton(TimeProvider.System);
+        services.TryAddSingleton<IBotSessionStore, PostgresBotSessionStore>();
+        services.TryAddSingleton<BotSessions>();
         services.AddSingleton(sp => new PositionManager(
             sp.GetRequiredService<IOptions<BotOptions>>().Value,
             sp.GetRequiredService<ITradeStore>(),

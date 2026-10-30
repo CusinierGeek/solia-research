@@ -5,8 +5,12 @@ using Solia.Dashboard.Components.Tables;
 
 namespace Solia.Dashboard.Trades;
 
-/// <summary>The trade history filters (null = not filtered); <see cref="From"/>/<see cref="To"/> bound <c>opened_at</c>.</summary>
-public sealed record TradeHistoryFilter(TradeStatus? Status = null, DateTimeOffset? From = null, DateTimeOffset? To = null)
+/// <summary>
+/// The trade history filters (null = not filtered); <see cref="From"/>/<see cref="To"/> bound <c>opened_at</c>. A null
+/// <see cref="Session"/> is the current bot session — the backend default, never spelled out.
+/// </summary>
+public sealed record TradeHistoryFilter(
+    TradeStatus? Status = null, DateTimeOffset? From = null, DateTimeOffset? To = null, SessionSelection? Session = null)
 {
     public static readonly TradeHistoryFilter None = new();
 }
@@ -21,8 +25,9 @@ public sealed record TradeHistoryState(TradeHistoryFilter Filter, int Page = 1, 
     public static readonly TradeHistoryState Default = new(TradeHistoryFilter.None);
 
     /// <summary>
-    /// Whether the page shows the newest trades unfiltered — the only view live events can be applied to as they
-    /// come (an opened trade goes on top, a closed one is updated in place) without re-checking the filters.
+    /// Whether the page shows the newest trades of the current session unfiltered — the only view live events can be
+    /// applied to as they come (an opened trade goes on top, a closed one is updated in place) without re-checking the
+    /// filters.
     /// </summary>
     public bool IsLive => Page == 1 && Filter == TradeHistoryFilter.None;
 
@@ -31,10 +36,12 @@ public sealed record TradeHistoryState(TradeHistoryFilter Filter, int Page = 1, 
         Dictionary<string, StringValues> query = QueryHelpers.ParseQuery(new Uri(uri).Query);
         string? Get(string name) => query.TryGetValue(name, out StringValues v) ? v.ToString() : null;
 
+        SessionSelection? session = SessionSelection.Parse(Get("session"));
         var filter = new TradeHistoryFilter(
             QueryValues.Parse<TradeStatus>(Get("status")),
             QueryValues.ParseTimestamp(Get("from")),
-            QueryValues.ParseTimestamp(Get("to")));
+            QueryValues.ParseTimestamp(Get("to")),
+            session == SessionSelection.Current ? null : session);
         (int page, int pageSize) = Paging.FromQuery(Get("page"), Get("pageSize"));
         return new(filter, page, pageSize);
     }
@@ -54,6 +61,7 @@ public sealed record TradeHistoryState(TradeHistoryFilter Filter, int Page = 1, 
         Status = Filter.Status,
         From = Filter.From,
         To = Filter.To,
+        Session = Filter.Session,
         Page = Page,
         PageSize = PageSize,
     };

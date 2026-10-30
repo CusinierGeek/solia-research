@@ -71,6 +71,51 @@ public enum StatsWindow
     [JsonStringEnumMemberName("30d")] Last30Days,
 }
 
+/// <summary>
+/// Which bot session's trades a read covers (<c>?session=</c>): the <see cref="Current"/> one (the backend default),
+/// <see cref="All"/> trades, or one session by id.
+/// </summary>
+public sealed record SessionSelection
+{
+    public static readonly SessionSelection Current = new("current", null);
+
+    public static readonly SessionSelection All = new("all", null);
+
+    private SessionSelection(string wire, long? id)
+    {
+        Wire = wire;
+        Id = id;
+    }
+
+    /// <summary>The <c>?session=</c> value.</summary>
+    public string Wire { get; }
+
+    /// <summary>The session id; null for <see cref="Current"/> and <see cref="All"/>.</summary>
+    public long? Id { get; }
+
+    public static SessionSelection Of(long id) =>
+        id >= 1
+            ? new(id.ToString(CultureInfo.InvariantCulture), id)
+            : throw new ArgumentOutOfRangeException(nameof(id), id, "A session id is positive.");
+
+    /// <summary>The selection <paramref name="value"/> spells (case-insensitive); null when blank or not one.</summary>
+    public static SessionSelection? Parse(string? value)
+    {
+        string? v = value?.Trim();
+        if (string.Equals(v, Current.Wire, StringComparison.OrdinalIgnoreCase))
+        {
+            return Current;
+        }
+        if (string.Equals(v, All.Wire, StringComparison.OrdinalIgnoreCase))
+        {
+            return All;
+        }
+        return long.TryParse(v, NumberStyles.None, CultureInfo.InvariantCulture, out long id) && id >= 1 ? Of(id) : null;
+    }
+
+    public override string ToString() => Wire;
+}
+
 /// <summary>Minimum log severity (<c>debug</c> &lt; <c>info</c> &lt; <c>warn</c> &lt; <c>error</c>).</summary>
 public enum BotLogLevel
 {
@@ -176,10 +221,15 @@ public sealed record PredictionHistoryQuery : PagedQuery
     ];
 }
 
-/// <summary><c>GET /trades/history</c>: <see cref="From"/>/<see cref="To"/> bound <c>opened_at</c>.</summary>
+/// <summary>
+/// <c>GET /trades/history</c>: <see cref="From"/>/<see cref="To"/> bound <c>opened_at</c>; a null <see cref="Session"/>
+/// is the current session (the backend default).
+/// </summary>
 public sealed record TradeHistoryQuery : PagedQuery
 {
     public TradeStatus? Status { get; init; }
+
+    public SessionSelection? Session { get; init; }
 
     public DateTimeOffset? From { get; init; }
 
@@ -190,6 +240,7 @@ public sealed record TradeHistoryQuery : PagedQuery
         ("status", Status is { } s ? QueryValues.Format(s) : null),
         ("from", QueryValues.Format(From)),
         ("to", QueryValues.Format(To)),
+        ("session", Session?.Wire),
         .. PagingParameters(),
     ];
 }

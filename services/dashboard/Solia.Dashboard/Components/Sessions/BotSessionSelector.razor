@@ -1,0 +1,111 @@
+@using Solia.Dashboard.Api
+@using Solia.Dashboard.Formatting
+@inject ISoliaApiClient Api
+@inject ILogger<BotSessionSelector> Logger
+
+@* Which bot session the page's figures cover (issue #169), and what that session is: its champion, its period and the
+   positions it holds. The list loads once and on ReloadAsync; while it can't load, Current and All still work. *@
+<div class="d-flex flex-wrap align-center gap-4 mb-4 solia-session" data-session="@Value.Wire">
+    <MudSelect T="SessionSelection" Label="Bot session" Value="Value" ValueChanged="OnChangedAsync" Variant="Variant.Outlined"
+               Margin="Margin.Dense" Dense="true" ToStringFunc="Describe" Class="solia-session__select" Style="max-width: 32rem">
+        <MudSelectItem T="SessionSelection" Value="SessionSelection.Current">@Describe(SessionSelection.Current)</MudSelectItem>
+        @foreach (BotSessionDto session in _sessions)
+        {
+            <MudSelectItem T="SessionSelection" Value="SessionSelection.Of(session.Id)">@Describe(SessionSelection.Of(session.Id))</MudSelectItem>
+        }
+        <MudSelectItem T="SessionSelection" Value="SessionSelection.All">@Describe(SessionSelection.All)</MudSelectItem>
+    </MudSelect>
+
+    <MudText Typo="Typo.body2" Class="mud-text-secondary solia-session__summary">
+        @if (Displayed is { } shown)
+        {
+            <span data-part="model">Champion @(shown.ModelVersion ?? DisplayFormat.Missing)</span>
+            <span> · </span>
+            <span data-part="period">
+                @DisplayFormat.Timestamp(shown.StartedAt) → @(shown.EndedAt is { } ended ? DisplayFormat.Timestamp(ended) : "now") UTC
+            </span>
+            <span> · </span>
+            <span data-part="open">@DisplayFormat.Count(shown.Open) open (@DisplayFormat.Amount(shown.Committed) SOL committed)</span>
+            @if (shown.Orphaned > 0)
+            {
+                <span> · </span>
+                <span data-part="orphaned" title="Left open by an earlier bot run: never closed, not counted as open">
+                    @DisplayFormat.Count(shown.Orphaned) orphaned
+                </span>
+            }
+        }
+        else if (Value == SessionSelection.All)
+        {
+            <span data-part="all">Every paper trade, across every session.</span>
+        }
+        else if (_failed)
+        {
+            <span data-part="unavailable">The session list could not be loaded.</span>
+        }
+        else if (_loaded && Value == SessionSelection.Current)
+        {
+            <span data-part="none">The bot has not recorded a session yet: every trade is shown.</span>
+        }
+    </MudText>
+</div>
+
+@code {
+    private IReadOnlyList<BotSessionDto> _sessions = [];
+    private bool _loaded;
+    private bool _failed;
+
+    /// <summary>The selected session; <see cref="SessionSelection.Current"/> by default.</summary>
+    [Parameter] public SessionSelection Value { get; set; } = SessionSelection.Current;
+
+    [Parameter] public EventCallback<SessionSelection> ValueChanged { get; set; }
+
+    /// <summary>The session the figures are read from; null for every trade or while unknown.</summary>
+    internal BotSessionDto? Displayed =>
+        Value == SessionSelection.Current ? _sessions.FirstOrDefault(s => s.IsCurrent)
+        : Value.Id is { } id ? _sessions.FirstOrDefault(s => s.Id == id)
+        : null;
+
+    protected override Task OnInitializedAsync() => ReloadAsync();
+
+    /// <summary>Re-fetches the sessions (their open positions and P&amp;L move as the bot trades).</summary>
+    public async Task ReloadAsync()
+    {
+        try
+        {
+            _sessions = await Api.GetBotSessionsAsync();
+            _failed = false;
+        }
+        catch (BackendException ex)
+        {
+            Logger.LogWarning(ex, "dashboard: could not load the bot sessions");
+            _failed = true;
+        }
+
+        _loaded = true;
+        StateHasChanged();
+    }
+
+    private Task OnChangedAsync(SessionSelection selection) => ValueChanged.InvokeAsync(selection);
+
+    internal string Describe(SessionSelection selection)
+    {
+        if (selection == SessionSelection.All)
+        {
+            return "All sessions";
+        }
+
+        BotSessionDto? session = selection == SessionSelection.Current
+            ? _sessions.FirstOrDefault(s => s.IsCurrent)
+            : _sessions.FirstOrDefault(s => s.Id == selection.Id);
+        string? name = session is not null ? Name(session) : selection.Id is { } id ? $"#{id}" : null;
+        if (selection != SessionSelection.Current)
+        {
+            return name!;
+        }
+        return name is null ? "Current session" : $"Current session ({name})";
+    }
+
+    // The human label when there is one, else the champion it ran.
+    private static string Name(BotSessionDto session) =>
+        $"#{session.Id} · {(session.Label is { Length: > 0 } label ? label : session.ModelVersion ?? DisplayFormat.Missing)}";
+}

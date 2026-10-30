@@ -181,8 +181,8 @@ public class PerformanceTests : MudTestContext
 
         page.WaitForAssertion(() =>
         {
-            Assert.Contains("No closed trades yet.", Card(page, "equity").TextContent);
-            Assert.Contains("No closed trades yet.", Card(page, "winrate").TextContent);
+            Assert.Contains("No closed trades in this session yet.", Card(page, "equity").TextContent);
+            Assert.Contains("No closed trades in this session yet.", Card(page, "winrate").TextContent);
         });
         Assert.Empty(page.FindComponents<Stub<EquityChart>>());
         Assert.Empty(page.FindComponents<Stub<WinRateDonut>>());
@@ -307,4 +307,35 @@ public class PerformanceTests : MudTestContext
 
     private static TradeDto Trade(long id) =>
         new(id, "mint", null, Now.AddMinutes(-5), Now, 1m, 1.1m, 1m, 300, 0.1m, 0.1, "buy", 70, "tp", "closed");
+
+    [Fact]
+    public void The_win_rate_card_breaks_the_exits_down()
+    {
+        _api.WinRate = (_, _) => Task.FromResult(new WinRateResponse(0.5, 2, 2, 0, "all", 3, new ExitBreakdown(2, 1, 0, 1)));
+
+        IRenderedComponent<Performance> page = RenderLoaded();
+
+        IElement card = Card(page, "winrate");
+        Assert.Equal("2 take profit", Text(card, "[data-exit=tp]"));
+        Assert.Equal("1 stop loss", Text(card, "[data-exit=sl]"));
+        Assert.Equal("0 sell signal", Text(card, "[data-exit=signal]"));
+        Assert.Equal("1 timeout", Text(card, "[data-exit=timeout]"));
+    }
+
+    [Fact]
+    public async Task Picking_a_session_reloads_the_curve_and_the_win_rate_for_it()
+    {
+        IRenderedComponent<Performance> page = RenderLoaded();
+        Assert.Equal([SessionSelection.Current], _api.PerformanceSessions);
+
+        await page.InvokeAsync(() =>
+            page.FindComponent<MudBlazor.MudSelect<SessionSelection>>().Instance.ValueChanged.InvokeAsync(SessionSelection.Of(1)));
+
+        page.WaitForAssertion(() =>
+        {
+            Assert.Equal(SessionSelection.Of(1), _api.PerformanceSessions[^1]);
+            Assert.Equal(SessionSelection.Of(1), _api.WinRateSessions[^1]);
+        });
+        Assert.Equal(Performance.DefaultLimit + 1, _api.PerformanceCalls[^1]); // the length is kept
+    }
 }

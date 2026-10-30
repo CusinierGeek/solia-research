@@ -43,6 +43,8 @@ public sealed class SoliaDbContext(DbContextOptions<SoliaDbContext> options) : D
 
     public DbSet<Trade> Trades => Set<Trade>();
 
+    public DbSet<BotSessionRecord> BotSessions => Set<BotSessionRecord>();
+
     public DbSet<ModelRecord> Models => Set<ModelRecord>();
 
     public DbSet<TrainingEvent> TrainingEvents => Set<TrainingEvent>();
@@ -178,6 +180,23 @@ public sealed class SoliaDbContext(DbContextOptions<SoliaDbContext> options) : D
                 .HasConstraintName("predictions_feature_id_fkey").OnDelete(DeleteBehavior.SetNull);
         });
 
+        modelBuilder.Entity<BotSessionRecord>(e =>
+        {
+            e.ToTable("bot_sessions");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("id");
+            e.Property(x => x.StartedAt).HasColumnName("started_at").HasDefaultValueSql("now()");
+            e.Property(x => x.EndedAt).HasColumnName("ended_at");
+            e.Property(x => x.ConfigHash).HasColumnName("config_hash");
+            e.Property(x => x.Options).HasColumnName("options").HasColumnType("jsonb");
+            e.Property(x => x.ModelId).HasColumnName("model_id");
+            e.Property(x => x.ModelVersion).HasColumnName("model_version");
+            e.Property(x => x.Label).HasColumnName("label");
+            e.Property(x => x.ResumedAfterTradeId).HasColumnName("resumed_after_trade_id").HasDefaultValue(0L);
+            e.HasOne<ModelRecord>().WithMany().HasForeignKey(x => x.ModelId)
+                .HasConstraintName("bot_sessions_model_id_fkey").OnDelete(DeleteBehavior.SetNull);
+        });
+
         modelBuilder.Entity<Trade>(e =>
         {
             e.ToTable("trades");
@@ -198,6 +217,9 @@ public sealed class SoliaDbContext(DbContextOptions<SoliaDbContext> options) : D
             e.Property(x => x.ExitReason).HasColumnName("exit_reason");
             e.Property(x => x.FeaturesSnapshot).HasColumnName("features_snapshot").HasColumnType("jsonb");
             e.Property(x => x.Status).HasColumnName("status").HasDefaultValue("open");
+            e.Property(x => x.SessionId).HasColumnName("session_id");
+            e.HasOne<BotSessionRecord>().WithMany().HasForeignKey(x => x.SessionId)
+                .HasConstraintName("trades_session_id_fkey").OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.Token).WithMany().HasForeignKey(x => x.Mint)
                 .HasConstraintName("trades_mint_fkey").OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.Prediction).WithMany().HasForeignKey(x => x.PredictionId)

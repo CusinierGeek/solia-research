@@ -9,10 +9,12 @@
 
 <PageHeader Title="Performance" Description="Equity curve and model performance over time." />
 
+<BotSessionSelector @ref="_selector" @bind-Value="_session" />
+
 <MudGrid Spacing="3" Class="solia-performance">
     <MudItem xs="12" lg="9">
         <StatCard @ref="_curve" TItem="EquityCurve" Name="equity" Title="Equity curve" Icon="@Icons.Material.Outlined.ShowChart"
-                  Load="LoadCurveAsync" ReloadKey="_limit" IsEmpty="c => c.IsEmpty" EmptyMessage="No closed trades yet."
+                  Load="LoadCurveAsync" ReloadKey="(_limit, _session)" IsEmpty="c => c.IsEmpty" EmptyMessage="No closed trades in this session yet."
                   ErrorMessage="Could not load the equity curve from the backend.">
             <Actions>
                 <MudButtonGroup Size="Size.Small" Variant="Variant.Outlined" Class="solia-limits">
@@ -49,7 +51,7 @@
 
     <MudItem xs="12" lg="3">
         <StatCard @ref="_winRate" TItem="WinRateSlices" Name="winrate" Title="Win-rate" Icon="@Icons.Material.Outlined.EmojiEvents"
-                  Load="LoadWinRateAsync" IsEmpty="s => s.IsEmpty" EmptyMessage="No closed trades yet."
+                  Load="LoadWinRateAsync" ReloadKey="_session" IsEmpty="s => s.IsEmpty" EmptyMessage="No closed trades in this session yet."
                   ErrorMessage="Could not load the win-rate from the backend.">
             <MudText Typo="Typo.h4" Class="solia-stat-card__value">@DisplayFormat.Percent(context.Winrate)</MudText>
             <MudText Typo="Typo.body2" Class="mud-text-secondary">
@@ -58,6 +60,16 @@
             <div class="d-flex justify-center mt-2">
                 <WinRateDonut Slices="context" />
             </div>
+            @if (context.Exits is { } exits)
+            {
+                <MudText Typo="Typo.body2" Class="mud-text-secondary mt-2 solia-exits">
+                    Exits:
+                    <span data-exit="tp">@DisplayFormat.Count(exits.Tp) take profit</span> ·
+                    <span data-exit="sl">@DisplayFormat.Count(exits.Sl) stop loss</span> ·
+                    <span data-exit="signal">@DisplayFormat.Count(exits.Signal) sell signal</span> ·
+                    <span data-exit="timeout">@DisplayFormat.Count(exits.Timeout) timeout</span>
+                </MudText>
+            }
         </StatCard>
     </MudItem>
 </MudGrid>
@@ -77,6 +89,8 @@
     private StatCard<EquityCurve>? _curve;
     private StatCard<WinRateSlices>? _winRate;
     private int _limit = DefaultLimit;
+    private SessionSelection _session = SessionSelection.Current;
+    private BotSessionSelector? _selector;
     private StatsRefresher? _live;
     private bool _disposed;
 
@@ -92,18 +106,21 @@
     }
 
     private Task RefreshAllAsync() =>
-        Task.WhenAll(_curve?.ReloadAsync() ?? Task.CompletedTask, _winRate?.ReloadAsync() ?? Task.CompletedTask);
+        Task.WhenAll(
+            _selector?.ReloadAsync() ?? Task.CompletedTask,
+            _curve?.ReloadAsync() ?? Task.CompletedTask,
+            _winRate?.ReloadAsync() ?? Task.CompletedTask);
 
     // One point more than shown tells whether older trades were cut off; the curve keeps the length it was asked
     // for, so a reload in flight still labels the curve on screen by its own length.
     private async Task<EquityCurve> LoadCurveAsync(CancellationToken cancellationToken)
     {
         int shown = _limit;
-        return EquityCurve.From(await Api.GetPerformanceAsync(shown + 1, cancellationToken), shown);
+        return EquityCurve.From(await Api.GetPerformanceAsync(shown + 1, _session, cancellationToken), shown);
     }
 
     private async Task<WinRateSlices> LoadWinRateAsync(CancellationToken cancellationToken) =>
-        WinRateSlices.From(await Api.GetWinRateAsync(StatsWindow.All, cancellationToken));
+        WinRateSlices.From(await Api.GetWinRateAsync(StatsWindow.All, _session, cancellationToken));
 
     public void Dispose()
     {

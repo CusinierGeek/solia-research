@@ -7,6 +7,7 @@ using Solia.Bot.Configuration;
 using Solia.Bot.Domain;
 using Solia.Bot.Intake;
 using Solia.Bot.Logging;
+using Solia.Bot.Sessions;
 using Solia.Bot.Tests.Policy;
 using Solia.Bot.Trading;
 using Solia.Shared.Logging;
@@ -123,6 +124,45 @@ public class PaperTradingBotTests
         await bot.StartAsync(default);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => bot.ExecuteTask!);
+        Assert.Contains("bot failed", sink.Messages);
+    }
+
+    [Fact]
+    public async Task The_bot_session_is_begun_before_the_first_event()
+    {
+        var store = new InMemoryTradeStore();
+        var sink = new RecordingLogSink();
+        var sessionStore = new InMemoryBotSessionStore { ChampionId = 1, ChampionVersion = "v1" };
+        var options = new BotOptions { RealisticFills = false };
+        var sessions = new BotSessions(sessionStore, Options.Create(options), [], sink);
+        var source = new InMemoryBotEventSource([Tick(0, Entry), Predict(1), Tick(2, 0.00015m)]);
+        var engine = new PositionManager(options, store, sink);
+        var bot = new PaperTradingBot(NullLogger<PaperTradingBot>.Instance, sink, engine, source, Options.Create(options), null, sessions);
+
+        await bot.StartAsync(default);
+        await bot.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(1, Assert.Single(sessionStore.Sessions).Session.Id);
+        Assert.Equal(1, sessions.Current!.Id);
+        List<string> messages = [.. sink.Messages];
+        Assert.InRange(messages.IndexOf("bot session started"), 0, messages.IndexOf("position opened") - 1);
+    }
+
+    [Fact]
+    public async Task A_session_store_failure_fails_loud_before_any_trade()
+    {
+        var store = new InMemoryTradeStore();
+        var sink = new RecordingLogSink();
+        var options = new BotOptions { RealisticFills = false };
+        var sessions = new BotSessions(new ThrowingSessionStore(), Options.Create(options), [], sink);
+        var source = new InMemoryBotEventSource([Tick(0, Entry), Predict(1)]);
+        var bot = new PaperTradingBot(NullLogger<PaperTradingBot>.Instance, sink, new PositionManager(options, store, sink),
+            source, Options.Create(options), null, sessions);
+
+        await bot.StartAsync(default);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => bot.ExecuteTask!);
+        Assert.Empty(store.Open);
         Assert.Contains("bot failed", sink.Messages);
     }
 
@@ -288,6 +328,12 @@ public class PaperTradingBotTests
             _messages.Add(message);
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class ThrowingSessionStore : IBotSessionStore
+    {
+        public Task<BotSession> BeginAsync(BotSessionRequest request, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("database down");
     }
 
     private sealed class ThrowingLogSink : IBotLogSink

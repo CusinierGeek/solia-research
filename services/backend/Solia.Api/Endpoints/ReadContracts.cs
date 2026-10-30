@@ -69,14 +69,24 @@ public sealed record TradeDto(
     string? ExitReason,
     string Status);
 
-/// <summary><c>GET /stats/winrate</c>: <c>{ winrate, wins, losses, break_even, window }</c>.</summary>
-public sealed record WinRateResponse(double Winrate, int Wins, int Losses, int BreakEven, string Window);
+/// <summary>
+/// <c>GET /stats/winrate</c>: <c>{ winrate, wins, losses, break_even, window, session, exits }</c> — <c>session</c> is
+/// the bot session read (null: every trade).
+/// </summary>
+public sealed record WinRateResponse(
+    double Winrate, int Wins, int Losses, int BreakEven, string Window, long? Session = null, ExitBreakdown? Exits = null);
+
+/// <summary>How the closed trades of a <c>/stats/winrate</c> scope exited, by <c>exit_reason</c>.</summary>
+public sealed record ExitBreakdown(int Tp, int Sl, int Signal, int Timeout);
 
 /// <summary>One equity-curve point: the equity right after the trade closed at <paramref name="Ts"/>, and its P&amp;L.</summary>
 public sealed record EquityPoint(DateTimeOffset Ts, decimal Equity, decimal Pnl);
 
-/// <summary><c>GET /stats/performance</c>: <c>{ points: [{ ts, equity, pnl }], total_pnl }</c>.</summary>
-public sealed record PerformanceResponse(IReadOnlyList<EquityPoint> Points, decimal TotalPnl);
+/// <summary>
+/// <c>GET /stats/performance</c>: <c>{ points: [{ ts, equity, pnl }], total_pnl, session }</c> — <c>session</c> is the
+/// bot session read (null: every trade).
+/// </summary>
+public sealed record PerformanceResponse(IReadOnlyList<EquityPoint> Points, decimal TotalPnl, long? Session = null);
 
 /// <summary>
 /// The live hub's <c>stats_changed</c>: a signal, not the figures — the trade whose close moved
@@ -106,3 +116,23 @@ internal sealed class RawJsonConverter : JsonConverter<RawJson>
     public override void Write(Utf8JsonWriter writer, RawJson value, JsonSerializerOptions options) =>
         writer.WriteRawValue(value.Json, skipInputValidation: true);
 }
+
+/// <summary>
+/// A paper bot session (<c>GET /bot/sessions</c>): one configuration + champion. <c>open</c> / <c>committed</c> count the
+/// positions the bot still holds; <c>orphaned</c> the open trades an earlier bot run left behind.
+/// </summary>
+public sealed record BotSessionDto(
+    long Id,
+    DateTimeOffset StartedAt,
+    DateTimeOffset? EndedAt,
+    string? Label,
+    long? ModelId,
+    string? ModelVersion,
+    RawJson? Options,
+    bool IsCurrent,
+    long Trades,
+    long Closed,
+    long Open,
+    long Orphaned,
+    decimal TotalPnl,
+    decimal Committed);

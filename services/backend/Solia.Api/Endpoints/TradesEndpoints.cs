@@ -15,21 +15,26 @@ public static class TradesEndpoints
     {
         group.MapGet("/trades/history", GetHistoryAsync)
             .WithName("GetTradeHistory").WithTags("trades")
-            .WithSummary("The bot's paper trades, most recently opened first, paginated.")
-            .ProducesError(StatusCodes.Status400BadRequest);
+            .WithSummary("The bot's paper trades of a bot session, most recently opened first, paginated.")
+            .ProducesError(StatusCodes.Status400BadRequest)
+            .ProducesError(StatusCodes.Status404NotFound);
         return group;
     }
 
-    /// <summary>Trades, most recently opened first; <c>from</c>/<c>to</c> bound <c>opened_at</c> (inclusive).</summary>
+    /// <summary>
+    /// Trades of <c>session</c> (default the current one, see <see cref="SessionScopes"/>), most recently opened first;
+    /// <c>from</c>/<c>to</c> bound <c>opened_at</c> (inclusive).
+    /// </summary>
     internal static async Task<PagedResponse<TradeDto>> GetHistoryAsync(
-        SoliaDbContext db, string? status, DateTimeOffset? from, DateTimeOffset? to, int? page, int? pageSize,
+        SoliaDbContext db, string? status, DateTimeOffset? from, DateTimeOffset? to, string? session, int? page, int? pageSize,
         CancellationToken cancellationToken)
     {
         string? state = QueryValidation.OneOf(status, "status", Statuses);
         QueryValidation.Range(from, to);
         PageRequest paging = PageRequest.From(page, pageSize);
+        SessionScope scope = await SessionScopes.ResolveAsync(db, session, cancellationToken);
 
-        IQueryable<Trade> query = db.Trades.AsNoTracking();
+        IQueryable<Trade> query = db.Trades.AsNoTracking().In(scope);
         if (state is not null)
         {
             query = query.Where(t => t.Status == state);

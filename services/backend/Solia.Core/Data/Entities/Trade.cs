@@ -47,6 +47,9 @@ public sealed class Trade
     /// <summary><c>open</c> / <c>closed</c> (DB default <c>open</c>, CHECK lives in SQL).</summary>
     public string Status { get; set; } = null!;
 
+    /// <summary>FK → <c>bot_sessions</c>: the bot session the trade was opened in (null when written outside the bot).</summary>
+    public long? SessionId { get; set; }
+
     public TokenHistory? Token { get; set; }
 
     public Prediction? Prediction { get; set; }

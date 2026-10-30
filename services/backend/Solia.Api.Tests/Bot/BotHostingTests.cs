@@ -9,6 +9,7 @@ using Solia.Bot;
 using Solia.Bot.Configuration;
 using Solia.Bot.Intake;
 using Solia.Bot.Logging;
+using Solia.Bot.Sessions;
 using Solia.Core.Data;
 
 namespace Solia.Api.Tests.Bot;
@@ -24,6 +25,7 @@ public class BotHostingTests
         {
             services.AddSingleton(source);
             services.AddSingleton<IBotLogSink>(NullBotLogSink.Instance);
+            services.AddSingleton<IBotSessionStore>(new InMemoryBotSessionStore());
         }));
 
     private static GatedPaperTradingBot Gate(WebApplicationFactory<Program> factory) =>
@@ -109,6 +111,7 @@ public class BotHostingTests
             {
                 services.AddSingleton<IBotEventSource>(source);
                 services.AddSingleton<IBotLogSink>(NullBotLogSink.Instance);
+                services.AddSingleton<IBotSessionStore>(new InMemoryBotSessionStore());
                 services.AddSingleton(sp =>
                 {
                     building.Set();

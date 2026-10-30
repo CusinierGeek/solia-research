@@ -9,10 +9,12 @@
 
 <PageHeader Title="Overview" Description="Bot status, balance, win-rate and total P&L at a glance." />
 
+<BotSessionSelector @ref="_selector" @bind-Value="_session" />
+
 <MudGrid Spacing="3" Class="solia-overview">
     <MudItem xs="12" md="4">
         <StatCard @ref="_winRate" TItem="WinRateResponse" Name="winrate" Title="Win-rate" Icon="@Icons.Material.Outlined.EmojiEvents"
-                  Load="ct => Api.GetWinRateAsync(_window, ct)" ReloadKey="_window"
+                  Load="ct => Api.GetWinRateAsync(_window, _session, ct)" ReloadKey="(_window, _session)"
                   ErrorMessage="Could not load the win-rate from the backend.">
             <Actions>
                 <MudButtonGroup Size="Size.Small" Variant="Variant.Outlined" Class="solia-windows">
@@ -31,7 +33,7 @@
                 <MudText Typo="Typo.h4" Class="solia-stat-card__value">@(closed == 0 ? DisplayFormat.Missing : DisplayFormat.Percent(context.Winrate))</MudText>
                 @if (closed == 0)
                 {
-                    <MudText Typo="Typo.caption" Class="solia-winrate__empty mud-text-secondary">No closed trades in this window.</MudText>
+                    <MudText Typo="Typo.caption" Class="solia-winrate__empty mud-text-secondary">No closed trades in this window of the session.</MudText>
                 }
                 else
                 {
@@ -47,11 +49,13 @@
 
     <MudItem xs="12" md="4">
         <StatCard @ref="_pnl" TItem="PerformanceResponse" Name="pnl" Title="Total P&L" Icon="@Icons.Material.Outlined.AccountBalanceWallet"
-                  Load="LoadPerformanceAsync" ErrorMessage="Could not load the total P&L from the backend.">
+                  Load="LoadPerformanceAsync" ReloadKey="_session" ErrorMessage="Could not load the total P&L from the backend.">
             <MudText Typo="Typo.h4" Class="@($"solia-stat-card__value {DisplayFormat.PnlClass(context.TotalPnl)}".TrimEnd())">
                 @DisplayFormat.SignedAmount(context.TotalPnl)
             </MudText>
-            <MudText Typo="Typo.body2" Class="mud-text-secondary">Realized over every closed paper trade.</MudText>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary solia-pnl__scope">
+                Realized over @(_session == SessionSelection.All ? "every closed paper trade" : "the session's closed paper trades").
+            </MudText>
         </StatCard>
     </MudItem>
 
@@ -100,6 +104,8 @@
     private StatCard<PerformanceResponse>? _pnl;
     private StatCard<ModelStatusResponse>? _model;
     private StatsWindow _window = StatsWindow.All;
+    private SessionSelection _session = SessionSelection.Current;
+    private BotSessionSelector? _selector;
     private StatsRefresher? _live;
     private bool _disposed;
 
@@ -115,16 +121,17 @@
         _live = new StatsRefresher(LiveFeed, Clock, RefreshDelay, ReconcileInterval, InvokeAsync, RefreshAllAsync, Logger);
     }
 
-    // The model card too: its retrain progress counts closed trades.
+    // The model card too: its retrain progress counts closed trades. The sessions too: their open positions move.
     private Task RefreshAllAsync() =>
         Task.WhenAll(
+            _selector?.ReloadAsync() ?? Task.CompletedTask,
             _winRate?.ReloadAsync() ?? Task.CompletedTask,
             _pnl?.ReloadAsync() ?? Task.CompletedTask,
             _model?.ReloadAsync() ?? Task.CompletedTask);
 
     // Only total_pnl is shown: the smallest curve the backend serves keeps the payload tiny.
     private Task<PerformanceResponse> LoadPerformanceAsync(CancellationToken cancellationToken) =>
-        Api.GetPerformanceAsync(1, cancellationToken);
+        Api.GetPerformanceAsync(1, _session, cancellationToken);
 
     private static double RetrainProgress(ModelStatusResponse status) =>
         status.RetrainThreshold <= 0 ? 0 : Math.Clamp(100.0 * status.TradesSinceLastTrain / status.RetrainThreshold, 0, 100);

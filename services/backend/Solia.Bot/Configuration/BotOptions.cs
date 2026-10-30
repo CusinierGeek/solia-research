@@ -210,6 +210,14 @@ public sealed class BotOptions : IValidatableObject
     };
 
     /// <summary>
+    /// Optional human label for the bot session this configuration opens (e.g. "entry 0.3 / 0.15"), at most 200
+    /// characters. Only used when a new session starts — a restart that continues the current session keeps its label —
+    /// and not part of the session's regime fingerprint (see Sessions.BotSessionFingerprint).
+    /// </summary>
+    [MaxLength(200)]
+    public string? SessionLabel { get; set; }
+
+    /// <summary>
     /// Cross-field rules. Runs only once every single-field annotation has passed, so the values here
     /// are already in range.
     /// </summary>

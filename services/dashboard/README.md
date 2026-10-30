@@ -109,6 +109,10 @@ There is no auth (single-user, internal network) and nothing secret in the dashb
     @foreach (var token in context) { ... }
 </AsyncContent>
 ```
+- `Components/Sessions` — `BotSessionSelector` (#169): which bot session Overview, Performance and Trade history
+  read (`SessionSelection`: current by default, a past one, or all), with the displayed session's champion, period,
+  open positions / committed SOL and orphaned trades. Trade history keeps it in the URL (`?session=`); the stats
+  pages refresh it with their cards.
 - `Components/Charts` + `Stats` — the performance charts. **Library: MudBlazor charts** (chosen for Sprint 5
   T10 over Blazor-ApexCharts, Radzen and Chart.js): it is already the UI library (no new package, one theme),
   MIT, and renders SVG on the server with no JS interop of its own. The trade-off: no dual axis, no mixed

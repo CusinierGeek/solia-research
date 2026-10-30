@@ -20,6 +20,19 @@ public class QueryValuesTests
     }
 
     [Fact]
+    public void A_session_selection_is_current_all_or_a_positive_id()
+    {
+        Assert.Equal(["current", "all", "7"], new[] { SessionSelection.Current, SessionSelection.All, SessionSelection.Of(7) }.Select(s => s.Wire));
+        Assert.Equal(SessionSelection.Of(7), SessionSelection.Parse(" 7 "));
+        Assert.Equal(7, SessionSelection.Parse("7")!.Id);
+        Assert.Same(SessionSelection.All, SessionSelection.Parse("ALL"));
+        Assert.Same(SessionSelection.Current, SessionSelection.Parse("current"));
+        Assert.Null(SessionSelection.All.Id);
+        Assert.All(new[] { null, "", "0", "-3", "1.5", "x" }, v => Assert.Null(SessionSelection.Parse(v)));
+        Assert.Throws<ArgumentOutOfRangeException>(() => SessionSelection.Of(0));
+    }
+
+    [Fact]
     public void An_undefined_enum_value_is_rejected() =>
         Assert.Throws<ArgumentOutOfRangeException>(() => QueryValues.Format((TradeStatus)42));
 

@@ -28,11 +28,22 @@ public interface ISoliaApiClient
     /// <summary><c>GET /trades/history</c>: paper trades, most recently opened first.</summary>
     Task<PagedResult<TradeDto>> GetTradeHistoryAsync(TradeHistoryQuery? query = null, CancellationToken cancellationToken = default);
 
-    /// <summary><c>GET /stats/winrate</c> over <paramref name="window"/> (backend default: all).</summary>
-    Task<WinRateResponse> GetWinRateAsync(StatsWindow? window = null, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// <c>GET /stats/winrate</c> over <paramref name="window"/> (backend default: all) of <paramref name="session"/>
+    /// (backend default: the current session).
+    /// </summary>
+    Task<WinRateResponse> GetWinRateAsync(
+        StatsWindow? window = null, SessionSelection? session = null, CancellationToken cancellationToken = default);
 
-    /// <summary><c>GET /stats/performance</c>: the equity curve's latest <paramref name="limit"/> points.</summary>
-    Task<PerformanceResponse> GetPerformanceAsync(int? limit = null, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// <c>GET /stats/performance</c>: the equity curve's latest <paramref name="limit"/> points of <paramref name="session"/>
+    /// (backend default: the current session).
+    /// </summary>
+    Task<PerformanceResponse> GetPerformanceAsync(
+        int? limit = null, SessionSelection? session = null, CancellationToken cancellationToken = default);
+
+    /// <summary><c>GET /bot/sessions</c>: the bot's sessions, newest first.</summary>
+    Task<IReadOnlyList<BotSessionDto>> GetBotSessionsAsync(CancellationToken cancellationToken = default);
 
     /// <summary><c>GET /logs/bot</c>: recent logs, newest first.</summary>
     Task<IReadOnlyList<LogDto>> GetBotLogsAsync(BotLogsQuery? query = null, CancellationToken cancellationToken = default);
@@ -55,6 +66,7 @@ internal sealed class SoliaApiClient(HttpClient http) : ISoliaApiClient
     internal const string TradeHistoryPath = "trades/history";
     internal const string WinRatePath = "stats/winrate";
     internal const string PerformancePath = "stats/performance";
+    internal const string BotSessionsPath = "bot/sessions";
     internal const string BotLogsPath = "logs/bot";
     internal const string ModelStatusPath = "model/status";
 
@@ -73,12 +85,19 @@ internal sealed class SoliaApiClient(HttpClient http) : ISoliaApiClient
     public Task<PagedResult<TradeDto>> GetTradeHistoryAsync(TradeHistoryQuery? query = null, CancellationToken cancellationToken = default) =>
         GetAsync<PagedResult<TradeDto>>(QueryValues.Build(TradeHistoryPath, (query ?? new()).ToParameters()), cancellationToken);
 
-    public Task<WinRateResponse> GetWinRateAsync(StatsWindow? window = null, CancellationToken cancellationToken = default) =>
+    public Task<WinRateResponse> GetWinRateAsync(
+        StatsWindow? window = null, SessionSelection? session = null, CancellationToken cancellationToken = default) =>
         GetAsync<WinRateResponse>(
-            QueryValues.Build(WinRatePath, [("window", window is { } w ? QueryValues.Format(w) : null)]), cancellationToken);
+            QueryValues.Build(WinRatePath, [("window", window is { } w ? QueryValues.Format(w) : null), ("session", session?.Wire)]),
+            cancellationToken);
 
-    public Task<PerformanceResponse> GetPerformanceAsync(int? limit = null, CancellationToken cancellationToken = default) =>
-        GetAsync<PerformanceResponse>(QueryValues.Build(PerformancePath, [("limit", QueryValues.Format(limit))]), cancellationToken);
+    public Task<PerformanceResponse> GetPerformanceAsync(
+        int? limit = null, SessionSelection? session = null, CancellationToken cancellationToken = default) =>
+        GetAsync<PerformanceResponse>(
+            QueryValues.Build(PerformancePath, [("limit", QueryValues.Format(limit)), ("session", session?.Wire)]), cancellationToken);
+
+    public Task<IReadOnlyList<BotSessionDto>> GetBotSessionsAsync(CancellationToken cancellationToken = default) =>
+        GetAsync<IReadOnlyList<BotSessionDto>>(BotSessionsPath, cancellationToken);
 
     public Task<IReadOnlyList<LogDto>> GetBotLogsAsync(BotLogsQuery? query = null, CancellationToken cancellationToken = default) =>
         GetAsync<IReadOnlyList<LogDto>>(QueryValues.Build(BotLogsPath, (query ?? new()).ToParameters()), cancellationToken);

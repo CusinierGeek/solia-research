@@ -5,6 +5,7 @@ using Solia.Bot.Configuration;
 using Solia.Bot.Domain;
 using Solia.Bot.Intake;
 using Solia.Bot.Logging;
+using Solia.Bot.Sessions;
 using Solia.Bot.Trading;
 using Solia.Shared.Logging;
 
@@ -26,6 +27,10 @@ namespace Solia.Bot;
 /// then dropped as late. The sweep and the event loop take turns on the (not thread-safe) engine.
 /// Disabled when the option is 0 (deterministic replay).</para>
 ///
+/// <para><b>Sessions.</b> With <see cref="BotSessions"/> (the hosted bot), the run first continues the current
+/// bot session or opens a new one (issue #169), so its trades are read per regime; a failure there is a bot
+/// failure like any other.</para>
+///
 /// <para>Operational milestones (start/stop) are written to the `logs` table through a
 /// <see cref="BestEffortLogWriter"/> — bounded and never thrown, so a logging outage neither aborts
 /// trading nor overruns shutdown. Per-trade opens/closes are logged by the engine itself (it owns them).
@@ -39,6 +44,7 @@ public sealed class PaperTradingBot : BackgroundService
     private readonly IBotEventSource _source;
     private readonly BotOptions _options;
     private readonly TimeProvider _time;
+    private readonly BotSessions? _sessions;
 
     // Serializes the event loop and the idle sweep on the engine.
     private readonly SemaphoreSlim _engineGate = new(1, 1);
@@ -52,7 +58,8 @@ public sealed class PaperTradingBot : BackgroundService
         PositionManager engine,
         IBotEventSource source,
         IOptions<BotOptions> options,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        BotSessions? sessions = null)
     {
         _logger = logger;
         _log = new BestEffortLogWriter(logSink, logger);
@@ -60,6 +67,7 @@ public sealed class PaperTradingBot : BackgroundService
         _source = source;
         _options = options.Value;
         _time = timeProvider ?? TimeProvider.System;
+        _sessions = sessions;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -72,6 +80,12 @@ public sealed class PaperTradingBot : BackgroundService
 
         try
         {
+            // Before any event: every trade the bot opens belongs to a session (no session, no trading).
+            if (_sessions is not null)
+            {
+                await _sessions.StartAsync(stoppingToken);
+            }
+
             await RunAsync(stoppingToken);
             if (!stoppingToken.IsCancellationRequested)
             {

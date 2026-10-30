@@ -56,9 +56,14 @@ internal sealed class FakeSoliaApiClient : ISoliaApiClient
 
     public List<StatsWindow?> WinRateCalls { get; } = [];
 
-    public Task<WinRateResponse> GetWinRateAsync(StatsWindow? window = null, CancellationToken cancellationToken = default)
+    /// <summary>The session of each <see cref="WinRateCalls">win-rate call</see>, in step with it.</summary>
+    public List<SessionSelection?> WinRateSessions { get; } = [];
+
+    public Task<WinRateResponse> GetWinRateAsync(
+        StatsWindow? window = null, SessionSelection? session = null, CancellationToken cancellationToken = default)
     {
         WinRateCalls.Add(window);
+        WinRateSessions.Add(session);
         return WinRate(window, cancellationToken);
     }
 
@@ -67,10 +72,26 @@ internal sealed class FakeSoliaApiClient : ISoliaApiClient
 
     public List<int?> PerformanceCalls { get; } = [];
 
-    public Task<PerformanceResponse> GetPerformanceAsync(int? limit = null, CancellationToken cancellationToken = default)
+    /// <summary>The session of each <see cref="PerformanceCalls">performance call</see>, in step with it.</summary>
+    public List<SessionSelection?> PerformanceSessions { get; } = [];
+
+    public Task<PerformanceResponse> GetPerformanceAsync(
+        int? limit = null, SessionSelection? session = null, CancellationToken cancellationToken = default)
     {
         PerformanceCalls.Add(limit);
+        PerformanceSessions.Add(session);
         return Performance(limit, cancellationToken);
+    }
+
+    public Func<CancellationToken, Task<IReadOnlyList<BotSessionDto>>> BotSessions { get; set; } =
+        _ => Task.FromResult<IReadOnlyList<BotSessionDto>>([]);
+
+    public int BotSessionsCalls { get; private set; }
+
+    public Task<IReadOnlyList<BotSessionDto>> GetBotSessionsAsync(CancellationToken cancellationToken = default)
+    {
+        BotSessionsCalls++;
+        return BotSessions(cancellationToken);
     }
 
     public Func<BotLogsQuery, CancellationToken, Task<IReadOnlyList<LogDto>>> BotLogs { get; set; } =
