@@ -508,14 +508,40 @@ def train_and_score(
     device: Any = None,
 ) -> tuple[int, dict[str, float | None]]:
     """One run: fit under ``seed`` (early-stopping on ``val_ds``), calibrate on ``val_ds``, score
-    ``eval_ds`` calibrated. Returns the best epoch and :func:`run_metrics`. Never saves anything."""
+    ``eval_ds`` calibrated. Returns the best epoch and :func:`run_metrics` plus the fit's
+    :func:`fit_metrics`. Never saves anything."""
     cfg = copy.deepcopy(dict(config))
     cfg["training"] = {**cfg["training"], "seed": seed}
     fitted = fit(train_ds, val_ds, cfg, device=device)
     model = fitted.model.cpu()
     calibration, _ = fit_calibration_window(model, val_ds, cfg)
     report = evaluate(model, eval_ds, policy=policy, calibration=calibration)
-    return fitted.best_epoch, run_metrics(report)
+    return fitted.best_epoch, {
+        **run_metrics(report),
+        **fit_metrics(fitted.history, fitted.best_epoch),
+    }
+
+
+FIT_METRICS = ("train_loss", "val_loss", "gap", "epochs")
+
+
+def fit_metrics(history: Sequence[Mapping[str, float]], best_epoch: int) -> dict[str, float | None]:
+    """How the fit went, as ``fit/<name>``: the train and validation losses at the best epoch, their
+    ``gap`` (validation - train: overfitting widens it), and how many ``epochs`` ran (early
+    stopping included). Diagnostics, not scores: the train loss is taken on balanced batches with
+    dropout on, so only its trend across settings is meaningful."""
+    if not history or not 0 <= best_epoch < len(history):
+        return {f"fit/{name}": None for name in FIT_METRICS}
+    best = history[best_epoch]
+    train_loss = _finite(best.get("train_loss"))
+    val_loss = _finite(best.get("val_total"))
+    gap = None if train_loss is None or val_loss is None else val_loss - train_loss
+    return {
+        "fit/train_loss": train_loss,
+        "fit/val_loss": val_loss,
+        "fit/gap": gap,
+        "fit/epochs": float(len(history)),
+    }
 
 
 def check_settings(

@@ -141,7 +141,7 @@ def measure_loader(
             if n == warmup:
                 if device.type == "cuda":
                     torch.cuda.synchronize()
-                started, seen = time.monotonic(), 0
+                started, seen = time.perf_counter(), 0
             optimizer.zero_grad()
             outputs = model(
                 x.to(device, non_blocking=pin), padding_mask.to(device, non_blocking=pin)
@@ -155,7 +155,7 @@ def measure_loader(
                 break
         if device.type == "cuda":
             torch.cuda.synchronize()
-        seconds = time.monotonic() - started
+        seconds = time.perf_counter() - started
         memory = _memory(loader)
     return {
         "batches": n - warmup,
@@ -177,13 +177,13 @@ def run(
 ) -> dict[str, Any]:
     """Build the samples and measure each loader setting (module doc)."""
     device = torch.device(device)
-    started = time.monotonic()
+    started = time.perf_counter()
     samples = config_samples(df, config)
     report: dict[str, Any] = {
         "rows": len(df),
         "tokens": int(df["mint"].nunique()),
         "samples": len(samples),
-        "build_seconds": time.monotonic() - started,
+        "build_seconds": time.perf_counter() - started,
         "rss_after_build_mb": (process_memory() or {}).get("rss_kb", 0) / 1024 or None,
         "runs": {},
     }

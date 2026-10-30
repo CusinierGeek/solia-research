@@ -1,0 +1,10 @@
+# #160 stage 2 — regularization, run on stage 1's stride / row budget (set them in the config
+# under test, or pass --max-rows). Random search: --trials bounds the cost.
+dropout:
+  choices: [0.1, 0.2, 0.3]
+weight_decay:
+  choices: [0.01, 0.05, 0.1]
+learning_rate:
+  choices: [0.0001, 0.0003]
+d_model:
+  choices: [64, 128]

@@ -421,7 +421,14 @@ def fit(
         train_seconds = time.monotonic() - epoch_start
 
         val = _validate(model, loss_fn, val_loader, device, pin)
-        history.append({"epoch": float(epoch), **{f"val_{k}": v for k, v in val.items()}})
+        train_loss = float(loss_sum) / max(1, n_batches)
+        history.append(
+            {
+                "epoch": float(epoch),
+                "train_loss": train_loss,
+                **{f"val_{k}": v for k, v in val.items()},
+            }
+        )
         if val["total"] < best_val - 1e-6:
             best_val, best_epoch, best_metrics = val["total"], epoch, val
             best_state = copy.deepcopy(model.state_dict())
@@ -435,7 +442,7 @@ def fit(
                 "event": "epoch",
                 "epoch": epoch + 1,
                 "epochs": epochs,
-                "train_loss": float(loss_sum) / max(1, n_batches),
+                "train_loss": train_loss,
                 "val_loss": val["total"],
                 "seconds": now - epoch_start,
                 "samples_per_s": len(train_ds) / max(train_seconds, 1e-9),

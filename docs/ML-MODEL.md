@@ -344,7 +344,8 @@ background trigger, `python -m solia_ai.candidate` and `python -m solia_ai.train
    (it spans the whole window, unlike a "first/last N rows" cut) and mostly stable as data grows (a prefix of
    the same order). With an eligibility filter (#149) the cap applies after it.
 
-Only the model's columns are read (no JSONB), NUMERIC cast to `float8` in SQL, streamed by 200 000 rows with
+Only the model's columns are read (no JSONB), NUMERIC cast to `float8` in SQL (model-only features then held as
+float32, #160), streamed by 200 000 rows with
 `mint` / `venue` held as categories until the frame is built (a `str` per row fragments the heap: RSS was ~4×
 the frame without it). Invalid bounds — ≤ 0, or a window shorter than `(promotion.windows + 1) ×` the longest
 horizon (the gate's held-out windows plus the label embargo; 4 h with the defaults) — fail before the run is
@@ -523,8 +524,9 @@ Once the feature set is settled, `solia_ai/search.py` tunes what is left — sco
 harness (same walk-forward windows, same seeds, paired run for run), so a config only wins on lift
 that survives eval-sample and initialization luck.
 
-- **Space**: `seq_len`, `d_model`, `n_layers`, `dropout`, `learning_rate`, and the labels as one
-  scale per head over every horizon (`pump_threshold_scale`, `rug_threshold_scale` — the term
+- **Space**: `seq_len`, `d_model`, `n_layers`, `dropout`, `learning_rate`, `weight_decay`, the
+  training-window stride (`window_stride_seconds`) and row budget (`max_rows`) — see *Overfitting*
+  below — and the labels as one scale per head over every horizon (`pump_threshold_scale`, `rug_threshold_scale` — the term
   structure across horizons is kept). Each is `{choices: [...]}` or `{low, high[, log]}` (default
   space: `search.DEFAULT_SPACE`, override with `--space file.yaml`); omitted parameters keep the base
   value. `ff_dim` follows `d_model` at the base ratio; `min_seq_len` stays the base one. A space is
@@ -541,6 +543,11 @@ that survives eval-sample and initialization luck.
   since a model trained on other labels is calibrated for another event.
 - **Ranking**: by `mean − std` of the per-run objective (a noisy config doesn't win on luck). The best
   trial is compared to the baseline with the ablation verdict (objective and every metric).
+- **Fit diagnostics**: per trial, the best epoch (1-based) and the validation − train loss gap at it
+  (`fit/*` in each run's metrics), and for the baseline and the best trial the rug ROC-AUC / PR-AUC
+  per walk-forward slice (`drift`: time drift of the rug head).
+- **Data**: the same bounded read as a retrain (`--lookback-days` / `--max-rows`, default config
+  `data`), widened to the largest `max_rows` of the space.
 - **Output**: a JSON report (`--out`) and a **proposed** `config.yaml` diff (`--diff-out`), never
   applied. Trials never save a checkpoint, register a model or touch `is_champion`.
 
@@ -548,12 +555,83 @@ that survives eval-sample and initialization luck.
 python -m solia_ai.search --trials 30 --max-minutes 240 --windows 3 --seeds 0 1 2     --out reports/search.json --diff-out reports/search.diff
 ```
 
+### Overfitting: window stride & regularization (#160)
+
+**Symptom (retrain #2, 4 M rows, RTX 4070).** Validation loss is best at epoch 1 (0.188), then rises every epoch
+(0.215, 0.289 … 0.497) while the train loss falls (0.27 → 0.08); early stopping keeps epoch 1 of 9. The read kept
+15 055 of 161 531 tokens: the 4 M-row cap is filled by ~250 near-identical 10 s snapshots per token, and every
+snapshot was a training window. The model sees few distinct situations many times and memorizes them. The rug
+head also drifts across the held-out (15m ROC-AUC 0.924 → 0.886).
+
+**Window stride** (`data.window_stride_seconds`, `solia_ai/dataset.py`). A token's time since its first row is
+cut into `stride`-second buckets, and only the first eligible window ending in each bucket is kept: at most one
+window per stride of the token's life. Window *ends* are thinned **before labeling**. Nothing else changes: each
+window keeps its full 10 s-cadence history (the model and inference are untouched) and its labels. The rule is
+deterministic and causal, and train / validation / held-out all go through `config_samples`, so they are thinned
+identically. The temporal split and its embargo apply to the thinned windows as before. `0` (default) keeps a
+window per snapshot.
+
+**Why the stride alone can't shrink the read.** A window holds its last `seq_len` = 64 rows (640 s), so with a
+30–60 s stride (3–6 rows) every row still belongs to some window's history. A real reduction would need a coarser
+input cadence, which means a train/serve change (out of scope). The stride cuts the per-*window* cost: labeling,
+stored samples and, above all, the **epoch time** (∝ windows: ~1/3 at 30 s, ~1/6 at 60 s). The same epoch budget
+therefore covers 3–6× the rows. Memory is per *row*, so the build and the read were also slimmed so that the same
+memory holds more rows:
+
+- `build_samples` never copies the frame: rows are filtered and ordered through an index (`lexsort`), and each
+  column is gathered already ordered. The samples are bit-for-bit identical (`tests/test_dataset_build.py`).
+- `build_feature_matrix` fills its float32 matrix one column at a time, with no `concat` copy of the frame and no
+  full float64 intermediate, and only for the rows that hold a sample.
+- The bounded read holds every model-only feature as float32 (the model casts them to float32 anyway, with the
+  same rounding: `tests/test_features.py`). Labels and eligibility inputs (`price`, `liquidity`,
+  `unique_traders`, `volume`, `token_age_sec`) stay float64.
+
+Measured (synthetic frame shaped like the read: 2 000 tokens × 250 snapshots, `tracemalloc`; bytes per row
+read, frame + peak of `config_samples`):
+
+| | frame | build peak | total | windows |
+|---|---:|---:|---:|---:|
+| before #160 | 455 | 1 050 | 1 505 | 480 k |
+| after, stride 0 | 331 | 741 | 1 072 | 480 k |
+| after, stride 30 s | 331 | 662 | 993 | 162 k |
+| after, stride 60 s | 331 | 640 | 971 | 82 k |
+
+At equal memory, `data.max_rows` therefore covers ~1.5× the rows (tokens). Combined with the ~3–6× cheaper epochs,
+the row budget can grow with the stride. Re-measure the real RSS with `python -m solia_ai.throughput --max-rows …`
+before raising `data.max_rows` in production. The 4 M-row read peaked at ~4 GB of the ~16 GB Docker budget (see
+*Bounded training read*).
+
+**Sweep.** Every setting is compared by `solia_ai.search` on the same walk-forward held-out windows × seeds, with
+predictive metrics primary (pump / rug PR-AUC per horizon, ECE). A stride or row-budget trial trains on its own
+windows but is scored on the baseline's windows. A `max_rows` trial trains on exactly the tokens a read capped
+there would keep (whole tokens in `md5(mint)` order, `search.budget_tokens`), out of one frame read at the
+largest budget. Two shipped spaces (`solia_ai/sweeps/`, run in the GPU container; pause Windows Update for
+overnight runs):
+
+```bash
+# Stage 1 — data: stride x row budget vs today's (stride 0, 4 M rows). 4 trials + baseline, ~2 x the
+# baseline's epoch cost in all; ~6-7 h with 2 windows x 2 seeds.
+python -m solia_ai.search --space overfitting-data --strategy grid --trials 5 --windows 2 --seeds 0 1     --objective pr_auc --out /app/models/reports/overfitting-data.json
+# Stage 2 — regularization (dropout, weight decay, learning rate, width) on stage 1's stride / budget,
+# set in the config under test (SOLIA_AI_CONFIG) or with --max-rows.
+python -m solia_ai.search --space overfitting-regularization --trials 10 --windows 2 --seeds 0 1     --objective pr_auc --out /app/models/reports/overfitting-regularization.json
+```
+
+The report gives, per trial, the objective (mean ± std), the best epoch and the val − train gap, and, for the
+baseline and the best trial, the rug ROC-AUC / PR-AUC per held-out slice (drift).
+
+**Results & chosen defaults.** *Pending the overnight runs above.* Until they are measured, the shipped config
+keeps the pre-#160 behaviour (`window_stride_seconds: 0`, `max_rows` 4 M, `dropout` 0.1, `weight_decay` 0.01,
+`learning_rate` 3e-4, `d_model` 128): defaults are measured, not guessed. Record here each stage's table (trial,
+PR-AUC per head/horizon, ECE, best epoch, gap), the rug drift per slice, and the chosen values. Also state whether
+the best epoch moved past 1 and the gap narrowed, or why not.
+
 ## Files (ai-service, built in Sprints 2 & 7)
 
 | File | Role |
 |------|------|
 | `model.py` | Transformer + prediction heads (pump / rug / return) |
-| `dataset.py` | Dataset/DataLoader, sequence windowing, labeling |
+| `dataset.py` | Dataset/DataLoader, sequence windowing (window stride), labeling |
 | `features.py` | Shared feature spec / parity with pipeline |
 | `train.py` | Initial training entrypoint |
 | `candidate.py` | Candidate training for a retrain (warm start from champion or scratch, refreshed time split, never registered) |
@@ -562,7 +640,7 @@ python -m solia_ai.search --trials 30 --max-minutes 240 --windows 3 --seeds 0 1 
 | `ablation.py` | Per-feature-group lift across windows & seeds |
 | `eligibility.py` | Token eligibility rule (causal, shared with the bot) |
 | `eligibility_ablation.py` | Lift of eligibility rules (rule's model vs every-token model on the rule's population) |
-| `search.py` | Hyperparameter & labeling-threshold search (proposes a `config.yaml` diff) |
+| `search.py` | Hyperparameter, regularization, stride & labeling-threshold search (proposes a `config.yaml` diff); spaces in `sweeps/` |
 | `inference.py` | Load champion, run predictions (+ ONNX export) |
 | `retrain.py` | Continuous-training orchestrator: trade-count trigger, one run at a time, `training_events` audit, promote/reject, rollback, prune |
 | `retrain_service.py` | Retrains inside the API: manual start (`POST /model/retrain`), background trade-count trigger, status progress |

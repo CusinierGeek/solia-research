@@ -276,6 +276,13 @@ def test_packaged_candidate_settings_are_valid():
         ({"lookback_days": True}, "'data.lookback_days' must be a number"),
         ({"max_rows": 0}, "'data.max_rows' must be >= 1"),
         ({"max_rows": 1.5}, "'data.max_rows' must be an integer"),
+        (
+            {"window_stride_seconds": -10},
+            "'data.window_stride_seconds' must be a finite number >= 0",
+        ),
+        ({"window_stride_seconds": float("nan")}, "'data.window_stride_seconds' must be a finite"),
+        ({"window_stride_seconds": "30s"}, "'data.window_stride_seconds' must be a number"),
+        ({"window_stride_seconds": True}, "'data.window_stride_seconds' must be a number"),
         # 3 gate windows + 1, x the 1 h embargo = 4 h > 0.1 d (2.4 h)
         ({"lookback_days": 0.1}, r"shorter than the promotion gate needs: .* = 4 h"),
     ],
@@ -321,3 +328,13 @@ def test_overrides_win_over_the_config_and_are_validated():
         DataSettings.from_config(cfg, lookback_days=-1)
     with pytest.raises(ConfigError, match="shorter than the promotion gate needs"):
         DataSettings.from_config(cfg, lookback_days=0.01)
+
+
+@pytest.mark.parametrize("stride", [0, 30, 45.5])
+def test_a_window_stride_is_accepted(tmp_path, stride):
+    cfg = load_config(write(tmp_path, variant(data={"window_stride_seconds": stride})))
+    assert cfg["data"]["window_stride_seconds"] == stride
+
+
+def test_the_shipped_config_sets_a_window_stride():
+    assert load_config()["data"]["window_stride_seconds"] >= 0

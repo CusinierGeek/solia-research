@@ -1,0 +1,8 @@
+# #160 stage 1 — how many distinct situations per row budget (python -m solia_ai.search --space overfitting-data).
+# The baseline (trial "baseline") is the shipped config: a window per snapshot, data.max_rows rows.
+# Every trial is scored on the baseline's held-out windows; the read covers the largest max_rows.
+# Epoch cost ~ max_rows / stride: (30 s, 8 M) costs ~2/3 of the baseline's epoch.
+window_stride_seconds:
+  choices: [30, 60]
+max_rows:
+  choices: [4000000, 8000000]

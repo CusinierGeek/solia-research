@@ -5,7 +5,8 @@ labels. This module tries a bounded number of configurations and reports the bes
 spread, never a single lucky run — as a *proposed* ``config.yaml`` diff. Nothing is applied,
 saved, registered or promoted.
 
-* **Search space** — ``seq_len``, ``d_model``, ``n_layers``, ``dropout``, ``learning_rate`` and the
+* **Search space** — ``seq_len``, ``d_model``, ``n_layers``, ``dropout``, ``learning_rate``,
+  ``weight_decay``, the training-window stride (``window_stride_seconds``, ``data``) and the
   labeling thresholds, as one multiplicative scale per head over every horizon
   (``pump_threshold_scale`` / ``rug_threshold_scale``: the term structure across horizons is kept).
   Each parameter is either ``{choices: [...]}`` or a ``{low, high[, log]}`` range; parameters left
@@ -20,6 +21,17 @@ saved, registered or promoted.
   objective of a run is the mean ``roc_auc`` (or ``pr_auc``) over both heads and every horizon; a
   trial's score is ``mean - std`` of its runs, so a noisy config doesn't win on luck. The best
   trial is compared to the baseline with the ablation's paired-lift verdict.
+* **Row budget** — ``max_rows`` (``data``) caps the rows a trial trains on the way the bounded
+  read caps them (:func:`solia_ai.db.read_training_features`: whole tokens in ``md5(mint)`` order),
+  out of one frame read at the largest budget of the search, so "stride + more tokens for the same
+  rows" is compared with today's read on the same held-out windows. A trial without it uses the
+  base config's ``data.max_rows``.
+* **Stride** — a stride trial trains and early-stops on its own (thinned) windows but, like a
+  threshold trial, is scored on the base config's windows: every trial is measured on the same
+  held-out windows.
+* **Fit diagnostics** — each trial reports its best epoch and the validation - train loss gap at it
+  (overfitting shows as an early best epoch and a wide gap), and the rug metrics per walk-forward
+  slice for the baseline and the best trial (drift across time).
 * **Labels** — a threshold change alters the *target*. Training (and calibration) use the trial's
   labels, but every trial is **scored against the base config's labels** on the same windows, so
   the metrics keep one definition across trials: "how well does this model rank the reference
@@ -32,6 +44,7 @@ from __future__ import annotations
 import argparse
 import copy
 import difflib
+import hashlib
 import itertools
 import json
 import math
@@ -40,6 +53,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +67,7 @@ from .ablation import (
     DEFAULT_SEEDS,
     DEFAULT_VAL_FRACTION,
     DEFAULT_WINDOWS,
+    FIT_METRICS,
     HEADS,
     RunResult,
     check_settings,
@@ -64,11 +79,19 @@ from .ablation import (
     walk_forward_windows,
 )
 from .config import ConfigError, validate_config
-from .dataset import SequenceDataset, config_samples, embargo_seconds
+from .dataset import SequenceDataset, config_samples, embargo_seconds, window_stride
 from .evaluate import ReferencePolicy, default_policy_horizon, fmt, json_safe
+from .lift import PREDICTIVE_METRICS
 
-INT_PARAMS = ("seq_len", "d_model", "n_layers")
-FLOAT_PARAMS = ("dropout", "learning_rate", "pump_threshold_scale", "rug_threshold_scale")
+INT_PARAMS = ("seq_len", "d_model", "n_layers", "max_rows")
+FLOAT_PARAMS = (
+    "dropout",
+    "learning_rate",
+    "weight_decay",
+    "window_stride_seconds",
+    "pump_threshold_scale",
+    "rug_threshold_scale",
+)
 PARAMS = INT_PARAMS + FLOAT_PARAMS
 OBJECTIVES = ("roc_auc", "pr_auc")
 STRATEGIES = ("random", "grid")
@@ -80,6 +103,8 @@ DEFAULT_SPACE: dict[str, dict[str, Any]] = {
     "n_layers": {"choices": [2, 3, 4, 6]},
     "dropout": {"low": 0.0, "high": 0.3},
     "learning_rate": {"low": 1e-4, "high": 1e-3, "log": True},
+    "weight_decay": {"low": 1e-3, "high": 0.1, "log": True},
+    "window_stride_seconds": {"choices": [0, 30, 60]},
     "pump_threshold_scale": {"choices": [0.75, 1.0, 1.25]},
     "rug_threshold_scale": {"choices": [0.85, 1.0, 1.15]},
 }
@@ -107,12 +132,14 @@ def _value_error(name: str, value: Any, base: Mapping[str, Any]) -> str | None:
         return f"must be >= the base min_seq_len ({_min_seq_len(model)}), got {value}"
     if name == "d_model" and (value <= 0 or value % model["n_heads"]):
         return f"must be a positive multiple of n_heads ({model['n_heads']}), got {value}"
-    if name == "n_layers" and value < 1:
+    if name in ("n_layers", "max_rows") and value < 1:
         return f"must be >= 1, got {value}"
     if name == "dropout" and not 0 <= value < 1:
         return f"must be in [0, 1), got {value}"
     if name in ("learning_rate", "pump_threshold_scale", "rug_threshold_scale") and value <= 0:
         return f"must be > 0, got {value}"
+    if name in ("weight_decay", "window_stride_seconds") and value < 0:
+        return f"must be >= 0, got {value}"
     if name == "rug_threshold_scale":
         top = max(base["labeling"]["rug_threshold"].values())
         if value * top >= 1:
@@ -226,8 +253,9 @@ def candidate_params(
 def apply_params(base: Mapping[str, Any], params: Mapping[str, Any]) -> dict[str, Any]:
     """The ``base`` config with ``params`` applied (validated; ``base`` is not modified).
 
-    ``ff_dim`` keeps the base ``ff_dim / d_model`` ratio, ``min_seq_len`` stays the base one, and a
-    threshold scale multiplies that head's threshold on every horizon.
+    ``ff_dim`` keeps the base ``ff_dim / d_model`` ratio, ``min_seq_len`` stays the base one, a
+    threshold scale multiplies that head's threshold on every horizon, and the stride and row budget
+    go to ``data.window_stride_seconds`` / ``data.max_rows``.
     """
     cfg = copy.deepcopy(dict(base))
     model, training, labeling = cfg["model"], cfg["training"], cfg["labeling"]
@@ -238,8 +266,12 @@ def apply_params(base: Mapping[str, Any], params: Mapping[str, Any]) -> dict[str
     if "d_model" in params and "ff_dim" in base["model"]:
         ratio = base["model"]["ff_dim"] / base["model"]["d_model"]
         model["ff_dim"] = max(1, round(ratio * params["d_model"]))
-    if "learning_rate" in params:
-        training["learning_rate"] = params["learning_rate"]
+    for name in ("learning_rate", "weight_decay"):
+        if name in params:
+            training[name] = params[name]
+    for name in ("window_stride_seconds", "max_rows"):
+        if name in params:
+            cfg["data"] = {**cfg.get("data", {}), name: params[name]}
     for head in HEADS:
         scale = params.get(f"{head}_threshold_scale")
         if scale is not None:
@@ -262,6 +294,25 @@ def proposed_diff(base: Mapping[str, Any], proposed: Mapping[str, Any]) -> str:
     return "".join(
         difflib.unified_diff(before, after, fromfile="config.yaml", tofile="config.yaml (proposed)")
     )
+
+
+def budget_tokens(mints: pd.Series, max_rows: int) -> set[str]:
+    """The tokens a ``max_rows`` bounded read keeps out of ``mints`` (one entry per row): whole
+    tokens in ``md5(mint)`` order while the running row total fits — the rule of
+    :func:`solia_ai.db.read_training_features`, so a budget at most the one read gives the same
+    tokens as reading with it."""
+    counts = mints.dropna().value_counts(sort=False)
+    order = sorted(counts.index, key=lambda m: hashlib.md5(str(m).encode("utf-8")).hexdigest())
+    running = counts[order].cumsum()
+    return set(running.index[running.to_numpy() <= max_rows])
+
+
+def read_rows(space: Mapping[str, Mapping[str, Any]], max_rows: int) -> int:
+    """The rows to read for a search: the base budget or the space's largest ``max_rows``."""
+    spec = space.get("max_rows")
+    if spec is None:
+        return max_rows
+    return max(max_rows, *(spec["choices"] if "choices" in spec else (spec["high"],)))
 
 
 # --------------------------------------------------------------------------- objective
@@ -296,6 +347,10 @@ class Trial:
     score: float | None
     summary: dict[str, dict[str, Any]]  # per metric: mean ± std over the runs
     seconds: float
+    # Fit diagnostics, mean ± std over the runs: best_epoch (1-based) and fit/* (FIT_METRICS).
+    fit: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Per walk-forward slice (oldest first): the rug metrics, mean over the seeds — drift in time.
+    drift: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -336,13 +391,21 @@ class SearchReport:
             f"{objective} over heads x horizons, scored on the base labels; rank by mean - std",
             f"generated {self.generated_at}",
             "",
-            f"{'trial':>10} | {objective + ' mean ± std':>20} | {'score':>8} | params",
+            f"{'trial':>10} | {objective + ' mean ± std':>20} | {'score':>8} | {'best ep':>7} | "
+            f"{'val-train gap':>13} | params",
         ]
         by_name = {t.name: t for t in self.trials}
         for name in self.ranking:
             t = by_name[name]
             params = ", ".join(f"{k}={v}" for k, v in t.params.items()) or "(base config)"
-            lines.append(f"{name:>10} | {_pm(t.objective):>20} | {fmt(t.score):>8} | {params}")
+            epoch = _mean(t.fit.get("best_epoch"))
+            gap = _mean(t.fit.get("fit/gap"))
+            lines.append(
+                f"{name:>10} | {_pm(t.objective):>20} | {fmt(t.score):>8} | {epoch:>7} | "
+                f"{gap:>13} | {params}"
+            )
+        for name in dict.fromkeys((BASELINE, self.best)):
+            lines += ["", *render_drift(by_name[name], self.horizons)]
         if self.best == BASELINE:
             lines += ["", "Best: the baseline — no change proposed."]
             return "\n".join(lines)
@@ -364,6 +427,45 @@ def _pm(stats: Mapping[str, Any]) -> str:
     if stats["mean"] is None:
         return "n/a"
     return f"{fmt(stats['mean'])} ± {fmt(stats['std'])}"
+
+
+def _mean(stats: Mapping[str, Any] | None) -> str:
+    return "n/a" if stats is None or stats["mean"] is None else fmt(stats["mean"])
+
+
+DRIFT_METRICS = ("roc_auc", "pr_auc")
+
+
+def render_drift(trial: Trial, horizons: Sequence[str]) -> list[str]:
+    """The rug ROC-AUC / PR-AUC of ``trial`` per walk-forward slice (rows) and horizon."""
+    lines = [
+        f"Rug drift — {trial.name}: {' / '.join(DRIFT_METRICS)} per held-out slice",
+        f"{'slice':>17} | " + " | ".join(f"{h:>13}" for h in horizons),
+    ]
+    for row in trial.drift:
+        cells = ["/".join(fmt(row.get(f"rug/{h}/{m}")) for m in DRIFT_METRICS) for h in horizons]
+        span = f"{row['eval_start'][5:16]}..{row['eval_end'][11:16]}"
+        lines.append(f"{span:>17} | " + " | ".join(f"{c:>13}" for c in cells))
+    return lines
+
+
+def drift_by_window(
+    runs: Sequence[RunResult], windows: Sequence[Mapping[str, Any]], horizons: Sequence[str]
+) -> list[dict[str, Any]]:
+    """Per walk-forward slice (``windows``: :meth:`Window.describe`), every rug predictive metric
+    averaged over that slice's runs (one per seed)."""
+    keys = [f"rug/{h}/{m}" for h in horizons for m in PREDICTIVE_METRICS]
+    rows = []
+    for window in windows:
+        in_slice = [r for r in runs if r.window == window["index"]]
+        row: dict[str, Any] = {
+            "window": window["index"],
+            "eval_start": window["eval_start"],
+            "eval_end": window["eval_end"],
+        }
+        row.update({k: summarize(r.metrics.get(k) for r in in_slice)["mean"] for k in keys})
+        rows.append(row)
+    return rows
 
 
 # --------------------------------------------------------------------------- orchestration
@@ -412,11 +514,20 @@ def run_search(
         started = clock()
         cfg = apply_params(config, params)
         train_samples = config_samples(df, cfg)
-        # Scored on the base labels: same windows, same target definition for every trial.
+        # Scored on the base labels and the base stride: same windows, same target definition for
+        # every trial.
+        base_stride = window_stride(config)
         eval_samples = (
             train_samples
-            if cfg["labeling"] == config["labeling"]
-            else config_samples(df, {**cfg, "labeling": config["labeling"]})
+            if cfg["labeling"] == config["labeling"] and window_stride(cfg) == base_stride
+            else config_samples(
+                df,
+                {
+                    **cfg,
+                    "labeling": config["labeling"],
+                    "data": {**cfg.get("data", {}), "window_stride_seconds": base_stride},
+                },
+            )
         )
         if not np.array_equal(eval_samples.end_ts, reference.end_ts):
             raise ValueError(f"trial {name} would not score the reference windows")
@@ -428,10 +539,22 @@ def run_search(
             val_fraction=val_fraction,
             embargo=embargo,
         )
+        budget = cfg.get("data", {}).get("max_rows")
+        trained = None  # windows of the tokens the trial's row budget keeps (None: every one)
+        if budget is not None and budget < df["mint"].notna().sum():
+            trained = np.isin(train_samples.mint, list(budget_tokens(df["mint"], budget)))
         runs = []
         for window in windows:
-            train_ds = SequenceDataset(train_samples, window.train_idx)
-            val_ds = SequenceDataset(train_samples, window.val_idx)
+            train_idx, val_idx = window.train_idx, window.val_idx
+            if trained is not None:
+                train_idx, val_idx = train_idx[trained[train_idx]], val_idx[trained[val_idx]]
+                if len(train_idx) == 0 or len(val_idx) == 0:
+                    raise ValueError(
+                        f"trial {name}: max_rows {budget} leaves window {window.index} an empty "
+                        "train/validation split; raise it"
+                    )
+            train_ds = SequenceDataset(train_samples, train_idx)
+            val_ds = SequenceDataset(train_samples, val_idx)
             eval_ds = SequenceDataset(eval_samples, window.eval_idx)
             for seed in seeds:
                 if progress:
@@ -442,6 +565,10 @@ def run_search(
                 runs.append(RunResult(name, window.index, seed, best_epoch, metrics))
         stats = summarize(run_objective(r.metrics, objective, horizons) for r in runs)
         keys = metric_keys(horizons)
+        described = [w.describe() for w in windows]
+        fit = {"best_epoch": summarize(r.best_epoch + 1 for r in runs)}
+        for m in FIT_METRICS:
+            fit[f"fit/{m}"] = summarize(r.metrics.get(f"fit/{m}") for r in runs)
         trial = Trial(
             name=name,
             params=dict(params),
@@ -450,8 +577,10 @@ def run_search(
             score=robust_score(stats),
             summary={k: summarize(r.metrics.get(k) for r in runs) for k in keys},
             seconds=clock() - started,
+            fit=fit,
+            drift=drift_by_window(runs, described, horizons),
         )
-        return trial, [w.describe() for w in windows]
+        return trial, described
 
     start = clock()
     baseline, windows = run_trial(BASELINE, {})
@@ -552,7 +681,11 @@ def check_budget(*, n_trials: int, max_seconds: float | None, objective: str) ->
 
 
 def load_space(path: str | Path) -> dict[str, Any]:
-    """A search space from a YAML file (``param: {choices: [...]}`` or ``{low, high, log}``)."""
+    """A search space from a YAML file (``param: {choices: [...]}`` or ``{low, high, log}``): a
+    path, else the name of a space shipped in ``solia_ai/sweeps`` (e.g. ``overfitting-data``)."""
+    shipped = resources.files("solia_ai").joinpath("sweeps", f"{Path(path).stem}.yaml")
+    if not Path(path).exists() and Path(path).parent == Path(".") and shipped.is_file():
+        path = Path(str(shipped))
     try:
         space = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
@@ -566,11 +699,17 @@ def load_space(path: str | Path) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> None:
+    from .db import DataSettings, add_data_bounds_arguments, make_engine, read_training_features
+
     parser = argparse.ArgumentParser(
         description="Search hyperparameters and labeling thresholds over walk-forward windows "
         "and seeds. Proposes a config.yaml diff; never applies it, saves or registers a model."
     )
-    parser.add_argument("--space", help=f"YAML search space (default: {', '.join(DEFAULT_SPACE)})")
+    parser.add_argument(
+        "--space",
+        help="YAML search space, or a shipped one by name (solia_ai/sweeps: overfitting-data, "
+        f"overfitting-regularization); default: {', '.join(DEFAULT_SPACE)}",
+    )
     parser.add_argument("--strategy", choices=STRATEGIES, default="random")
     parser.add_argument("--trials", type=int, default=DEFAULT_TRIALS, help="baseline included")
     parser.add_argument("--max-minutes", type=float, help="no trial starts after this")
@@ -586,7 +725,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--pump-threshold", type=float, default=ReferencePolicy.pump_threshold)
     parser.add_argument("--rug-threshold", type=float, default=ReferencePolicy.rug_threshold)
-    parser.add_argument("--limit", type=int, help="cap the number of feature rows read")
+    add_data_bounds_arguments(parser)  # the retrain's bounded read (config.yaml `data`)
     parser.add_argument("--out", help="write the JSON report to this path")
     parser.add_argument("--diff-out", help="write the proposed config.yaml diff to this path")
     parser.add_argument("--device", help="torch device (default: cuda if available, else cpu)")
@@ -595,13 +734,13 @@ def main(argv: list[str] | None = None) -> None:
     import torch
 
     from .config import load_config
-    from .db import make_engine, read_features
 
     config = load_config()
     max_seconds = None if args.max_minutes is None else args.max_minutes * 60
     try:
         space = load_space(args.space) if args.space else DEFAULT_SPACE
-        check_space(space, config, strategy=args.strategy)  # fail before reading anything
+        # fail before reading anything
+        normalized = check_space(space, config, strategy=args.strategy)
         check_budget(n_trials=args.trials, max_seconds=max_seconds, objective=args.objective)
         check_settings(
             n_windows=args.windows,
@@ -617,10 +756,18 @@ def main(argv: list[str] | None = None) -> None:
             rug_threshold=args.rug_threshold,
         )
         policy.horizon_index(config["horizons"])
+        data = DataSettings.from_config(
+            config, lookback_days=args.lookback_days, max_rows=args.max_rows
+        )
     except ValueError as exc:
         raise SystemExit(str(exc)) from None
+    # The base config trains on --max-rows (else data.max_rows); a larger max_rows in the space
+    # widens the read, and each trial trains on its own budget's tokens out of it.
+    config = {**config, "data": {**config.get("data", {}), "max_rows": data.max_rows}}
+    data = DataSettings(data.lookback_days, read_rows(normalized, data.max_rows))
 
-    df = read_features(make_engine(), limit=args.limit)
+    df, bounds = read_training_features(make_engine(), data)
+    print(bounds.describe(), file=sys.stderr)
     try:
         report = run_search(
             df,

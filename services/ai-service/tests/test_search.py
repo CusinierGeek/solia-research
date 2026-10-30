@@ -347,11 +347,22 @@ def test_run_search_rejects_bad_setups(kwargs, message, monkeypatch):
 # --- CLI ---
 
 
+def fake_bounded_read(_engine, settings):
+    df = make_features_df()
+
+    class Bounds:
+        @staticmethod
+        def describe() -> str:
+            return f"read {len(df)} rows (max_rows {settings.max_rows})"
+
+    return df, Bounds()
+
+
 @pytest.fixture
 def offline_cli(monkeypatch):
     monkeypatch.setattr(solia_ai.config, "load_config", lambda *a, **k: small_config())
     monkeypatch.setattr(solia_ai.db, "make_engine", lambda *a, **k: object())
-    monkeypatch.setattr(solia_ai.db, "read_features", lambda *a, **k: make_features_df())
+    monkeypatch.setattr(solia_ai.db, "read_training_features", fake_bounded_read)
 
 
 def test_main_writes_the_report_and_the_proposed_diff(offline_cli, no_registry, tmp_path, capsys):
@@ -391,6 +402,7 @@ def test_main_writes_the_report_and_the_proposed_diff(offline_cli, no_registry, 
         (["--max-minutes", "0"], "max_seconds"),
         (["--windows", "0"], "n_windows"),
         (["--space", "does-not-exist.yaml"], "cannot read search space"),
+        (["--max-rows", "0"], "max_rows"),
     ],
 )
 def test_main_rejects_bad_settings_before_reading_data(monkeypatch, argv, message):
@@ -400,7 +412,7 @@ def test_main_rejects_bad_settings_before_reading_data(monkeypatch, argv, messag
         raise AssertionError("must fail before touching the database")
 
     monkeypatch.setattr(solia_ai.db, "make_engine", no_db)
-    monkeypatch.setattr(solia_ai.db, "read_features", no_db)
+    monkeypatch.setattr(solia_ai.db, "read_training_features", no_db)
 
     with pytest.raises(SystemExit, match=message):
         search.main(argv)
@@ -413,3 +425,148 @@ def test_main_rejects_an_invalid_space_file(monkeypatch, tmp_path):
 
     with pytest.raises(SystemExit, match="multiple of n_heads"):
         search.main(["--space", str(space)])
+
+
+# --- regularization & stride (#160) ---
+
+
+def test_weight_decay_and_stride_are_searchable():
+    cfg = apply_params(small_config(), {"weight_decay": 0.05, "window_stride_seconds": 30})
+
+    assert cfg["training"]["weight_decay"] == 0.05
+    assert cfg["data"]["window_stride_seconds"] == 30
+    assert "window_stride_seconds" not in small_config().get("data", {})  # base untouched
+
+
+@pytest.mark.parametrize(
+    ("space", "message"),
+    [
+        ({"weight_decay": {"choices": [-0.01]}}, ">= 0"),
+        ({"window_stride_seconds": {"choices": [-30]}}, ">= 0"),
+        ({"window_stride_seconds": {"choices": ["30s"]}}, "number"),
+    ],
+)
+def test_invalid_regularization_values_are_rejected(space, message):
+    with pytest.raises(ValueError, match=message):
+        check_space(space, small_config())
+
+
+def test_a_stride_trial_trains_on_thinned_windows_but_is_scored_on_the_base_ones(
+    no_registry, monkeypatch
+):
+    seen: list[tuple[int, int, tuple[int, ...]]] = []
+    real = ablation.train_and_score
+
+    def spy(train_ds, val_ds, eval_ds, cfg, **kwargs):
+        scored = tuple(eval_ds.samples.end_ts[eval_ds.indices])
+        seen.append((len(train_ds.samples), len(eval_ds.samples), scored))
+        return real(train_ds, val_ds, eval_ds, cfg, **kwargs)
+
+    monkeypatch.setattr(search, "train_and_score", spy)
+    run_search(
+        make_features_df(),
+        small_config(),
+        space={"window_stride_seconds": {"choices": [30]}},
+        n_trials=2,
+        n_windows=1,
+        seeds=[0],
+    )
+
+    (base_n, base_eval_n, base_scored), (trial_n, trial_eval_n, trial_scored) = seen
+    assert trial_n < base_n  # fewer training windows
+    assert trial_eval_n == base_eval_n and trial_scored == base_scored  # the same held-out
+
+
+def test_the_report_tracks_the_fit_and_the_rug_drift_per_slice(no_registry):
+    report = run_search(
+        make_features_df(),
+        small_config(),
+        space={"dropout": {"choices": [0.3]}},
+        n_trials=2,
+        n_windows=2,
+        seeds=[0, 1],
+    )
+
+    for trial in report.trials:
+        assert trial.fit["best_epoch"]["mean"] >= 1
+        assert trial.fit["fit/gap"]["n"] == 4  # windows x seeds
+        assert [row["window"] for row in trial.drift] == [0, 1]
+        for row in trial.drift:
+            assert set(row) >= {"eval_start", "eval_end", "rug/1m/roc_auc", "rug/1m/pr_auc"}
+    text = report.render()
+    assert "best ep" in text and "val-train gap" in text
+    assert "Rug drift — baseline" in text
+    payload = json.loads(report.to_json())
+    assert payload["trials"][0]["drift"][0]["window"] == 0
+
+
+def test_a_row_budget_keeps_whole_tokens_in_md5_order_like_the_bounded_read():
+    import hashlib
+
+    import pandas as pd
+
+    rows = {"A": 3, "B": 5, "C": 2, "D": 4}
+    mints = pd.Series([m for m, n in rows.items() for _ in range(n)] + [None])
+    order = sorted(rows, key=lambda m: hashlib.md5(m.encode()).hexdigest())
+
+    for budget in (1, 4, 8, 13, 14, 100):
+        running, expected = 0, set()
+        for m in order:
+            running += rows[m]
+            if running <= budget:
+                expected.add(m)
+        assert search.budget_tokens(mints, budget) == expected
+
+
+def test_the_read_covers_the_largest_budget_of_the_space():
+    assert search.read_rows({}, 4_000_000) == 4_000_000
+    assert search.read_rows({"max_rows": {"choices": [2, 9_000_000]}}, 4_000_000) == 9_000_000
+    assert search.read_rows({"max_rows": {"low": 1, "high": 3, "log": False}}, 10) == 10
+
+
+def test_a_row_budget_trial_trains_on_fewer_tokens_but_scores_the_same_windows(
+    no_registry, monkeypatch
+):
+    df = make_features_df()
+    seen: list[tuple[set, tuple[int, ...]]] = []
+    real = ablation.train_and_score
+
+    def spy(train_ds, val_ds, eval_ds, cfg, **kwargs):
+        mints = set(train_ds.samples.mint[train_ds.indices])
+        seen.append((mints, tuple(eval_ds.samples.end_ts[eval_ds.indices])))
+        return real(train_ds, val_ds, eval_ds, cfg, **kwargs)
+
+    monkeypatch.setattr(search, "train_and_score", spy)
+    budget = int(df["mint"].value_counts().max() * 2)
+    run_search(df, small_config(), space={"max_rows": {"choices": [budget]}}, n_trials=2,
+               n_windows=1, seeds=[0])  # fmt: skip
+
+    (base_mints, base_scored), (trial_mints, trial_scored) = seen
+    assert trial_mints < base_mints and trial_mints <= search.budget_tokens(df["mint"], budget)
+    assert trial_scored == base_scored
+
+
+def test_main_reads_the_largest_row_budget(offline_cli, no_registry, tmp_path, monkeypatch):
+    read: list[int] = []
+
+    def recording_read(engine, settings):
+        read.append(settings.max_rows)
+        return fake_bounded_read(engine, settings)
+
+    monkeypatch.setattr(solia_ai.db, "read_training_features", recording_read)
+    space = tmp_path / "space.yaml"
+    space.write_text("max_rows:\n  choices: [10000000]\n", encoding="utf-8")
+
+    search.main(["--space", str(space), "--trials", "1", "--windows", "1", "--seeds", "0",
+                 "--max-rows", "500", "--device", "cpu"])  # fmt: skip
+
+    assert read == [10_000_000]
+
+
+@pytest.mark.parametrize("name", ["overfitting-data.yaml", "overfitting-regularization.yaml"])
+def test_the_shipped_sweep_spaces_are_valid(name):
+    from pathlib import Path
+
+    by_path = search.load_space(Path(search.__file__).parent / "sweeps" / name)
+    assert search.load_space(Path(name).stem) == by_path  # by name, as the CLI takes it
+    check_space(by_path, load_config(), strategy="grid")

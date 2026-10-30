@@ -257,8 +257,9 @@ def encode_venue(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(hot, index=df.index, columns=list(VENUE_COLUMNS))
 
 
-def build_feature_matrix(df: pd.DataFrame) -> np.ndarray:
-    """Project ``features`` rows onto :data:`FEATURE_COLUMNS` as a ``float32`` matrix.
+def build_feature_matrix(df: pd.DataFrame, *, rows: np.ndarray | None = None) -> np.ndarray:
+    """Project ``features`` rows (``df``'s ``rows`` positions in that order, default all) onto
+    :data:`FEATURE_COLUMNS` as a ``float32`` matrix.
 
     Columns are taken in canonical order; booleans and ``NUMERIC``/``Decimal`` values are coerced
     to numbers. NULLs become their :data:`NULL_FILL` value (default ``0.0``); non-finite values
@@ -283,19 +284,21 @@ def build_feature_matrix(df: pd.DataFrame) -> np.ndarray:
     if missing:
         raise ValueError(f"feature frame is missing column(s): {', '.join(missing)}")
 
-    if has_venue:
-        df = pd.concat([df, encode_venue(df)], axis=1)
+    # Filled one column at a time: only one column's float64 transient exists at once, and the
+    # frame (as large as the matrix several times over) is never copied.
+    def column(source: pd.DataFrame | pd.Series) -> pd.DataFrame | pd.Series:
+        return source if rows is None else source.iloc[rows]
 
-    numeric: dict[str, pd.Series] = {}
-    for col in FEATURE_COLUMNS:
-        values = df[col]
+    venue = encode_venue(column(df[["venue"]])) if has_venue else None
+    matrix = np.empty((len(df) if rows is None else len(rows), len(FEATURE_COLUMNS)), np.float32)
+    for j, col in enumerate(FEATURE_COLUMNS):
+        values = venue[col] if venue is not None and col in VENUE_COLUMNS else column(df[col])
         coerced = pd.to_numeric(values, errors="coerce")
         invalid = coerced.isna() & values.notna()
         if invalid.any():
             sample = values[invalid].iloc[0]
             raise ValueError(f"feature column '{col}' holds a non-numeric value: {sample!r}")
-        numeric[col] = coerced.astype("float64").fillna(NULL_FILL.get(col, 0.0))
-
-    with np.errstate(over="ignore"):  # out-of-range values become inf here, then imputed below
-        matrix = pd.DataFrame(numeric, columns=FEATURE_COLUMNS).to_numpy(dtype=np.float32)
-    return np.nan_to_num(matrix, nan=0.0, posinf=0.0, neginf=0.0)
+        filled = coerced.astype("float64").fillna(NULL_FILL.get(col, 0.0)).to_numpy()
+        with np.errstate(over="ignore"):  # out-of-range values become inf here, imputed below
+            matrix[:, j] = filled
+    return np.nan_to_num(matrix, copy=False, nan=0.0, posinf=0.0, neginf=0.0)

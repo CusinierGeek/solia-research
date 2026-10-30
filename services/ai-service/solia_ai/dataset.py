@@ -34,6 +34,13 @@ Only windows whose anchor (last) row is *eligible* (:mod:`solia_ai.eligibility`,
 peeks at the future; labels are unchanged, and the rows before the token became eligible may still
 sit in a window's history.
 
+Consecutive snapshots of a token are ~10 s apart and nearly identical, so a window per snapshot
+shows the model the same situation many times (it memorizes). ``window_stride_seconds`` keeps at
+most **one window per stride of a token's life**: the token's time since its first row is cut into
+``stride``-long buckets and the first eligible window ending in each is kept. The thinning picks
+window *ends* before labeling, from the token's own clock — deterministic, causal, the same rule for
+train / validation / held-out (all built here) — and changes no window's history or labels.
+
 Young tokens matter most, so windows may be shorter than ``seq_len`` (down to ``min_seq_len``
 rows): a window holds a token's most recent ``<= seq_len`` rows, and :func:`pad_window` left-pads
 it to ``seq_len`` with a padding mask the model uses to ignore the padding.
@@ -60,7 +67,7 @@ from torch.utils.data import (
     WeightedRandomSampler,
 )
 
-from .config import MAX_POS_WEIGHT, horizon_seconds, load_config
+from .config import DATA_DEFAULTS, MAX_POS_WEIGHT, horizon_seconds, load_config, window_stride_error
 from .eligibility import INPUT_COLUMNS as ELIGIBILITY_INPUTS
 from .eligibility import EligibilityRule
 from .features import (
@@ -156,12 +163,14 @@ def build_samples(
     min_seq_len: int | None = None,
     max_return: float = DEFAULT_MAX_RETURN,
     eligibility: EligibilityRule | None = None,
+    window_stride_seconds: float = 0,
 ) -> Samples:
     """Slide windows per mint and label each by the realized future trajectory (module doc).
 
     A window ends at every row from the token's ``min_seq_len``-th on (default ``seq_len``: full
-    windows only) that ``eligibility`` accepts (default: every row) and holds its most recent
-    ``<= seq_len`` rows. Built in vectorized passes over every token at once (one sort, one
+    windows only) that ``eligibility`` accepts (default: every row) — at most one per
+    ``window_stride_seconds`` of the token's life (default 0: every row) — and holds its most
+    recent ``<= seq_len`` rows. Built in vectorized passes over every token at once (one sort, one
     feature projection, the labels by searches and range extrema), never a loop per token or
     window.
     """
@@ -181,6 +190,8 @@ def build_samples(
         raise ValueError(f"min_gap_seconds must be >= 0, got {min_gap_seconds}")
     if not max_return > 0:
         raise ValueError(f"max_return must be > 0, got {max_return}")
+    if (problem := window_stride_error(window_stride_seconds)) is not None:
+        raise ValueError(problem)
     for name, thresholds in (("pump", pump_thresholds), ("rug", rug_thresholds)):
         missing = [h for h in horizons if h not in thresholds]
         if missing:
@@ -193,38 +204,47 @@ def build_samples(
     rug_thr = np.array([rug_thresholds[h] for h in horizons], np.float64)
     max_gap = np.maximum(horizon_s * max_gap_fraction, min_gap_seconds)
 
-    kept = df[df["mint"].notna()]  # groupby semantics: rows without a mint belong to no token
-    sizes = kept.groupby("mint", sort=False)["mint"].transform("size").to_numpy()
-    kept = kept[sizes >= min_len]
+    # The frame is never copied (a copy costs as much as the read): rows are picked and ordered
+    # through an index, and each column is gathered once, already ordered.
+    codes, _ = pd.factorize(df["mint"], sort=True)  # mint order; -1 = no mint
+    sizes = np.bincount(codes[codes >= 0], minlength=1)
+    # groupby semantics: rows without a mint belong to no token; tokens too short hold no window
+    rows = np.flatnonzero((codes >= 0) & (sizes[np.maximum(codes, 0)] >= min_len))
     n_feat = len(FEATURE_COLUMNS)
-    if kept.empty:
+    if len(rows) == 0:
         return _empty_samples(seq_len, horizons, n_feat)
     # Tokens in mint order, each token's rows in time order; ties keep a deterministic order (by
-    # id when present, else input order: the multi-key sort is stable).
-    sort_keys = ["mint", "ts", "id"] if "id" in kept.columns else ["mint", "ts"]
-    kept = kept.sort_values(sort_keys, kind="stable")
+    # id when present, else input order: lexsort is stable).
+    ts = pd.to_datetime(df["ts"], utc=True).dt.tz_localize(None).to_numpy()
+    keys = [ts[rows].astype("datetime64[ns]").astype(np.int64), codes[rows]]
+    if "id" in df.columns:
+        keys.insert(0, df["id"].to_numpy()[rows])
+    order = rows[np.lexsort(keys)]
 
-    token, _ = pd.factorize(kept["mint"], sort=False)  # already grouped: codes are 0, 1, ...
-    token = token.astype(np.int64)
+    token_codes = codes[order]
+    token = np.r_[0, np.cumsum(token_codes[1:] != token_codes[:-1])].astype(np.int64)
     first = np.flatnonzero(np.r_[True, token[1:] != token[:-1]])
     token_start = first[token]  # each row's token's first row
     token_last = np.r_[first[1:], len(token)][token] - 1  # ... and last row
     pos = np.arange(len(token)) - token_start  # row position inside its token
 
-    matrix = build_feature_matrix(kept)  # [R, F] float32
-    price = pd.to_numeric(kept["price"], errors="coerce").to_numpy(dtype=np.float64)
-    liquidity = pd.to_numeric(kept["liquidity"], errors="coerce").to_numpy(dtype=np.float64)
-    ts_utc = pd.to_datetime(kept["ts"], utc=True).dt.tz_localize(None)
-    ts_sec = ts_utc.to_numpy().astype("datetime64[s]").astype(np.int64)
+    price = _numeric(df, "price", order)
+    liquidity = _numeric(df, "liquidity", order)
+    ts_sec = ts[order].astype("datetime64[s]").astype(np.int64)
 
     window_ends = np.flatnonzero(pos >= min_len - 1)
+    anchor_inputs = _running_inputs(df, order, token)[window_ends]
+    eligible = rule.accepts(anchor_inputs)  # anchored on an eligible row
+    window_ends, anchor_inputs = window_ends[eligible], anchor_inputs[eligible]
+    if window_stride_seconds > 0:  # thinned before labeling: only kept windows are labeled
+        age = ts_sec - ts_sec[token_start]
+        strided = stride_ends(window_ends, token, age, window_stride_seconds)
+        window_ends, anchor_inputs = window_ends[strided], anchor_inputs[strided]
     pump, rug, ret, mask = _label(
         window_ends, token, token_last, ts_sec, price, liquidity,
         horizon_s, pump_thr, rug_thr, max_gap, max_return,
     )  # fmt: skip
     keep = mask.any(axis=1)  # drop windows with nothing labelable yet
-    anchor_inputs = _running_inputs(kept, token)[window_ends]
-    keep &= rule.accepts(anchor_inputs)  # ... or anchored on an ineligible row
     if not keep.any():
         return _empty_samples(seq_len, horizons, n_feat)
     ends = window_ends[keep]
@@ -238,7 +258,7 @@ def build_samples(
     start_row = end_row - np.minimum(pos[ends], seq_len - 1)
 
     return Samples(
-        np.ascontiguousarray(matrix[stored]),
+        build_feature_matrix(df, rows=order[stored]),  # [R, F] float32
         start_row.astype(np.int64),
         end_row.astype(np.int64),
         seq_len,
@@ -247,10 +267,28 @@ def build_samples(
         ret[keep],
         mask[keep],
         ts_sec[ends].astype(np.int64),
-        kept["mint"].to_numpy(dtype=object)[ends],
+        df["mint"].to_numpy(dtype=object)[order[ends]],
         horizons,
         anchor_inputs[keep].astype(np.float32),
     )
+
+
+def _numeric(df: pd.DataFrame, col: str, rows: np.ndarray) -> np.ndarray:
+    """``df[col]`` at ``rows`` as float64 (non-numeric values -> NaN)."""
+    return pd.to_numeric(df[col].iloc[rows], errors="coerce").to_numpy(dtype=np.float64)
+
+
+def stride_ends(
+    ends: np.ndarray, token: np.ndarray, age_sec: np.ndarray, stride: float
+) -> np.ndarray:
+    """Which of the candidate window ``ends`` (row indices, ascending: tokens contiguous, time
+    ordered) to keep: the first one in each ``stride``-second bucket of its token's age
+    (``age_sec``: seconds since the token's first row). A boolean mask over ``ends``."""
+    if len(ends) == 0:
+        return np.zeros(0, bool)
+    bucket = np.floor(age_sec[ends] / stride).astype(np.int64)
+    tok = token[ends]
+    return np.r_[True, (tok[1:] != tok[:-1]) | (bucket[1:] != bucket[:-1])]
 
 
 def _empty_samples(seq_len: int, horizons: tuple[str, ...], n_feat: int) -> Samples:
@@ -271,15 +309,16 @@ def _empty_samples(seq_len: int, horizons: tuple[str, ...], n_feat: int) -> Samp
     )
 
 
-def _running_inputs(rows: pd.DataFrame, token: np.ndarray) -> np.ndarray:
+def _running_inputs(df: pd.DataFrame, rows: np.ndarray, token: np.ndarray) -> np.ndarray:
     """:func:`solia_ai.eligibility.frame_inputs` of every token at once: ``[R, 3]`` running maxima
-    of the eligibility inputs per token, in row order (NaN until a token's first known value)."""
+    of the eligibility inputs per token over ``df``'s ``rows`` (in that order; NaN until a token's
+    first known value)."""
     columns = []
     for col in ELIGIBILITY_INPUTS:
-        if col not in rows:
+        if col not in df:
             columns.append(np.full(len(rows), np.nan))
             continue
-        values = pd.Series(pd.to_numeric(rows[col], errors="coerce").to_numpy(np.float64))
+        values = pd.Series(_numeric(df, col, rows))
         # cummax skips NaN but leaves it in place; carrying the max over it = np.fmax.accumulate.
         running = values.groupby(token, sort=False).cummax().groupby(token, sort=False).ffill()
         columns.append(running.to_numpy(np.float64))
@@ -645,7 +684,13 @@ def config_samples(df: pd.DataFrame, cfg: Mapping[str, Any]) -> Samples:
         min_gap_seconds=labeling.get("min_gap_seconds", DEFAULT_MIN_GAP_SECONDS),
         max_return=labeling.get("max_return", DEFAULT_MAX_RETURN),
         eligibility=EligibilityRule.from_config(cfg),
+        window_stride_seconds=window_stride(cfg),
     )
+
+
+def window_stride(cfg: Mapping[str, Any]) -> float:
+    """``config.yaml`` ``data.window_stride_seconds`` (0 = a window per snapshot)."""
+    return cfg.get("data", {}).get("window_stride_seconds", DATA_DEFAULTS["window_stride_seconds"])
 
 
 def make_holdout_dataset(

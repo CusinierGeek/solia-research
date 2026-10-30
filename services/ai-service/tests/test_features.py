@@ -566,3 +566,41 @@ def test_null_burned_liquidity_is_legitimate_not_uncomputed():
     df = _frame(burned_liquidity=None)
 
     check_group_coverage(df, ["burn", "venue"])  # no error
+
+
+def db_frame(n: int = 50, seed: int = 0) -> pd.DataFrame:
+    """Rows as the bounded read returns them: venue text, NULLs, huge values, one bool column."""
+    rng = np.random.default_rng(seed)
+    frame = pd.DataFrame(
+        {col: rng.normal(size=n) * 10.0 ** rng.integers(-8, 8) for col in DB_FEATURE_COLUMNS}
+    )
+    frame.loc[rng.random(n) < 0.2, "volume"] = np.nan
+    frame.loc[0, "market_cap"] = 1e300  # beyond float32: imputed to 0
+    frame["is_migrated"] = rng.random(n) < 0.5
+    frame["venue"] = rng.choice(["pumpfun", " PumpSwap ", "unknown", None], size=n)
+    frame["mint"] = rng.choice(["A", "B"], size=n)
+    return frame
+
+
+def test_selected_rows_project_like_the_sliced_frame():
+    frame = db_frame()
+    rows = np.random.default_rng(1).permutation(len(frame))[:30]
+
+    np.testing.assert_array_equal(
+        build_feature_matrix(frame, rows=rows), build_feature_matrix(frame.iloc[rows])
+    )
+
+
+def test_the_read_s_float32_columns_give_the_same_matrix():
+    from solia_ai.db import _FLOAT64_COLUMNS, _compact
+
+    frame = db_frame()
+    compact = _compact(frame.copy())
+
+    np.testing.assert_array_equal(build_feature_matrix(compact), build_feature_matrix(frame))
+    for col in DB_FEATURE_COLUMNS:
+        if col == "is_migrated":
+            continue
+        expected = np.float64 if col in _FLOAT64_COLUMNS else np.float32
+        assert compact[col].dtype == expected, col
+    assert {"price", "liquidity", "unique_traders", "volume", "token_age_sec"} <= _FLOAT64_COLUMNS

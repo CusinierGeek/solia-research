@@ -12,6 +12,7 @@ from solia_ai.dataset import (
     config_samples,
     horizon_seconds,
     make_datasets,
+    make_holdout_dataset,
     make_loaders,
     pad_window,
     positive_weights,
@@ -546,3 +547,110 @@ def test_config_samples_reads_the_rule_from_config():
 
     assert s.end_ts.min() == TS[4]
     assert len(config_samples(df, {**cfg, "eligibility": {}})) == len(samples(df))
+
+
+# --- window stride (#160) ---
+
+
+def walk(n: int, seed: int = 0) -> list[float]:
+    rng = np.random.default_rng(seed)
+    return list(np.exp(np.cumsum(rng.normal(0, 0.2, n))))
+
+
+def two_tokens() -> pd.DataFrame:
+    ts = list(range(0, 900, 10))  # 15 minutes at the pipeline's 10 s cadence
+    a = frame(walk(len(ts), 1), ts, mint="A")
+    b = frame(walk(len(ts), 2), [t + 7 for t in ts], mint="B")  # another clock phase
+    return pd.concat([a, b], ignore_index=True)
+
+
+def by_window(s):
+    """{(mint, end_ts): (labels, window rows)} of every sample."""
+    return {
+        (s.mint[i], int(s.end_ts[i])): (
+            (
+                s.pump[i].tolist(),
+                s.rug[i].tolist(),
+                s.expected_return[i].tolist(),
+                s.mask[i].tolist(),
+            ),
+            s.window(i).tolist(),
+        )
+        for i in range(len(s))
+    }
+
+
+def test_the_stride_keeps_one_window_per_stride_of_a_token_s_life():
+    s = samples(two_tokens(), seq_len=4, window_stride_seconds=30)
+
+    for mint, start in (("A", 0), ("B", 7)):
+        ends = s.end_ts[s.mint == mint] - start
+        assert len(ends) > 10
+        np.testing.assert_array_equal(np.diff(ends), 30)  # one per 30 s bucket, none skipped
+        assert ends[0] == 30  # the first full window (row 4 at 30 s) opens the bucket
+
+
+def test_a_zero_stride_keeps_every_window():
+    df = two_tokens()
+    np.testing.assert_array_equal(
+        samples(df, seq_len=4, window_stride_seconds=0).end_ts, samples(df, seq_len=4).end_ts
+    )
+
+
+def test_a_strided_window_has_the_same_history_and_labels_as_unstrided():
+    df = two_tokens()
+    every = by_window(samples(df, horizons=("1m", "5m"), pump={"1m": 0.2, "5m": 0.4},
+                              rug={"1m": 0.2, "5m": 0.4}, seq_len=6))  # fmt: skip
+    strided = by_window(samples(df, horizons=("1m", "5m"), pump={"1m": 0.2, "5m": 0.4},
+                                rug={"1m": 0.2, "5m": 0.4}, seq_len=6,
+                                window_stride_seconds=60))  # fmt: skip
+
+    assert 0 < len(strided) < len(every) / 4
+    for key, value in strided.items():
+        assert every[key] == value
+
+
+def test_the_stride_is_deterministic_whatever_the_row_order():
+    df = two_tokens()
+    shuffled = df.iloc[np.random.default_rng(3).permutation(len(df))].reset_index(drop=True)
+
+    a = samples(df, seq_len=4, window_stride_seconds=45)
+    b = samples(shuffled, seq_len=4, window_stride_seconds=45)
+
+    assert by_window(a) == by_window(b)
+    np.testing.assert_array_equal(a.features, b.features)
+
+
+def test_the_stride_thins_eligible_windows_only():
+    df = traded_from(two_tokens(), row=20)  # A eligible from its row 20 (200 s); B from its start
+    s = samples(df, seq_len=4, window_stride_seconds=60,
+                eligibility=EligibilityRule(min_unique_traders=3))  # fmt: skip
+
+    a_ends = s.end_ts[s.mint == "A"]
+    assert a_ends[0] == 200  # the first eligible window of its 180..240 s bucket: not lost
+    assert a_ends[1] == 240
+    np.testing.assert_array_equal(np.diff(a_ends[1:]), 60)
+
+
+def test_a_strided_split_never_leaks_across_the_embargo():
+    ts = list(range(0, 2400, 10))
+    df = frame(walk(len(ts), 4), ts)
+    cfg = {**CFG, "data": {"window_stride_seconds": 30}}
+
+    train, val = make_datasets(df, cfg, val_fraction=0.3)
+
+    train_end = train.samples.end_ts[train.indices]
+    val_end = val.samples.end_ts[val.indices]
+    assert len(train) > 0 and len(val) > 0
+    ends = train.samples.end_ts
+    assert ends[0] == 10 and np.all(np.diff(ends[1:]) == 30)  # config_samples applied the stride
+    assert val_end.min() - train_end.max() > 60  # the 1 m embargo still separates them
+    holdout = make_holdout_dataset(df, cfg, train_end_ts=int(train_end.max()))
+    assert np.all(holdout.samples.end_ts[holdout.indices] > train_end.max() + 60)
+    np.testing.assert_array_equal(holdout.samples.end_ts, ends)  # same rule for the held-out
+
+
+@pytest.mark.parametrize("stride", [-1, float("nan"), float("inf"), True, "30s", None])
+def test_an_invalid_stride_is_rejected(stride):
+    with pytest.raises(ValueError, match="window_stride_seconds"):
+        samples(two_tokens(), window_stride_seconds=stride)

@@ -617,6 +617,7 @@ def test_fit_reports_every_epoch(caplog):
     for event, row in zip(events, fitted.history, strict=True):
         assert event["event"] == "epoch" and event["epochs"] == 3
         assert event["val_loss"] == row["val_total"]
+        assert event["train_loss"] == row["train_loss"]  # the history keeps it (fit gap)
         assert np.isfinite(event["train_loss"]) and event["train_loss"] > 0
         assert event["seconds"] > 0 and event["samples_per_s"] > 0
         assert event["patience"] == 5 and 0 <= event["since_improved"] <= 3

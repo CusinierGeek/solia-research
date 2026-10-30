@@ -20,6 +20,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from pandas.api.types import union_categoricals
 from sqlalchemy import create_engine as _sa_create_engine
@@ -28,6 +29,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.sql.elements import TextClause
 
 from .config import DATA_DEFAULTS, ConfigError, data_bounds_error, database_url
+from .eligibility import INPUT_COLUMNS as ELIGIBILITY_INPUTS
 from .features import DB_FEATURE_COLUMNS
 
 logger = logging.getLogger(__name__)
@@ -187,9 +189,19 @@ _TRAINING_COLUMNS = ", ".join(
 _TEXT_COLUMNS = ("mint", "venue")
 
 
+# Held as float64: the columns labels (price, liquidity) and the eligibility rule are computed
+# from, compared to thresholds. Every other feature only feeds the model, which casts it to float32
+# anyway (the same rounding), so it is held as float32 from the read: ~30 % less memory per row.
+_FLOAT64_COLUMNS = frozenset({"price", "liquidity", *ELIGIBILITY_INPUTS})
+
+
 def _compact(chunk: pd.DataFrame) -> pd.DataFrame:
     for col in _TEXT_COLUMNS:
         chunk[col] = chunk[col].astype("category")
+    for col in DB_FEATURE_COLUMNS:
+        if col not in _FLOAT64_COLUMNS and chunk[col].dtype == np.float64:
+            with np.errstate(over="ignore"):  # beyond float32 -> inf, imputed to 0 like the model
+                chunk[col] = chunk[col].astype(np.float32)
     return chunk
 
 

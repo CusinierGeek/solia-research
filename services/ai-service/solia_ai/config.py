@@ -9,6 +9,7 @@ intentionally import-light (no torch) so tooling and tests stay fast.
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Callable
 from importlib import resources
@@ -80,10 +81,13 @@ RETENTION_DEFAULTS: dict[str, Any] = {
 # The bounded training read's knobs and defaults (``config.yaml`` ``data``, solia_ai.db
 # ``read_training_features``): every retrain / candidate / train run reads only the most recent
 # ``lookback_days`` of ``features`` (relative to the newest row) and at most ``max_rows`` rows of
-# whole tokens. Defined here so validation stays torch-free.
+# whole tokens. ``window_stride_seconds`` keeps at most one training window per that many seconds
+# of a token's life (0 = one per snapshot; solia_ai.dataset). Defined here so validation stays
+# torch-free.
 DATA_DEFAULTS: dict[str, Any] = {
     "lookback_days": 2.0,
     "max_rows": 4_000_000,
+    "window_stride_seconds": 0,
 }
 
 # The token eligibility rule's thresholds and defaults (``config.yaml`` ``eligibility``,
@@ -142,6 +146,15 @@ def data_bounds_error(config: Any, lookback_days: Any, max_rows: Any) -> str | N
             f"'data.lookback_days' ({lookback_days} d) is shorter than the promotion gate needs: "
             f"(promotion.windows + 1) x the longest horizon's embargo = {floor / 3600:g} h"
         )
+    return None
+
+
+def window_stride_error(stride: Any) -> str | None:
+    """Why ``stride`` can't be a ``data.window_stride_seconds`` (a finite number >= 0), or None."""
+    if isinstance(stride, bool) or not isinstance(stride, int | float):
+        return f"'data.window_stride_seconds' must be a number, got {stride!r}"
+    if not (math.isfinite(stride) and stride >= 0):
+        return f"'data.window_stride_seconds' must be a finite number >= 0, got {stride!r}"
     return None
 
 
@@ -439,8 +452,9 @@ def _validate(config: Any, source: str) -> None:
     unknown = [str(k) for k in data if k not in DATA_DEFAULTS]
     if unknown:
         fail(f"'data' has unknown key(s): {', '.join(unknown)}")
-    problem = data_bounds_error(config, *({**DATA_DEFAULTS, **data}[k] for k in DATA_DEFAULTS))
-    if problem:
+    bounds = {**DATA_DEFAULTS, **data}
+    problem = data_bounds_error(config, bounds["lookback_days"], bounds["max_rows"])
+    if problem or (problem := window_stride_error(bounds["window_stride_seconds"])):
         fail(problem)
 
     if "eligibility" in config and (problem := eligibility_error(config["eligibility"])):

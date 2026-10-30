@@ -478,3 +478,32 @@ def test_ablation_with_calibration_off_compares_identical_scores(no_registry):
 
     for effect in report.calibration.values():
         assert effect["mean"] in (None, 0.0)
+
+
+# --- fit diagnostics (#160) ---
+
+
+def test_fit_metrics_read_the_best_epoch_of_the_history():
+    history = [
+        {"epoch": 0.0, "train_loss": 0.30, "val_total": 0.20},
+        {"epoch": 1.0, "train_loss": 0.10, "val_total": 0.25},
+    ]
+
+    metrics = ablation.fit_metrics(history, best_epoch=0)
+
+    assert metrics["fit/train_loss"] == 0.30 and metrics["fit/val_loss"] == 0.20
+    assert metrics["fit/gap"] == pytest.approx(-0.10)
+    assert metrics["fit/epochs"] == 2.0
+
+
+@pytest.mark.parametrize(
+    ("history", "best"),
+    [([], 0), ([{"train_loss": 0.1, "val_total": 0.2}], 3)],
+)
+def test_fit_metrics_are_undefined_without_a_usable_history(history, best):
+    assert set(ablation.fit_metrics(history, best).values()) == {None}
+
+
+def test_a_non_finite_loss_leaves_the_gap_undefined():
+    metrics = ablation.fit_metrics([{"train_loss": float("nan"), "val_total": 0.2}], 0)
+    assert metrics["fit/train_loss"] is None and metrics["fit/gap"] is None
