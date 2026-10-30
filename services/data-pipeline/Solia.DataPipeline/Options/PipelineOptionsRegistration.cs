@@ -1,8 +1,10 @@
+using Solia.DataPipeline.Retention;
+
 namespace Solia.DataPipeline.Options;
 
 /// <summary>
 /// Binds and validates the pipeline's option sections. Shared by the live host and the one-shot
-/// replay command, so both fail fast on the same bad values.
+/// replay / retention commands, so both fail fast on the same bad values.
 /// </summary>
 public static class PipelineOptionsRegistration
 {
@@ -23,6 +25,10 @@ public static class PipelineOptionsRegistration
             .Validate(o => o.HasValidUrls(),
                 "PumpApi:WsUrl must be an absolute ws(s):// URL and PumpApi:ReplayBaseUrl an absolute http(s):// URL.")
             .Validate(o => o.HasConsistentBackoff(), "PumpApi:ReconnectMaxDelaySeconds must be >= ReconnectBaseDelaySeconds.")
+            .ValidateOnStart();
+        services.AddOptions<RetentionOptions>()
+            .Bind(configuration.GetSection(RetentionOptions.Section))
+            .ValidateDataAnnotations()
             .ValidateOnStart();
         return services;
     }

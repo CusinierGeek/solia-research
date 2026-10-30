@@ -90,6 +90,13 @@ services:
       # The pipeline's job in the stack is to ingest; set INGEST=false in .env to run it idle.
       INGEST: ${INGEST:-true}
       STREAM_PROBE: ${STREAM_PROBE:-false}
+      # Data retention (docs/DATA-PIPELINE.md): the pipeline is the only service that purges.
+      RETENTION_ENABLED: ${RETENTION_ENABLED:-true}
+      RETENTION_INTERVAL_MINUTES: ${RETENTION_INTERVAL_MINUTES:-60}
+      RETENTION_FEATURES_TTL_DAYS: ${RETENTION_FEATURES_TTL_DAYS:-14}
+      RETENTION_LOGS_TTL_DAYS: ${RETENTION_LOGS_TTL_DAYS:-14}
+      RETENTION_PREDICTIONS_TTL_DAYS: ${RETENTION_PREDICTIONS_TTL_DAYS:-30}
+      RETENTION_BATCH_SIZE: ${RETENTION_BATCH_SIZE:-10000}
     volumes:
       # Opt-in local mirror of the replay archives (~400 MB/hour): only written by
       # `replay … --mirror /replay-archives`; live ingestion never touches it. See docs/DATA-PIPELINE.md.

@@ -218,7 +218,21 @@ Operational logs surfaced on the dashboard.
 
 Index: `(ts)`, `(service, level)`.
 
-## Retention (reserved for Sprint 8)
-- `features` and `logs` are high-volume → partition by day / apply TTL.
-- `predictions` keep ~30 days hot, archive beyond.
-- `predictions.feature_id` and `trades.prediction_id` are `ON DELETE SET NULL`, so deleting old rows is not blocked. Day-partitioning `features` would additionally require dropping the `predictions.feature_id` FK (a partitioned table can't be an FK target on `id` alone).
+## Retention
+TTL purge by the data-pipeline (details and knobs: [DATA-PIPELINE.md § Data retention](DATA-PIPELINE.md#data-retention)):
+`features` 14 days, `logs` 14 days, `predictions` 30 days; `trades`, `models`, `training_events`,
+`tokens_history`, `tokens_live` are never purged. `predictions.feature_id` and `trades.prediction_id` are
+`ON DELETE SET NULL`, so a purge never blocks on, nor deletes, the rows that reference purged ones.
+
+**Decision: batched `DELETE` + `VACUUM`, not day partitions** (measured 2026-10-30, PostgreSQL 16, a 2 M-row
+`features` table shaped like the real one, 10 % of its rows referenced by `predictions`):
+- deleting the oldest 1 M rows (≈ 1 h of live ingestion) in 10 000-row batches: 67 s (~15 k rows/s, incl. the
+  `SET NULL` of 100 k predictions), worst batch 3.2 s; `VACUUM (ANALYZE)` afterwards: 7 s;
+- re-inserting 1 M rows after the vacuum: the heap stayed at 868 MB (space reused), the indexes grew 2 %.
+
+An hourly purge therefore costs ~1 min/h of background work, with no lock that blocks writers. Day partitions
+would make it an instant `DROP`, but need a full rewrite of the existing table (35 GB on the live database) and
+dropping the `predictions.feature_id` FK, for a cost that isn't a bottleneck. Revisit if the ingest rate grows
+by an order of magnitude. Retention needs no schema change: `features_ts_idx`, `logs_ts_idx` and
+`predictions_ts_idx` already serve the oldest-first batches. The `VACUUM` runs with `PARALLEL 0`: parallel
+index vacuuming needs dynamic shared memory, which Docker's default 64 MB `/dev/shm` can't provide on a large table.

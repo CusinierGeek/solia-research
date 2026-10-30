@@ -16,6 +16,12 @@ public static class FlatEnvAliases
         new("ENRICH_HOLDERS", "Pipeline:EnrichHolders", IsBool: true),
         new("STREAM_PROBE", "Pipeline:StreamProbe", IsBool: true),
         new("INGEST", "Pipeline:Ingest", IsBool: true),
+        new("RETENTION_ENABLED", "Retention:Enabled", IsBool: true),
+        new("RETENTION_INTERVAL_MINUTES", "Retention:IntervalMinutes"),
+        new("RETENTION_FEATURES_TTL_DAYS", "Retention:FeaturesTtlDays"),
+        new("RETENTION_LOGS_TTL_DAYS", "Retention:LogsTtlDays"),
+        new("RETENTION_PREDICTIONS_TTL_DAYS", "Retention:PredictionsTtlDays"),
+        new("RETENTION_BATCH_SIZE", "Retention:BatchSize"),
     ];
 
     /// <inheritdoc cref="FlatAliases.AddFlatAliases"/>

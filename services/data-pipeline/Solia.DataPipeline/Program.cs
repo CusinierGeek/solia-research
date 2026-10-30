@@ -9,6 +9,7 @@ using Solia.DataPipeline.Ingestion.Replay;
 using Solia.Shared.Logging;
 using Solia.DataPipeline.Options;
 using Solia.DataPipeline.Pipeline;
+using Solia.DataPipeline.Retention;
 using Solia.Shared.Data;
 using Solia.Shared.Hosting;
 
@@ -22,6 +23,12 @@ if (HealthProbe.IsRequested(args))
 if (ReplayCommand.IsRequested(args))
 {
     return await ReplayCommand.RunAsync(args[1..]);
+}
+
+// --- One-shot purge: `retention [--dry-run]` runs the retention job once and exits (no web host) ---
+if (RetentionCommand.IsRequested(args))
+{
+    return await RetentionCommand.RunAsync(args[1..]);
 }
 
 var builder = WebApplication.CreateBuilder(args);
@@ -56,6 +63,9 @@ builder.Services.AddHealthChecks()
 // --- Pipeline worker + opt-in live-stream probe ---
 builder.Services.AddHostedService<Worker>();
 builder.Services.AddHostedService<StreamProbeService>();
+
+// --- Data retention: periodic purge of old features / logs / predictions (Retention:Enabled / RETENTION_ENABLED) ---
+builder.Services.AddRetention(hosted: true);
 
 var app = builder.Build();
 

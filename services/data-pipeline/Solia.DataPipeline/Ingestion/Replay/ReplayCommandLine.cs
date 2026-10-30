@@ -4,7 +4,7 @@ namespace Solia.DataPipeline.Ingestion.Replay;
 
 /// <summary>
 /// Parsed arguments of the <c>replay</c> command:
-/// <c>replay --from &lt;utc&gt; --to &lt;utc&gt; [--mirror &lt;dir&gt;] [--mirror-only] [--rebuild] [config overrides]</c>.
+/// <c>replay --from &lt;utc&gt; --to &lt;utc&gt; [--mirror &lt;dir&gt;] [--mirror-only] [--rebuild] [--allow-expired] [config overrides]</c>.
 /// <list type="bullet">
 /// <item><c>--from</c> / <c>--to</c>: the half-open UTC window <c>[from, to)</c>, ISO 8601 (e.g. <c>2026-05-01T00:00Z</c>,
 /// or a bare date = midnight UTC). Must be ordered, start at or after the archive start, and end no later than the
@@ -13,20 +13,24 @@ namespace Solia.DataPipeline.Ingestion.Replay;
 /// <item><c>--mirror-only</c>: only fill the mirror (requires <c>--mirror</c>); no replay, no database.</item>
 /// <item><c>--rebuild</c>: overwrite <c>features</c> rows already stored for the same (mint, ts) instead of keeping them
 /// (only for tokens whose whole history is inside the window, see <c>PostgresTokenSink</c>).</item>
+/// <item><c>--allow-expired</c>: replay a window older than the <c>features</c> retention TTL anyway (refused by default,
+/// see <c>ReplayRetentionGuard</c>): the next retention run deletes what it writes.</item>
 /// <item>Configuration overrides, handed to the host as for the live service: a key path
 /// (<c>--Pipeline:SnapshotCadenceSeconds=5</c> or <c>--Pipeline:SnapshotCadenceSeconds 5</c>) or <c>--environment &lt;name&gt;</c>.</item>
 /// </list>
 /// </summary>
 public sealed record ReplayCommandLine(
-    ReplayWindow Window, string? MirrorDirectory, bool MirrorOnly, bool Rebuild, IReadOnlyList<string> ConfigArgs)
+    ReplayWindow Window, string? MirrorDirectory, bool MirrorOnly, bool Rebuild, IReadOnlyList<string> ConfigArgs,
+    bool AllowExpired = false)
 {
     public const string Usage =
-        "usage: replay --from <utc> --to <utc> [--mirror <dir>] [--mirror-only] [--rebuild] [--Section:Key=value ...]\n" +
+        "usage: replay --from <utc> --to <utc> [--mirror <dir>] [--mirror-only] [--rebuild] [--allow-expired] [--Section:Key=value ...]\n" +
         "  --from, --to    half-open UTC window [from, to), ISO 8601 (2026-05-01T00:00Z or 2026-05-01);\n" +
         "                  must end at or before the start of the current hour\n" +
         "  --mirror <dir>  opt-in local archive mirror: read hours from <dir>, download absent ones into it\n" +
         "  --mirror-only   only download the window into the mirror (needs --mirror); no replay\n" +
         "  --rebuild       refresh features rows already stored for the window (default keeps them)\n" +
+        "  --allow-expired replay a window older than the features retention TTL anyway (it would be purged)\n" +
         "  --Section:Key=value, --environment <name>   configuration overrides, as for the live service";
 
     /// <summary>
@@ -38,7 +42,7 @@ public sealed record ReplayCommandLine(
     {
         DateTimeOffset? from = null, to = null;
         string? mirror = null;
-        bool mirrorOnly = false, rebuild = false;
+        bool mirrorOnly = false, rebuild = false, allowExpired = false;
         var configArgs = new List<string>();
 
         for (int i = 0; i < args.Count; i++)
@@ -81,6 +85,9 @@ public sealed record ReplayCommandLine(
                     break;
                 case "--rebuild":
                     rebuild = true;
+                    break;
+                case "--allow-expired":
+                    allowExpired = true;
                     break;
                 case not null when IsConfigOverride(arg):
                     configArgs.Add(arg);
@@ -142,11 +149,11 @@ public sealed record ReplayCommandLine(
         }
 
         error = null;
-        return new ReplayCommandLine(window, mirror, mirrorOnly, rebuild, configArgs);
+        return new ReplayCommandLine(window, mirror, mirrorOnly, rebuild, configArgs, allowExpired);
     }
 
     /// <summary>A configuration key path (<c>--Section:Key[=value]</c>) or the host's <c>--environment</c>.</summary>
-    private static bool IsConfigOverride(string arg)
+    internal static bool IsConfigOverride(string arg)
     {
         string key = arg.Split('=', 2)[0];
         return key.StartsWith("--", StringComparison.Ordinal) &&

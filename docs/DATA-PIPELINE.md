@@ -115,6 +115,7 @@ docker compose run --rm data-pipeline replay --from <utc> --to <utc> [options]
 | `--mirror <dir>` | **Opt-in** local mirror (off by default). Hours are read from `<dir>/YYYY/MM/DD/HH.jsonl.zst` first and downloaded into it only when absent. The directory must already exist and be writable (it is never created for you). In compose: `--mirror /replay-archives` (the `replay-archives` volume). |
 | `--mirror-only` | With `--mirror`: only download the window into the mirror; no replay, no database. |
 | `--rebuild` | Refresh `features` rows the replay recomputes (see *Rebuild* below). |
+| `--allow-expired` | Replay a window older than the `features` retention TTL anyway (see *Replay vs retention* below). |
 | `--Section:Key=value`, `--environment <name>` | Configuration overrides, as on the live host's command line (e.g. `--Pipeline:SnapshotCadenceSeconds=5`; `--Key value` works too). |
 
 **Default = direct streaming.** Each hour is downloaded and zstd-decompressed on the fly (~2 GB/hour
@@ -154,8 +155,25 @@ also written to the `logs` table (`service = 'data-pipeline'`, best-effort; not 
 |-----------|---------|
 | `0` | Every hour read (or missing at the source) and every batch written. |
 | `1` | Fatal: unreachable database, interruption (SIGTERM / Ctrl+C), unexpected error. Re-run the window. |
-| `2` | Invalid arguments or configuration (bad window, missing/unwritable mirror dir); nothing ran. |
+| `2` | Invalid arguments or configuration (bad window, missing/unwritable mirror dir, window older than the retention TTL); nothing ran. |
 | `3` | Ran to the end, but some hours or write batches were given up on: re-run the same window to fill them. |
+
+### Replay vs retention
+
+With retention on (`RETENTION_ENABLED=true`, the compose default — see *Data retention* below), the next purge
+deletes every `features` row older than `RETENTION_FEATURES_TTL_DAYS` (14 d), replayed or not. So a replay
+whose window **starts before that cutoff is refused** (exit `2`, nothing written) instead of being silently
+wiped within the hour; one whose oldest rows expire within a day is replayed with a warning. The check uses the
+replay process's own retention settings — under compose, the same `.env` as the live pipeline.
+
+To **train on history older than the TTL**:
+1. raise `RETENTION_FEATURES_TTL_DAYS` in `.env` to cover the window (+ the days you need it for) and recreate
+   the pipeline (`docker compose up -d data-pipeline`) — the live purge then keeps it too; **or**
+2. set `RETENTION_ENABLED=false` and recreate the pipeline for the time you train on it (the table then grows
+   unbounded: ~17 GB/day of live ingestion).
+
+`--allow-expired` replays regardless (with a warning) — only useful when the live pipeline's purge is off
+or uses a longer TTL than the replay's configuration.
 
 ### Recipes
 
@@ -189,3 +207,46 @@ Cold start: a token's rolling window begins at the replay's first event, so the 
   file (kept when the source lost the hour), atomic downloads, stalled downloads, end-of-replay deactivation,
   idempotent re-run and `--rebuild` refresh limited to tokens born in the window (Postgres parts in the
   Integration category).
+
+## Data retention
+
+Nothing else ever deletes data, and live ingestion writes ~1 M `features` rows/hour (~17 GB/day), so the
+data-pipeline runs a periodic purge (`Retention/RetentionService`). It is the **single owner** of retention: it
+owns `features` (the bulk of the volume) and the replay that must not write rows the purge would remove.
+
+| Table | Kept | Env var |
+|-------|------|---------|
+| `features` | 14 days | `RETENTION_FEATURES_TTL_DAYS` |
+| `logs` (every service) | 14 days | `RETENTION_LOGS_TTL_DAYS` |
+| `predictions` | 30 days | `RETENTION_PREDICTIONS_TTL_DAYS` |
+
+`trades`, `models`, `training_events`, `tokens_history` and `tokens_live` are never purged: P&L and model
+history stay complete. A `trades.prediction_id` / `predictions.feature_id` pointing at a purged row becomes
+`NULL` (`ON DELETE SET NULL`).
+
+- **When**: at startup, then every `RETENTION_INTERVAL_MINUTES` (60). `RETENTION_ENABLED` (compose: `true`;
+  a bare `dotnet run`: `false`, like `INGEST`) turns it off — then nothing is ever deleted.
+- **How**: rows with `ts` strictly older than `now − TTL` are deleted oldest first in batches of
+  `RETENTION_BATCH_SIZE` (10 000) rows, each its own short transaction (predictions before features), then
+  the tables that shrank get a plain `VACUUM (ANALYZE)` so the space is **reused** by new rows (the files don't
+  shrink; the table stays at ~TTL worth of data instead of growing). No lock blocks ingestion, the API or a
+  retrain reading `features` (it keeps its MVCC snapshot; those rows are reclaimed once it ends).
+  Measured: ~15 k rows/s, so an hour of live ingestion is purged in about a minute, worst batch ~3 s
+  (see [DATA-MODEL.md § Retention](DATA-MODEL.md#retention)).
+- **Training**: the retrain reads the whole `features` table, so the TTL bounds it. Keep it above what training
+  needs (held-out windows + label horizons, max 1 h).
+- **Logging**: one line per table (rows, time span removed, duration) on stdout and one `logs` row per run
+  (`service = 'data-pipeline'`, `message = 'retention run'`, per-table `context`). A table that fails (e.g.
+  database down) is logged as a warning and retried on the next tick; never fatal.
+- **On demand**:
+
+  ```bash
+  # report what would be deleted, change nothing
+  docker compose run --rm data-pipeline retention --dry-run
+  # purge once now (whether or not RETENTION_ENABLED is set), e.g. with a shorter TTL
+  docker compose run --rm data-pipeline retention --Retention:FeaturesTtlDays=7
+  ```
+
+  Exit `0` = done, `1` = a table failed (re-run), `2` = invalid arguments / configuration.
+- **Config** is validated at startup (TTLs 1–3650 days, interval 1–1440 min, batch 100–1 000 000); an invalid
+  value stops the pipeline (or the command) with the option's name.

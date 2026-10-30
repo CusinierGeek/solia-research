@@ -4,6 +4,7 @@ using Npgsql;
 using Solia.DataPipeline.Config;
 using Solia.DataPipeline.Options;
 using Solia.DataPipeline.Pipeline;
+using Solia.DataPipeline.Retention;
 using Solia.Shared.Data;
 using Solia.Shared.Logging;
 
@@ -76,6 +77,24 @@ public static class ReplayCommand
 
         ILoggerFactory loggerFactory = host.Services.GetRequiredService<ILoggerFactory>();
         ILogger logger = loggerFactory.CreateLogger(typeof(ReplayCommand));
+
+        if (!command.MirrorOnly) // the mirror only holds archives, which retention never touches
+        {
+            (ReplayRetentionVerdict verdict, string? retentionMessage) = ReplayRetentionGuard.Check(command.Window,
+                host.Services.GetRequiredService<IOptions<RetentionOptions>>().Value, DateTimeOffset.UtcNow, command.AllowExpired);
+            if (verdict == ReplayRetentionVerdict.Refuse)
+            {
+                Console.Error.WriteLine($"replay: refused: {retentionMessage}");
+                await host.StopAsync(CancellationToken.None);
+                return ExitUsage;
+            }
+
+            if (verdict == ReplayRetentionVerdict.Warn)
+            {
+                logger.LogWarning("replay: retention: {Message}", retentionMessage);
+            }
+        }
+
         CancellationToken stopping = host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping;
 
         try

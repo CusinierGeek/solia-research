@@ -119,6 +119,21 @@ through the **same parser** as live, so historical and live events are identical
 Choosing the actual training window and wiring replay into ingestion are Sprint 2 / T7. See
 [DATA-SOURCES.md](../../docs/DATA-SOURCES.md).
 
+### Data retention
+
+With `RETENTION_ENABLED=true` (compose default) the host purges `features` and `logs` older than 14 days and
+`predictions` older than 30 days, at startup and then hourly, in bounded batches followed by a `VACUUM`;
+`trades`, `models`, `training_events` and `tokens_*` are never touched. On demand:
+
+```bash
+dotnet run --project services/data-pipeline/Solia.DataPipeline -- retention --dry-run   # report only
+docker compose run --rm data-pipeline retention                                         # purge once now
+```
+
+A replay of a window older than the features TTL is refused (`--allow-expired` overrides). Details, the
+measurement behind the design and how to replay history for training with retention on:
+[DATA-PIPELINE.md § Data retention](../../docs/DATA-PIPELINE.md#data-retention).
+
 ## Configuration
 
 Bound from `appsettings.json` (or any configuration source, e.g. `Pipeline__WindowSeconds`), with the
@@ -133,6 +148,12 @@ but invalid (bad port, `ENRICH_HOLDERS=maybe`) fails startup with the variable's
 | `PUMPAPI_REPLAY_BASE_URL` | `https://replay.pumpapi.io` | historical replay base |
 | `ENRICH_HOLDERS` | `false` | paid holder enrichment (off = approximate from stream); accepts `true/false`, `1/0`, `yes/no`, `on/off` |
 | `STREAM_PROBE` | `false` | opt-in: stream live events and log them (observability), no persistence |
+| `RETENTION_ENABLED` | `false` (compose: `true`) | periodic purge of old `features` / `logs` / `predictions`; also refuses a replay older than the features TTL |
+| `RETENTION_INTERVAL_MINUTES` | `60` | minutes between two purges (1–1440); the first runs at startup |
+| `RETENTION_FEATURES_TTL_DAYS` | `14` | days of `features` kept (1–3650); bounds what a retrain reads |
+| `RETENTION_LOGS_TTL_DAYS` | `14` | days of `logs` kept (1–3650) |
+| `RETENTION_PREDICTIONS_TTL_DAYS` | `30` | days of `predictions` kept (1–3650) |
+| `RETENTION_BATCH_SIZE` | `10000` | rows deleted per short transaction (100–1,000,000) |
 | `SOLIA_DB_CONNECTION` | — | full Npgsql connection string (wins over `POSTGRES_*`) |
 | `POSTGRES_HOST/PORT/DB/USER/PASSWORD` | `localhost/5432/solia/solia/change_me` | DB parts |
 
