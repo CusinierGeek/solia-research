@@ -9,7 +9,7 @@ public class PositionSizerTests
     private static readonly BotOptions Opts = PolicyFixtures.Options(); // RiskFraction 0.5, cap 0.2, dust 0.001, TP 0.5, SL 0.3
 
     /// <summary>The defaults with the hard cap lifted, so the Kelly fraction itself is observable.</summary>
-    private static readonly BotOptions Uncapped = new() { MaxPositionFraction = 1.0 };
+    private static readonly BotOptions Uncapped = new() { MaxPositionFraction = 1.0, RealisticFills = false };
 
     private static PortfolioState WithBalance(decimal balance) => new(
         Balance: balance,
@@ -32,7 +32,7 @@ public class PositionSizerTests
     [Fact]
     public void Risk_fraction_of_one_at_full_confidence_is_exactly_full_kelly()
     {
-        var fullKelly = new BotOptions { MaxPositionFraction = 1.0, RiskFraction = 1.0 };
+        var fullKelly = new BotOptions { MaxPositionFraction = 1.0, RiskFraction = 1.0, RealisticFills = false };
         ModelPrediction sure = Modest() with { Confidence = 100 };
 
         // f* = p/L − q/b = 0.8/0.3 − 0.2/0.1 = 2/3
@@ -176,10 +176,32 @@ public class PositionSizerTests
         Assert.Equal(0m, PositionSizer.Size(malformed, WithBalance(10m), Opts));
     }
 
+    private static PortfolioState InPool(decimal balance, string? venue, decimal? liquidity) =>
+        WithBalance(balance) with { Pool = new Pool(venue, liquidity) };
+
+    [Theory]
+    [InlineData("pumpswap", 1000.0, 2.0)]   // 2 % of 1000 = 20 SOL: the balance cap (0.2 · 10) binds
+    [InlineData("pumpswap", 50.0, 1.0)]     // 2 % of 50 SOL
+    [InlineData("pumpfun", 0.5, 0.61)]      // curve: 2 % of (0.5 real + 30 virtual)
+    [InlineData("raydium", 0.04, 0.0)]      // 0.0008 SOL < the 0.001 dust floor: skipped
+    [InlineData("raydium", null, 0.0)]      // unknown pool: takes nothing
+    public void With_realistic_fills_the_size_is_capped_by_the_pool(string venue, double? liquidity, double expected)
+    {
+        BotOptions realistic = PolicyFixtures.RealisticOptions();
+        decimal size = PositionSizer.Size(PolicyFixtures.Buyable(), InPool(10m, venue, (decimal?)liquidity), realistic);
+        Assert.Equal((decimal)expected, size);
+    }
+
+    [Fact]
+    public void Idealized_fills_ignore_the_pool()
+    {
+        Assert.Equal(2m, PositionSizer.Size(PolicyFixtures.Buyable(), InPool(10m, "raydium", 0.01m), Opts));
+    }
+
     [Fact]
     public void Size_never_exceeds_the_balance()
     {
-        var allIn = new BotOptions { MaxPositionFraction = 1.0, RiskFraction = 1.0 };
+        var allIn = new BotOptions { MaxPositionFraction = 1.0, RiskFraction = 1.0, RealisticFills = false };
         ModelPrediction greedy = PolicyFixtures.Buyable() with { ExpectedReturn = 100.0, Confidence = 100 };
         Assert.True(PositionSizer.Size(greedy, WithBalance(10m), allIn) <= 10m);
     }

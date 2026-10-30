@@ -15,8 +15,12 @@ using Solia.Core.Data.Entities;
 
 namespace Solia.Api.Bot;
 
-/// <summary>A <c>features</c> row as the feed reads it; <see cref="Tracked"/> is its token's <c>tokens_live.is_active</c>.</summary>
-internal sealed record FeedRow(long Id, string Mint, DateTimeOffset Ts, decimal? Price, bool Tracked);
+/// <summary>
+/// A <c>features</c> row as the feed reads it; <see cref="Tracked"/> is its token's <c>tokens_live.is_active</c>,
+/// <see cref="Venue"/> / <see cref="Liquidity"/> the pool the price was read off (what the bot's fills trade against).
+/// </summary>
+internal sealed record FeedRow(long Id, string Mint, DateTimeOffset Ts, decimal? Price, bool Tracked,
+    string? Venue = null, decimal? Liquidity = null);
 
 /// <summary>
 /// The bot's live feed: polls the <c>features</c> snapshots the data-pipeline writes and turns them into
@@ -25,7 +29,8 @@ internal sealed record FeedRow(long Id, string Mint, DateTimeOffset Ts, decimal?
 /// <list type="number">
 ///   <item>the <em>poll</em> loop reads the new rows by id (<see cref="FeatureCursor"/>: an id that commits
 ///   late is still read) and emits every priced row of a <em>tracked</em> token (<c>tokens_live.is_active</c>)
-///   as a <see cref="BotEvent.Price"/> tick at its snapshot time, then queues the token for scoring;</item>
+///   as a <see cref="BotEvent.Price"/> tick at its snapshot time — with the row's venue and liquidity, the pool
+///   the bot's fills trade against — then queues the token for scoring;</item>
 ///   <item>the <em>scoring</em> loop takes the queued tokens one at a time, oldest-waiting first
 ///   (<see cref="ScoringQueue"/>), skips a token not eligible at the queued row under the champion's
 ///   <see cref="EligibilityRule"/> (<see cref="ChampionEligibility"/>: the model only learned on eligible tokens, so
@@ -153,7 +158,14 @@ public sealed class DbBotEventSource(
 
                     if (row.Price is decimal price)
                     {
-                        ticks.Add(new BotEvent.Price(new PriceTick { Mint = row.Mint, Ts = row.Ts, Price = price }));
+                        ticks.Add(new BotEvent.Price(new PriceTick
+                        {
+                            Mint = row.Mint,
+                            Ts = row.Ts,
+                            Price = price,
+                            Venue = row.Venue,
+                            Liquidity = row.Liquidity,
+                        }));
                     }
 
                     toScore.Add(row);
@@ -201,7 +213,8 @@ public sealed class DbBotEventSource(
         List<FeedRow> rows = await query
             .OrderBy(f => f.Id)
             .Take(_host.MaxTicksPerPoll)
-            .Select(f => new FeedRow(f.Id, f.Mint, f.Ts, f.Price, db.TokensLive.Any(l => l.Mint == f.Mint && l.IsActive)))
+            .Select(f => new FeedRow(f.Id, f.Mint, f.Ts, f.Price, db.TokensLive.Any(l => l.Mint == f.Mint && l.IsActive),
+                f.Venue, f.Liquidity))
             .ToListAsync(cancellationToken);
         if (rows.Count == 0 && cursor.MaxSeen is null)
         {

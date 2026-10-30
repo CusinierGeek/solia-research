@@ -115,6 +115,20 @@ public sealed class DbBotEventSourceIntegrationTests : PostgresFixture, IAsyncLi
     }
 
     [Fact]
+    public async Task A_tick_carries_the_pool_its_price_was_read_off()
+    {
+        await TrackAsync("pool", "bare");
+        await ExecAsync("INSERT INTO features (mint, ts, price, venue, liquidity) VALUES ('pool', @ts, 1.0, 'pumpswap', 42.5)",
+            ("ts", T0));
+        await InsertFeaturesAsync(("bare", T0, 1.0m));
+        StartReading();
+
+        await WaitForAsync(() => Ticks("pool").Count == 1 && Ticks("bare").Count == 1);
+        Assert.Equal(new Pool("pumpswap", 42.5m), Ticks("pool")[0].Pool);
+        Assert.Equal(default, Ticks("bare")[0].Pool); // unknown pool: the bot's liquidity gate declines it
+    }
+
+    [Fact]
     public async Task A_slow_ai_service_does_not_hold_the_price_ticks_back()
     {
         await TrackAsync("slow", "x");

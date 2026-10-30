@@ -278,7 +278,7 @@ public class PositionManagerTests
     [Fact]
     public async Task Capacity_is_capped_at_max_concurrent_positions()
     {
-        var bot = new PositionManager(new BotOptions { MaxConcurrentPositions = 1 }, _store);
+        var bot = new PositionManager(new BotOptions { MaxConcurrentPositions = 1, RealisticFills = false }, _store);
         foreach (BotEvent e in new[] { Tick(0, Entry), Tick(0, Entry, mint: "b"), Predict(1), Predict(2, mint: "b") })
         {
             await bot.HandleAsync(e);
@@ -543,6 +543,123 @@ public class PositionManagerTests
             ++_closeCalls == failingCall
                 ? throw new InvalidOperationException("db blip")
                 : _inner.CloseAsync(trade, cancellationToken);
+    }
+
+    // --- Realistic fills (#165): the production default ---
+
+    private static BotEvent PoolTick(int sec, decimal price, string? venue, decimal? liquidity, string mint = Mint) =>
+        new BotEvent.Price(new PriceTick { Mint = mint, Ts = T0.AddSeconds(sec), Price = price, Venue = venue, Liquidity = liquidity });
+
+    private static (PositionManager Bot, InMemoryTradeStore Store) Realistic()
+    {
+        var store = new InMemoryTradeStore();
+        return (new PositionManager(PolicyFixtures.RealisticOptions(), store), store);
+    }
+
+    private static async Task Run(PositionManager bot, params BotEvent[] events)
+    {
+        foreach (BotEvent e in events)
+        {
+            await bot.HandleAsync(e);
+        }
+    }
+
+    [Fact]
+    public async Task Realistic_entry_fills_above_the_mark_with_levels_from_the_mark()
+    {
+        (PositionManager bot, InMemoryTradeStore store) = Realistic();
+        await Run(bot, PoolTick(0, Entry, "pumpswap", 100m), Predict(1));
+
+        OpenPosition p = Assert.Single(bot.OpenPositions.Values);
+        Assert.Equal(2m, p.Entry.Size); // 2 % of the 100 SOL pool = the 0.2 · 10 balance cap
+        // n = 2 · 0.997 swapped into R = 100: P · (R + n) / (R · 0.997).
+        Assert.Equal(Entry * (100m + 1.994m) / (100m * 0.997m), p.Entry.EntryPrice);
+        Assert.Equal(0.00015m, p.Entry.Levels.TakeProfitPrice);
+        Assert.Equal(0.00007m, p.Entry.Levels.StopLossPrice);
+        Assert.Equal(8m, bot.Balance);
+        Assert.True(bot.Equity < 10m); // the entry's fee and impact are already lost at the mark
+        Assert.Same(p.Entry, store.Open[p.TradeId]);
+    }
+
+    [Theory]
+    [InlineData("raydium", 0.03)]
+    [InlineData("pumpswap", null)]
+    public async Task Realistic_fills_never_enter_a_dust_or_unknown_pool(string venue, double? liquidity)
+    {
+        (PositionManager bot, InMemoryTradeStore store) = Realistic();
+        await Run(bot, PoolTick(0, Entry, venue, (decimal?)liquidity), Predict(1));
+
+        Assert.Empty(bot.OpenPositions);
+        Assert.Empty(store.Open);
+        Assert.Equal(10m, bot.Balance);
+    }
+
+    [Fact]
+    public async Task A_curve_token_with_almost_no_real_sol_enters_with_a_pool_sized_position()
+    {
+        (PositionManager bot, _) = Realistic();
+        await Run(bot, PoolTick(0, Entry, "pumpfun", 0.05m), Predict(1));
+
+        Assert.Equal(0.601m, Assert.Single(bot.OpenPositions.Values).Entry.Size); // 2 % of 30.05 SOL
+        Assert.Equal(10m - 0.601m, bot.Balance);
+    }
+
+    [Fact]
+    public async Task A_realistic_take_profit_pays_impact_and_fees_on_both_sides()
+    {
+        (PositionManager bot, InMemoryTradeStore store) = Realistic();
+        await Run(bot, PoolTick(0, Entry, "pumpswap", 100m), Predict(1), PoolTick(10, 0.00015m, "pumpswap", 100m));
+
+        ClosedTrade t = Assert.Single(store.Closed);
+        Assert.Equal(ExitReason.TakeProfit, t.Reason);
+        TradeOpening entry = t.Entry;
+        decimal value = entry.ValueAt(0.00015m);
+        Assert.Equal(0.00015m * 100m * 0.997m / (100m + value), t.ExitPrice);
+        Assert.Equal(Money.Round(entry.ValueAt(t.ExitPrice) - 2m), t.Pnl);
+        Assert.InRange(t.Pnl, 0.80m, 0.90m); // the ideal fill would book +1.00
+        Assert.Equal(10m + t.Pnl, bot.Balance);
+        Assert.Equal(t.Pnl, bot.RealizedPnl);
+    }
+
+    [Fact]
+    public async Task A_round_trip_at_an_unchanged_price_loses_the_fees_and_impact()
+    {
+        (PositionManager bot, InMemoryTradeStore store) = Realistic();
+        await Run(bot, PoolTick(0, Entry, "pumpswap", 1_000_000m), Predict(1), PoolTick(890, Entry, "pumpswap", 1_000_000m)); // fresh at the deadline
+        await bot.AdvanceToAsync(T0.AddSeconds(901));
+
+        ClosedTrade t = Assert.Single(store.Closed);
+        Assert.Equal(ExitReason.Timeout, t.Reason);
+        // 0.30 % per side on 2 SOL, plus an impact of ~2e-6 per side (~1e-5 SOL in all).
+        decimal feesOnly = -2m * (1m - (0.997m * 0.997m));
+        Assert.InRange(t.Pnl, feesOnly - 0.00002m, feesOnly);
+    }
+
+    [Fact]
+    public async Task An_exit_into_a_drained_pool_realizes_nothing_whatever_the_mark()
+    {
+        (PositionManager bot, InMemoryTradeStore store) = Realistic();
+        // The mark jumps +656 % as the pool drains to 0 SOL (the 2026-10-30 artifact): the take-profit fires, but the
+        // pool has nothing to pay.
+        await Run(bot, PoolTick(0, Entry, "raydium", 100m), Predict(1), PoolTick(10, Entry * 7.56m, "raydium", 0m));
+
+        ClosedTrade t = Assert.Single(store.Closed);
+        Assert.Equal(ExitReason.TakeProfit, t.Reason);
+        Assert.Equal(0m, t.ExitPrice);
+        Assert.Equal(-t.Entry.Size, t.Pnl);
+        Assert.Equal(-1.0, t.PnlPct);
+    }
+
+    [Fact]
+    public async Task A_stale_timeout_exit_fills_at_the_stop_against_the_last_known_pool()
+    {
+        (PositionManager bot, InMemoryTradeStore store) = Realistic();
+        await Run(bot, PoolTick(0, Entry, "pumpswap", 100m), Predict(1));
+        await bot.AdvanceToAsync(T0.AddSeconds(901)); // last mark is 901 s old: stale
+
+        ClosedTrade t = Assert.Single(store.Closed);
+        decimal value = t.Entry.ValueAt(0.00007m);
+        Assert.Equal(0.00007m * 100m * 0.997m / (100m + value), t.ExitPrice);
     }
 
     private sealed class FailingStore(bool failOpen) : ITradeStore

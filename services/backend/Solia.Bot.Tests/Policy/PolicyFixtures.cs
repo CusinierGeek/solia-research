@@ -6,8 +6,15 @@ namespace Solia.Bot.Tests.Policy;
 /// <summary>Shared builders so each policy test states only the fields it cares about.</summary>
 public static class PolicyFixtures
 {
-    /// <summary>Options with the production defaults (MinConfidence 60, MinPumpProb 0.25, MaxRugProb 0.2, …).</summary>
-    internal static BotOptions Options() => new();
+    /// <summary>
+    /// Options with the production defaults (MinConfidence 60, MinPumpProb 0.25, MaxRugProb 0.2, …) but idealized
+    /// fills (<see cref="BotOptions.RealisticFills"/> off: at the mark, no pool), so policy scenarios keep round
+    /// numbers. <see cref="RealisticOptions"/> is the production default.
+    /// </summary>
+    internal static BotOptions Options() => new() { RealisticFills = false };
+
+    /// <summary>The production defaults, realistic fills included.</summary>
+    internal static BotOptions RealisticOptions() => new();
 
     /// <summary>A prediction that clears every default gate: strong pump, low rug, high confidence, positive edge.</summary>
     internal static ModelPrediction Buyable() => new()

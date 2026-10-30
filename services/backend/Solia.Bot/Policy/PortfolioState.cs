@@ -12,8 +12,11 @@ namespace Solia.Bot.Policy;
 /// Latest price the order could fill against, or null when none is known yet. A non-positive price is
 /// treated as "no market".
 /// </param>
+/// <param name="Pool">The pool that price was read off — what the liquidity gate and the pool cap read (see
+/// <see cref="Trading.Fills"/>); <c>default</c> = unknown.</param>
 public readonly record struct PortfolioState(
     decimal Balance,
     int OpenPositionCount,
     bool HoldsMint,
-    decimal? MarketPrice);
+    decimal? MarketPrice,
+    Domain.Pool Pool = default);

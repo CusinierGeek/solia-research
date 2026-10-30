@@ -9,9 +9,12 @@ namespace Solia.Bot.Trading;
 /// </summary>
 /// <param name="Mint">Token held.</param>
 /// <param name="OpenedAt">Event time of the fill: the entry prediction's timestamp, or the event clock if it arrived late.</param>
-/// <param name="EntryPrice">Observed market price the order filled at (paper fill, no slippage).</param>
-/// <param name="Size">Capital committed, locked from the balance until close.</param>
-/// <param name="Levels">Dynamic TP/SL fixed at entry.</param>
+/// <param name="EntryPrice">
+/// All-in price per token the order filled at, in SOL: with realistic fills the mark plus price impact and the
+/// entry fee (<see cref="Fills.BuyPrice"/>), else the mark.
+/// </param>
+/// <param name="Size">Capital committed, in SOL, locked from the balance until close.</param>
+/// <param name="Levels">Dynamic TP/SL fixed at entry, from the mark (not the all-in price).</param>
 /// <param name="Prediction">The prediction that opened the trade — confidence, model version and the features snapshot.</param>
 public sealed record TradeOpening(
     string Mint,
@@ -45,9 +48,9 @@ public sealed record OpenPosition(long TradeId, TradeOpening Entry, DateTimeOffs
 /// <param name="TradeId">Id returned when the trade was opened.</param>
 /// <param name="Entry">The opening the trade closes.</param>
 /// <param name="ClosedAt">Event time of the exit.</param>
-/// <param name="ExitPrice">Price the exit filled at.</param>
+/// <param name="ExitPrice">Price per token the exit filled at, in SOL (with realistic fills: after impact and the exit fee).</param>
 /// <param name="Reason">Why it closed.</param>
-/// <param name="Pnl">Realized profit/loss in balance units: proceeds − size, at <see cref="Money.Decimals"/> places.</param>
+/// <param name="Pnl">Realized profit/loss in SOL (fees included): proceeds − size, at <see cref="Money.Decimals"/> places.</param>
 /// <param name="PnlPct">Realized return on the committed size (0.25 = +25%).</param>
 /// <param name="DurationSec">Whole seconds the position was held.</param>
 public sealed record ClosedTrade(

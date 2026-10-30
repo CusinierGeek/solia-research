@@ -20,10 +20,12 @@ public static class ReplayFixtures
     /// depends on pinned explicitly so a change of default can't silently move them.
     /// <see cref="BotOptions.MaxMarkAgeSeconds"/> must be at least 31 s: the <c>to</c> trade's deadline
     /// (931 s) is 31 s after its last mark (900 s), and a staler mark would fill the timeout at the stop
-    /// instead of at 0.00012.
+    /// instead of at 0.00012. Fills are idealized (at the mark, no pool): the scenario pins the engine's
+    /// bookkeeping, the realistic fills are covered by <c>FillsTests</c> and the engine's realistic-fill tests.
     /// </summary>
     public static BotOptions Options() => new()
     {
+        RealisticFills = false,
         StartingBalance = 10m,
         MaxPositionFraction = 0.2,
         PositionTimeoutSeconds = 900,

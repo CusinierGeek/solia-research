@@ -124,7 +124,8 @@ floor.
   reported by `GET /model/status`. A model recorded without one predates the floor (read as disabled). A retrain
   whose champion was trained under another floor logs a note: both models are scored on the config's windows and
   labels. **The bot's liquidity gate (#165) must not trade below its champion's floor**, so that the bot trades
-  the population the model learned on.
+  the population the model learned on: its `Bot:LiquidityFloorSol` defaults mirror `labeling.liquidity_floor`
+  (see "Realistic fills" below) — keep them in step.
 
 **Per-venue rule, from data** (6 h of `features`, 2026-10-30, share of consecutive same-venue snapshots whose
 price moved ×2 or more):
@@ -299,6 +300,43 @@ configurable without retraining. They consume the model's predictions, for examp
 
 Keeping decisions out of the model lets risk appetite change instantly and keeps the model purely
 predictive. A *learned* policy (e.g. RL) is possible later only if it clearly beats the rules.
+
+### Realistic fills (#165)
+
+The first hours of live paper trading booked +13 SOL on 10, almost all fake: 41 of 58 trades entered AMM pools
+holding < 1 SOL and the biggest "wins" were 1–3.7 SOL positions filled at prices read off 0.00–0.03 SOL pools.
+The bot now fills against the pool (`Solia.Bot` `Trading/Fills.cs`; amounts in **SOL**; `Bot:RealisticFills`,
+default on — off is the idealized simulator, kept for before/after comparisons only):
+
+| rule | config (default) | |
+|---|---|---|
+| **Liquidity gate** | `LiquidityFloorSol` (`default: 1`, `pumpfun` / `raydium-launchpad` / `meteora-launchpad` / `bonk`: 0) | no entry when the pool's real SOL (`features.liquidity`) is unknown or below its venue's floor (`default` for unlisted / unknown venues). Same rule and values as the training floor ("Liquidity floor" above): AMM prices under ~1 SOL are artifacts; bonding curves price off virtual reserves, so their real SOL may be ~0 while the price is valid. |
+| **Pool-sized positions** | `MaxPoolFraction` (0.02) | size ≤ 2 % of the pool's SOL reserve `R`, on top of the balance caps; below `MinPositionSize` → skipped. `R` = real SOL + the venue's `VirtualSol` (curves: 30, Pump.fun's initial virtual SOL; AMMs: 0). |
+| **Slippage** | — | constant product: a buy of `S` (after the fee, `n = S(1−f)`) gets `n/P · R/(R+n)` tokens; a sale worth `v` at the mark gets `v · R/(R+v)` SOL. Entry price recorded = all-in price per token. |
+| **Fees** | `FeePct` per venue, per side (`default` 0.25 %, `pumpfun` 1.25 %, `pumpswap` 0.30 %, launchpads 1 %) | from the venues' published schedules (approximate); charged on entry and exit, so in `pnl`. |
+| **Exit bound** | — | proceeds `< R` at exit: a pool drained to 0 SOL (or unknown) pays nothing, whatever its last price. |
+
+Approximations, chosen pessimistic: each side is priced against the pool as observed, which never contains the
+bot's own paper trade, so a round trip pays the impact twice where on-chain it would partly unwind (bounded by
+the 2 % cap, ~2 % per side). TP/SL/stale-stop triggers still read the observed mark; the fill applies on top, so a
+take-profit can realize less than its level. `Equity` marks open positions at the mark (no exit impact). The
+Kelly sizing doesn't price the costs in. Out of scope: latency, MEV / priority fees, order splitting.
+
+**Before/after on the live period** (2026-10-30 14:06–20:05, 104 closed trades, recomputed from the stored
+trades and their pools at entry/exit: [`reports/paper-fills-165.sql`](reports/paper-fills-165.sql) →
+[`.txt`](reports/paper-fills-165.txt)):
+
+| bucket (liquidity at entry) | trades before → after | P&L before → after (SOL) | win rate before → after |
+|---|---:|---:|---:|
+| AMM < 1 SOL | 67 → 0 | −2.51 → 0 | 0.16 → — |
+| AMM 1–10 | 5 → 5 | −1.71 → −0.19 | 0 → 0 |
+| AMM ≥ 10 | 31 → 31 | +4.41 → −4.65 | 0.39 → 0.32 |
+| curve 1–10 | 1 → 1 | −0.00 → −0.04 | 0 → 0 |
+| **all** | **104 → 37** | **+0.19 → −4.89** | **0.22 → 0.27** |
+
+Two thirds of the trades are gated out. In AMM ≥ 10 SOL, three trades exited into a pool pulled to 0 SOL in the
+same snapshot (+0.74 → −5.77 SOL); the 28 others go from +3.68 to +1.11 SOL (impact, fees, pool-capped sizes). The
+sample is far too small to judge the model; the point is that paper P&L can no longer be faked by dust pools.
 
 ### Choosing the entry rule
 

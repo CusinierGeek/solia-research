@@ -1,5 +1,6 @@
 using Solia.Bot.Configuration;
 using Solia.Bot.Domain;
+using Solia.Bot.Trading;
 
 namespace Solia.Bot.Policy;
 
@@ -15,9 +16,12 @@ namespace Solia.Bot.Policy;
 ///   <item>below <see cref="BotOptions.MaxConcurrentPositions"/>;</item>
 ///   <item>no open position already holds this mint;</item>
 ///   <item>a positive market price exists to fill against;</item>
+///   <item>with <see cref="BotOptions.RealisticFills"/>, its pool clears the liquidity gate
+///   (<see cref="Fills.IsTradeable"/>: known liquidity, at least the venue's floor);</item>
 ///   <item>balance &gt; 0 and ≥ <see cref="BotOptions.MinPositionSize"/>;</item>
 ///   <item>the bet has a positive edge (<see cref="PositionSizer.Fraction"/> &gt; 0);</item>
-///   <item>the sized amount clears the <see cref="BotOptions.MinPositionSize"/> dust floor.</item>
+///   <item>the sized amount — capped by the pool with realistic fills — clears the
+///   <see cref="BotOptions.MinPositionSize"/> dust floor.</item>
 /// </list>
 /// An accept therefore always carries a positive <see cref="EntryDecision.Size"/>, sized by
 /// <see cref="PositionSizer"/> from the same <see cref="PortfolioState"/> the gates checked.
@@ -60,6 +64,11 @@ public static class EntryRule
         if (portfolio.MarketPrice is not > 0m)
         {
             return EntryDecision.Reject(EntryRejectReason.NoMarketPrice);
+        }
+
+        if (options.RealisticFills && !Fills.IsTradeable(portfolio.Pool, options))
+        {
+            return EntryDecision.Reject(EntryRejectReason.InsufficientLiquidity);
         }
 
         if (portfolio.Balance <= 0m || portfolio.Balance < options.MinPositionSize)

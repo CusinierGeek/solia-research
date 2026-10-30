@@ -109,7 +109,7 @@ public class EntryRuleTests
     [Fact]
     public void A_zero_balance_is_rejected_even_with_the_dust_floor_disabled()
     {
-        var noFloor = new BotOptions { MinPositionSize = 0m };
+        var noFloor = new BotOptions { MinPositionSize = 0m, RealisticFills = false };
         PortfolioState broke = HasCapacity() with { Balance = 0m };
         Assert.Equal(EntryRejectReason.InsufficientBalance, EntryRule.Evaluate(PolicyFixtures.Buyable(), broke, noFloor).Reason);
     }
@@ -162,5 +162,58 @@ public class EntryRuleTests
     {
         Assert.Throws<ArgumentNullException>(() => EntryRule.Evaluate(null!, HasCapacity(), Opts));
         Assert.Throws<ArgumentNullException>(() => EntryRule.Evaluate(PolicyFixtures.Buyable(), HasCapacity(), null!));
+    }
+
+    [Theory]
+    [InlineData("raydium", 0.03)]   // AMM dust pool
+    [InlineData("pumpswap", 0.99)]  // just below the 1 SOL floor
+    [InlineData(null, 0.5)]         // unknown venue: the default floor
+    [InlineData("pumpfun", null)]   // unknown liquidity, even on a curve
+    public void With_realistic_fills_a_pool_below_its_venue_floor_is_rejected(string? venue, double? liquidity)
+    {
+        PortfolioState thin = HasCapacity() with { Pool = new Pool(venue, (decimal?)liquidity) };
+        EntryDecision decision = EntryRule.Evaluate(PolicyFixtures.Buyable(), thin, PolicyFixtures.RealisticOptions());
+
+        Assert.Equal(EntryRejectReason.InsufficientLiquidity, decision.Reason);
+    }
+
+    [Theory]
+    [InlineData("pumpswap", 1000.0, 2.0)] // the balance cap binds
+    [InlineData("pumpswap", 25.0, 0.5)]   // the pool cap binds: 2 % of 25
+    [InlineData("pumpfun", 0.02, 0.6004)] // curve with ~0 real SOL: 2 % of its 30.02 SOL reserve
+    public void With_realistic_fills_a_pool_at_or_above_its_floor_enters_with_a_pool_sized_position(
+        string venue, double liquidity, double size)
+    {
+        PortfolioState pool = HasCapacity() with { Pool = new Pool(venue, (decimal)liquidity) };
+        EntryDecision decision = EntryRule.Evaluate(PolicyFixtures.Buyable(), pool, PolicyFixtures.RealisticOptions());
+
+        Assert.True(decision.Enter);
+        Assert.Equal((decimal)size, decision.Size);
+    }
+
+    [Fact]
+    public void A_pool_too_shallow_for_the_dust_floor_is_skipped()
+    {
+        BotOptions options = PolicyFixtures.RealisticOptions();
+        options.LiquidityFloorSol["raydium"] = 0m;
+        PortfolioState shallow = HasCapacity() with { Pool = new Pool("raydium", 0.04m) }; // cap 0.0008 < 0.001
+
+        Assert.Equal(EntryRejectReason.BelowMinPositionSize, EntryRule.Evaluate(PolicyFixtures.Buyable(), shallow, options).Reason);
+    }
+
+    [Fact]
+    public void The_liquidity_gate_follows_the_market_price_gate()
+    {
+        PortfolioState noMarket = HasCapacity() with { MarketPrice = null, Pool = new Pool("raydium", 0.01m) };
+        EntryDecision decision = EntryRule.Evaluate(PolicyFixtures.Buyable(), noMarket, PolicyFixtures.RealisticOptions());
+
+        Assert.Equal(EntryRejectReason.NoMarketPrice, decision.Reason);
+    }
+
+    [Fact]
+    public void Idealized_fills_skip_the_liquidity_gate()
+    {
+        PortfolioState dust = HasCapacity() with { Pool = new Pool("raydium", 0.01m) };
+        Assert.True(EntryRule.Evaluate(PolicyFixtures.Buyable(), dust, Opts).Enter);
     }
 }

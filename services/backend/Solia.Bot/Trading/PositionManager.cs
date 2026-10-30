@@ -10,8 +10,15 @@ namespace Solia.Bot.Trading;
 /// <summary>
 /// The paper-trading engine: consumes <see cref="BotEvent"/>s in timestamp order, opens positions on
 /// accepted entries, marks them against the price feed, closes them on exit rules and accounts P&amp;L.
-/// <strong>Paper only</strong> — a fill is the observed market price (no slippage), nothing is ever sent
-/// on-chain. Deterministic: the only clock is the event timestamp, never wall time.
+/// <strong>Paper only</strong> — fills are simulated, nothing is ever sent on-chain. Deterministic: the only clock
+/// is the event timestamp, never wall time.
+///
+/// <para><b>Fills.</b> With <see cref="BotOptions.RealisticFills"/> (the default) an order trades against the pool
+/// of the mark it fills at (<see cref="Fills"/>): entry needs that pool to clear the liquidity gate, the size is
+/// capped by it, and both sides pay constant-product price impact and the venue fee — the entry price recorded is
+/// the all-in price per token, the exit proceeds never exceed what the pool holds (an empty one pays nothing). Exit
+/// triggers (TP/SL, stale-mark stop) read the observed mark; the fill applies on top. Without it, every fill is
+/// the mark itself (the idealized simulator).</para>
 ///
 /// <para><b>Ordering.</b> The event clock never moves back. An event up to
 /// <see cref="BotOptions.MaxEventLagSeconds"/> behind it is applied at the clock's time; an older one is
@@ -24,8 +31,8 @@ namespace Solia.Bot.Trading;
 /// fills at <c>min(last mark, stop-loss price)</c> — a silent feed must not book a break-even.</para>
 ///
 /// <para><b>Entry.</b> A prediction for a mint with no open position goes through
-/// <see cref="EntryRule"/>; on accept it fills at the mint's fresh mark, locks the size from
-/// <see cref="Balance"/> and fixes dynamic TP/SL (<see cref="ExitLevels"/>).</para>
+/// <see cref="EntryRule"/>; on accept it fills at the mint's fresh mark (see <b>Fills</b>), locks the size from
+/// <see cref="Balance"/> and fixes dynamic TP/SL from the mark (<see cref="ExitLevels"/>).</para>
 ///
 /// <para><b>Exits, by precedence</b> (one reason per close, the first that applies):
 /// <list type="number">
@@ -42,9 +49,10 @@ namespace Solia.Bot.Trading;
 /// Price exits fill at the tick that triggered them, not at the level: a tick that gaps through the
 /// stop realizes the gap.</para>
 ///
-/// <para><b>Accounting.</b> Close returns <c>Size · exit / entry</c> to the balance;
+/// <para><b>Accounting</b> (SOL). Close returns <c>Size · exit / entry</c> to the balance (fill prices, so fees
+/// and impact are in it);
 /// <c>pnl = proceeds − size</c>, <c>pnl_pct = pnl / size</c>. <see cref="Equity"/> marks open positions
-/// at their last price. State changes only after the <see cref="ITradeStore"/> call succeeds.</para>
+/// at their last price (no exit impact). State changes only after the <see cref="ITradeStore"/> call succeeds.</para>
 ///
 /// <para><b>Failures.</b> If <see cref="HandleAsync"/> throws (a store error), every close or open
 /// already recorded stays applied and the clock stands at the last applied one; re-delivering the same
@@ -176,7 +184,7 @@ public sealed class PositionManager
             return;
         }
 
-        _marks[tick.Mint] = new Mark(tick.Price, tick.Ts);
+        _marks[tick.Mint] = new Mark(tick.Price, tick.Ts, tick.Pool);
 
         // A price from before the fill says nothing about the position's exit.
         if (!_positions.TryGetValue(tick.Mint, out OpenPosition? position) || tick.Ts < position.Entry.OpenedAt)
@@ -207,22 +215,25 @@ public sealed class PositionManager
             return;
         }
 
-        decimal? market = _marks.TryGetValue(prediction.Mint, out Mark mark) && IsFresh(mark, now) ? mark.Price : null;
-        var portfolio = new PortfolioState(Balance, _positions.Count, HoldsMint: false, market);
+        Mark? fresh = _marks.TryGetValue(prediction.Mint, out Mark mark) && IsFresh(mark, now) ? mark : null;
+        var portfolio = new PortfolioState(Balance, _positions.Count, HoldsMint: false, fresh?.Price, fresh?.Pool ?? default);
         EntryDecision decision = EntryRule.Evaluate(prediction, portfolio, _options);
         if (!decision.Enter)
         {
             return;
         }
 
-        // The gate only accepts with a positive market price.
-        decimal entryPrice = market!.Value;
+        // The gate only accepts with a positive market price (and, with realistic fills, a tradeable pool).
+        Mark market = fresh!.Value;
+        decimal entryPrice = _options.RealisticFills
+            ? Fills.BuyPrice(decision.Size, market.Price, market.Pool, _options)
+            : market.Price;
         var opening = new TradeOpening(
             prediction.Mint,
             now,
             entryPrice,
             decision.Size,
-            ExitLevels.Compute(prediction, entryPrice, _options),
+            ExitLevels.Compute(prediction, market.Price, _options),
             prediction);
 
         long tradeId = await _store.OpenAsync(opening, cancellationToken);
@@ -233,7 +244,17 @@ public sealed class PositionManager
         _deadlines.Enqueue(position, (position.Deadline, position.TradeId));
 
         await _log.WriteAsync(LogSeverity.Info, "position opened",
-            new { tradeId, mint = opening.Mint, entryPrice = opening.EntryPrice, size = opening.Size }, cancellationToken);
+            new
+            {
+                tradeId,
+                mint = opening.Mint,
+                entryPrice = opening.EntryPrice,
+                markPrice = market.Price,
+                size = opening.Size,
+                venue = market.Pool.Venue,
+                liquidity = market.Pool.LiquiditySol,
+            },
+            cancellationToken);
     }
 
     private bool IsFresh(Mark mark, DateTimeOffset at) =>
@@ -246,9 +267,13 @@ public sealed class PositionManager
         return IsFresh(mark, at) ? mark.Price : Math.Min(mark.Price, position.Entry.Levels.StopLossPrice);
     }
 
+    /// <summary>Closes <paramref name="position"/> at the market price <paramref name="markPrice"/>, filled against the mint's last pool.</summary>
     private async Task CloseAsync(
-        OpenPosition position, DateTimeOffset closedAt, decimal exitPrice, ExitReason reason, CancellationToken cancellationToken)
+        OpenPosition position, DateTimeOffset closedAt, decimal markPrice, ExitReason reason, CancellationToken cancellationToken)
     {
+        decimal exitPrice = _options.RealisticFills
+            ? Fills.SellPrice(position.Entry, markPrice, _marks[position.Mint].Pool, _options)
+            : markPrice;
         ClosedTrade trade = ClosedTrade.Settle(position, closedAt, exitPrice, reason);
 
         await _store.CloseAsync(trade, cancellationToken);
@@ -275,5 +300,5 @@ public sealed class PositionManager
             cancellationToken);
     }
 
-    private readonly record struct Mark(decimal Price, DateTimeOffset Ts);
+    private readonly record struct Mark(decimal Price, DateTimeOffset Ts, Pool Pool);
 }

@@ -105,6 +105,35 @@ public class BotConfigurationTests
     }
 
     [Fact]
+    public void Venue_tables_bind_over_the_defaults_case_insensitively()
+    {
+        BotOptions bot = Resolve(
+            ("Bot:LiquidityFloorSol:Raydium", "5"),
+            ("Bot:LiquidityFloorSol:default", "2"),
+            ("Bot:FeePct:orca", "0.003"),
+            ("Bot:MaxPoolFraction", "0.05"),
+            ("Bot:RealisticFills", "false"));
+
+        Assert.Equal(5m, bot.LiquidityFloorSol["raydium"]);
+        Assert.Equal(2m, bot.LiquidityFloorSol["default"]);
+        Assert.Equal(0m, bot.LiquidityFloorSol["pumpfun"]); // defaults not overridden are kept
+        Assert.Equal(0.003, bot.FeePct["ORCA"]);
+        Assert.Equal(30m, bot.VirtualSol["pumpfun"]);
+        Assert.Equal(0.05, bot.MaxPoolFraction);
+        Assert.False(bot.RealisticFills);
+    }
+
+    [Theory]
+    [InlineData("Bot:FeePct:pumpswap", "0.9")]
+    [InlineData("Bot:LiquidityFloorSol:default", "-1")]
+    [InlineData("Bot:MaxPoolFraction", "0")]
+    public void Invalid_fill_config_is_rejected_at_resolution(string key, string value)
+    {
+        var error = Assert.Throws<OptionsValidationException>(() => Resolve((key, value)));
+        Assert.Contains(key.Split(':')[1], error.Message);
+    }
+
+    [Fact]
     public void Add_bot_options_accepts_independent_entry_gates()
     {
         BotOptions bot = Resolve(("Bot:MinPumpProb", "0.3"), ("Bot:MaxRugProb", "0.35"));

@@ -1,0 +1,28 @@
+Solia — #165 paper simulator realism: before/after on the live paper period
+==========================================================================
+Period: 2026-10-30 14:06 → 20:05 UTC, 104 closed trades of the live bot (champion solia-20261030T012910179875Z,
+15m, pump >= 0.25, rug <= 0.2), all filled by the idealized simulator (any size at the mark, no fees).
+Query: docs/reports/paper-fills-165.sql (read-only; trades joined with the token's last features row at
+opened_at / closed_at). "after" = BotOptions defaults: venue floor (AMM 1 SOL, curves 0), size <= 2 % of the
+pool's SOL reserve (curves: real + 30 virtual SOL), x·y=k impact and venue fee on both sides.
+Approximation: same entry/exit marks, times and balance-based sizes; the capital and slots a skipped trade would
+have freed are not re-traded. Bucket = venue type × liquidity at entry (SOL).
+
+   bucket   | trades_before | pnl_before | win_before | sol_in_before | trades_after | pnl_after | win_after | sol_in_after 
+------------+---------------+------------+------------+---------------+--------------+-----------+-----------+--------------
+ amm 1-10   |             5 |     -1.713 |      0.000 |          7.61 |            5 |    -0.193 |     0.000 |         0.58
+ amm <1     |            67 |     -2.511 |      0.164 |        124.35 |            0 |     0.000 |           |         0.00
+ amm >=10   |            31 |      4.412 |      0.387 |         62.10 |           31 |    -4.654 |     0.323 |        45.96
+ curve 1-10 |             1 |     -0.001 |      0.000 |          0.82 |            1 |    -0.041 |     0.000 |         0.65
+ all        |           104 |      0.187 |      0.221 |        194.88 |           37 |    -4.888 |     0.270 |        47.19
+(5 rows)
+
+Reading
+- AMM pools < 1 SOL: 67 of 104 trades (124 SOL committed) — all gated out. Note they are no longer the big
+  winners of the first 58 trades (+12.2 SOL then): over the full period they net -2.5 SOL.
+- AMM >= 10 SOL: +4.41 → -4.65 SOL. Three trades exited into a pool drained to 0 SOL in the same snapshot
+  (ids 603, 654, 644: a liquidity pull, the mark either frozen or jumping +67 %). Before they booked +0.74 SOL,
+  after -5.77 SOL (nothing to sell into). The 28 others: +3.68 → +1.11 SOL (impact + fees + pool-capped sizes).
+- Win rate on what is still traded: 0.27 (37 trades), against 0.22 before.
+- Paper P&L remains too small a sample to judge the model; with realistic fills it at least can't be faked by
+  dust pools.

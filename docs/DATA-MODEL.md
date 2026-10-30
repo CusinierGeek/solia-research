@@ -137,7 +137,8 @@ Model outputs. One row per inference call.
 Indexes: `(mint, ts)`, `(model_id)`, `(feature_id)`.
 
 ### `trades`
-Paper-trading bot activity. One row per closed (or open) position.
+Paper-trading bot activity. One row per closed (or open) position. Amounts are SOL; trades from before #165
+(2026-10-30) were filled at the mark with no fees (see docs/ML-MODEL.md "Realistic fills").
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -146,11 +147,11 @@ Paper-trading bot activity. One row per closed (or open) position.
 | prediction_id | BIGINT | FK → predictions (the triggering signal), `ON DELETE SET NULL` |
 | opened_at | TIMESTAMPTZ | |
 | closed_at | TIMESTAMPTZ | nullable while open |
-| entry_price | NUMERIC(28,24) | |
-| exit_price | NUMERIC(28,24) | nullable |
-| size | NUMERIC(28,12) | |
+| entry_price | NUMERIC(28,24) | SOL per token, all-in fill price (with realistic fills: mark + impact + entry fee) |
+| exit_price | NUMERIC(28,24) | nullable; SOL per token the exit filled at (after impact + exit fee) |
+| size | NUMERIC(28,12) | SOL committed (the bot's `StartingBalance` is SOL too) |
 | duration_sec | INT | nullable |
-| pnl | NUMERIC(28,12) | realized P&L |
+| pnl | NUMERIC(28,12) | realized P&L in SOL, fees and slippage included |
 | pnl_pct | DOUBLE PRECISION | |
 | strategy | TEXT | strategy used |
 | confidence | DOUBLE PRECISION | confidence at entry |

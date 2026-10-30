@@ -34,7 +34,7 @@ public class PaperTradingBotTests
         IBotEventSource source, ITradeStore store, IBotLogSink sink, out PositionManager engine,
         BotOptions? options = null, TimeProvider? time = null)
     {
-        options ??= new BotOptions();
+        options ??= new BotOptions { RealisticFills = false };
         engine = new PositionManager(options, store, sink);
         return new PaperTradingBot(
             NullLogger<PaperTradingBot>.Instance, sink, engine, source, Options.Create(options), time);
@@ -134,7 +134,7 @@ public class PaperTradingBotTests
         // Open at t = 1 (deadline t = 901), then the feed goes silent.
         var source = new ThenBlockingSource([Tick(0, Entry), Predict(1)]);
         PaperTradingBot bot = Build(source, store, NullBotLogSink.Instance, out PositionManager engine,
-            new BotOptions { TimeoutSweepSeconds = 5 }, time);
+            new BotOptions { TimeoutSweepSeconds = 5, RealisticFills = false }, time);
 
         await bot.StartAsync(default);
         await source.Entered; // both events applied; the loop now waits on the feed
@@ -157,7 +157,7 @@ public class PaperTradingBotTests
         var time = new FakeTimeProvider(T0.AddDays(1));
         var source = new ThenBlockingSource([Tick(0, Entry), Predict(1)]);
         PaperTradingBot bot = Build(source, new InMemoryTradeStore(), NullBotLogSink.Instance, out PositionManager engine,
-            new BotOptions { TimeoutSweepSeconds = 5 }, time);
+            new BotOptions { TimeoutSweepSeconds = 5, RealisticFills = false }, time);
 
         await bot.StartAsync(default);
         await source.Entered;
@@ -176,7 +176,7 @@ public class PaperTradingBotTests
         var store = new InMemoryTradeStore();
         var source = new ThenBlockingSource([Tick(0, Entry), Predict(1)]);
         PaperTradingBot bot = Build(source, store, NullBotLogSink.Instance, out PositionManager engine,
-            new BotOptions { TimeoutSweepSeconds = 0 }, time);
+            new BotOptions { TimeoutSweepSeconds = 0, RealisticFills = false }, time);
 
         await bot.StartAsync(default);
         await source.Entered;
@@ -196,7 +196,7 @@ public class PaperTradingBotTests
         var sink = new RecordingLogSink();
         var source = new ThenBlockingSource([Tick(0, Entry), Predict(1)]);
         PaperTradingBot bot = Build(source, new CloseFailingStore(), sink, out _,
-            new BotOptions { TimeoutSweepSeconds = 5 }, time);
+            new BotOptions { TimeoutSweepSeconds = 5, RealisticFills = false }, time);
 
         await bot.StartAsync(default);
         await source.Entered;

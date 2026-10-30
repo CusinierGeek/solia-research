@@ -15,7 +15,7 @@ public sealed class BotOptions : IValidatableObject
     public const string Section = "Bot";
 
     /// <summary>
-    /// Virtual starting balance the bot paper-trades with, (0, 1 000 000]. A bot with no capital can't
+    /// Virtual starting balance the bot paper-trades with, in SOL (sizes and P&amp;L are SOL too), (0, 1 000 000]. A bot with no capital can't
     /// trade; the upper bound catches typos (e.g. 1e30) that would make paper PnL meaningless.
     /// Overridable via PAPER_STARTING_BALANCE.
     /// </summary>
@@ -146,6 +146,70 @@ public sealed class BotOptions : IValidatableObject
     public int TimeoutSweepSeconds { get; set; } = 5;
 
     /// <summary>
+    /// Fill against the pool (see Trading.Fills): the liquidity gate, the pool-sized cap, constant-product
+    /// slippage and the venue fees. False is the idealized simulator from before #165 — any size fills at the
+    /// mark, for free — kept for before/after comparisons and policy-only tests; its P&amp;L can't evaluate a
+    /// model (dust pools fake it).
+    /// </summary>
+    public bool RealisticFills { get; set; } = true;
+
+    /// <summary>
+    /// Liquidity gate, SOL per venue: no entry in a pool holding less real SOL (<c>features.liquidity</c>) than its
+    /// venue's floor, or whose liquidity is unknown. <c>default</c> applies to every venue not listed (an unknown one
+    /// included). Each in [0, 1 000 000]; 0 lets any known liquidity through. The defaults mirror the ai-service's
+    /// <c>labeling.liquidity_floor</c> (docs/ML-MODEL.md "Liquidity floor"), so the bot trades the population the
+    /// model learned on — keep them in step, and never below the champion's: on an AMM a price read off a pool under
+    /// ~1 SOL is an artifact; bonding curves price off virtual reserves, so their real SOL may be ~0 while the
+    /// price is valid (floor 0). Keys are case-insensitive.
+    /// </summary>
+    public Dictionary<string, decimal> LiquidityFloorSol { get; set; } = new(StringComparer.OrdinalIgnoreCase)
+    {
+        [Trading.Fills.DefaultVenue] = 1m,
+        ["pumpfun"] = 0m,
+        ["raydium-launchpad"] = 0m,
+        ["meteora-launchpad"] = 0m,
+        ["bonk"] = 0m,
+    };
+
+    /// <summary>
+    /// Virtual SOL a venue's bonding curve prices with on top of its real SOL, per venue, each in
+    /// [0, 1 000 000]; unlisted venues (the AMMs) have none. The fills' reserve is real + virtual SOL. Pump.fun's
+    /// curve starts at 30 virtual SOL (its real SOL is added on top, which <c>features.liquidity</c> already
+    /// counts); the other launchpads are approximated alike. Keys are case-insensitive.
+    /// </summary>
+    public Dictionary<string, decimal> VirtualSol { get; set; } = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["pumpfun"] = 30m,
+        ["raydium-launchpad"] = 30m,
+        ["meteora-launchpad"] = 30m,
+        ["bonk"] = 30m,
+    };
+
+    /// <summary>
+    /// Cap on a position as a fraction of its pool's SOL reserve, (0, 1] — on top of the balance caps. At 0.02 the
+    /// price impact stays ~2 % per side; a pool too small for <see cref="MinPositionSize"/> is skipped.
+    /// </summary>
+    [Range(0.0, 1.0, MinimumIsExclusive = true)]
+    public double MaxPoolFraction { get; set; } = 0.02;
+
+    /// <summary>
+    /// Per-side trading fee by venue, as a fraction of the SOL traded (0.01 = 1 %), each in [0, 0.5]; <c>default</c>
+    /// for every venue not listed. Charged on entry and exit, so it is in <c>pnl</c>. Defaults from the venues'
+    /// published schedules (2026, approximate — check before relying on them): Pump.fun curve 1.25 % (0.95 %
+    /// protocol + 0.30 % creator), PumpSwap 0.30 %, the other launchpads ~1 %, the AMMs (Raydium, Meteora, Orca…)
+    /// ~0.25 %. Keys are case-insensitive.
+    /// </summary>
+    public Dictionary<string, double> FeePct { get; set; } = new(StringComparer.OrdinalIgnoreCase)
+    {
+        [Trading.Fills.DefaultVenue] = 0.0025,
+        ["pumpfun"] = 0.0125,
+        ["pumpswap"] = 0.003,
+        ["raydium-launchpad"] = 0.01,
+        ["meteora-launchpad"] = 0.01,
+        ["bonk"] = 0.01,
+    };
+
+    /// <summary>
     /// Cross-field rules. Runs only once every single-field annotation has passed, so the values here
     /// are already in range.
     /// </summary>
@@ -174,6 +238,35 @@ public sealed class BotOptions : IValidatableObject
                 $"{nameof(MinTakeProfitPct)} ({MinTakeProfitPct}) exceeds {nameof(TakeProfitPct)} ({TakeProfitPct}); " +
                 "no prediction could ever clear the take-profit floor.",
                 [nameof(MinTakeProfitPct), nameof(TakeProfitPct)]);
+        }
+
+        foreach (ValidationResult problem in CheckVenues(nameof(LiquidityFloorSol), LiquidityFloorSol, v => v is >= 0m and <= 1_000_000m, "[0, 1 000 000] SOL")
+            .Concat(CheckVenues(nameof(VirtualSol), VirtualSol, v => v is >= 0m and <= 1_000_000m, "[0, 1 000 000] SOL"))
+            .Concat(CheckVenues(nameof(FeePct), FeePct, v => v is >= 0.0 and <= 0.5, "[0, 0.5]")))
+        {
+            yield return problem;
+        }
+    }
+
+    private static IEnumerable<ValidationResult> CheckVenues<T>(
+        string name, IReadOnlyDictionary<string, T>? table, Func<T, bool> inRange, string range)
+    {
+        if (table is null)
+        {
+            yield return new ValidationResult($"{name} is required (a per-venue table, may be empty).", [name]);
+            yield break;
+        }
+
+        foreach ((string venue, T value) in table)
+        {
+            if (string.IsNullOrWhiteSpace(venue))
+            {
+                yield return new ValidationResult($"{name} has an empty venue key.", [name]);
+            }
+            else if (!inRange(value))
+            {
+                yield return new ValidationResult($"{name}:{venue} ({value}) must be in {range}.", [name]);
+            }
         }
     }
 }

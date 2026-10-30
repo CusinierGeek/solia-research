@@ -1,5 +1,6 @@
 using Solia.Bot.Configuration;
 using Solia.Bot.Domain;
+using Solia.Bot.Trading;
 
 namespace Solia.Bot.Policy;
 
@@ -20,7 +21,7 @@ namespace Solia.Bot.Policy;
 /// Kelly's optimal fraction is <c>f* = p/L − q/b = (p·b − q·L) / (b·L)</c>. A non-positive gain or edge
 /// (<c>p·b − q·L</c>) sizes to zero. The committed fraction is
 /// <c>f* · (confidence/100) · RiskFraction</c>, so <see cref="BotOptions.RiskFraction"/> = 1 really is
-/// full Kelly; it is then clamped to <see cref="BotOptions.MaxPositionFraction"/>. <c>pump_prob</c> is an
+/// full Kelly; it is then clamped to <see cref="BotOptions.MaxPositionFraction"/> (and, in SOL, to the pool cap). <c>pump_prob</c> is an
 /// entry gate (<see cref="SignalClassifier"/>), not a sizing input: <c>expected_return</c> already
 /// prices in the pump likelihood, and counting it twice would double-weight the same head.
 /// Size rises with expected return and confidence, falls with rug probability and with the stop-loss
@@ -78,7 +79,9 @@ public static class PositionSizer
 
     /// <summary>
     /// The amount of <see cref="PortfolioState.Balance"/> to commit, or 0 to skip the trade (no edge, no
-    /// balance, or below <see cref="BotOptions.MinPositionSize"/>). Takes the same
+    /// balance, or below <see cref="BotOptions.MinPositionSize"/>). With <see cref="BotOptions.RealisticFills"/> it
+    /// is also capped at <see cref="BotOptions.MaxPoolFraction"/> of the pool's reserve
+    /// (<see cref="Fills.MaxSize"/>) — an unknown pool takes nothing. Takes the same
     /// <see cref="PortfolioState"/> snapshot the <see cref="EntryRule"/> gates on, so the gate and the
     /// size can't see different balances.
     /// </summary>
@@ -92,6 +95,11 @@ public static class PositionSizer
 
         // fraction is finite and in (0, MaxPositionFraction ≤ 1], so the cast can't overflow.
         decimal size = Money.Truncate(portfolio.Balance * (decimal)fraction);
+        if (options.RealisticFills)
+        {
+            size = Math.Min(size, Fills.MaxSize(portfolio.Pool, options));
+        }
+
         return size < options.MinPositionSize ? 0m : size;
     }
 }

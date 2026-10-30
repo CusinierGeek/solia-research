@@ -23,13 +23,22 @@ public enum EntryRejectReason
     /// <summary>No positive market price to fill against.</summary>
     NoMarketPrice,
 
+    /// <summary>
+    /// The pool's liquidity is unknown or below its venue's <see cref="Configuration.BotOptions.LiquidityFloorSol"/>
+    /// (only with <see cref="Configuration.BotOptions.RealisticFills"/>).
+    /// </summary>
+    InsufficientLiquidity,
+
     /// <summary>Balance is not positive, or is below <see cref="Configuration.BotOptions.MinPositionSize"/>.</summary>
     InsufficientBalance,
 
     /// <summary>The sized bet has no positive expected edge (<see cref="PositionSizer.Fraction"/> is 0).</summary>
     NoPositiveEdge,
 
-    /// <summary>The computed size falls below <see cref="Configuration.BotOptions.MinPositionSize"/> (dust).</summary>
+    /// <summary>
+    /// The computed size — capped by the pool (<see cref="Configuration.BotOptions.MaxPoolFraction"/>) — falls below
+    /// <see cref="Configuration.BotOptions.MinPositionSize"/> (dust).
+    /// </summary>
     BelowMinPositionSize,
 }
 

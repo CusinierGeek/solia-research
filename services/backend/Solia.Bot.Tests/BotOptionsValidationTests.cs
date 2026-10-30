@@ -287,4 +287,53 @@ public class BotOptionsValidationTests
     {
         Assert.True(IsValid(new BotOptions { TimeoutSweepSeconds = seconds }));
     }
+
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(1.01)]
+    [InlineData(double.NaN)]
+    public void Out_of_range_max_pool_fraction_is_rejected(double fraction)
+    {
+        Assert.False(IsValid(new BotOptions { MaxPoolFraction = fraction }));
+    }
+
+    [Theory]
+    [InlineData("LiquidityFloorSol", "default", "-1")]
+    [InlineData("LiquidityFloorSol", "raydium", "1000001")]
+    [InlineData("LiquidityFloorSol", " ", "1")]          // empty venue key
+    [InlineData("VirtualSol", "pumpfun", "-30")]
+    [InlineData("FeePct", "pumpswap", "-0.001")]
+    [InlineData("FeePct", "default", "0.6")]               // above 50 % per side: a typo (60 for 0.6 %)
+    [InlineData("FeePct", "default", "NaN")]
+    public void Out_of_range_venue_tables_are_rejected(string table, string venue, string value)
+    {
+        var options = new BotOptions();
+        switch (table)
+        {
+            case "LiquidityFloorSol":
+                options.LiquidityFloorSol[venue] = Dec(value);
+                break;
+            case "VirtualSol":
+                options.VirtualSol[venue] = Dec(value);
+                break;
+            default:
+                options.FeePct[venue] = double.Parse(value, CultureInfo.InvariantCulture);
+                break;
+        }
+
+        Assert.False(IsValid(options));
+    }
+
+    [Fact]
+    public void A_missing_venue_table_is_rejected_but_an_empty_one_is_valid()
+    {
+        Assert.False(IsValid(new BotOptions { FeePct = null! }));
+        Assert.True(IsValid(new BotOptions { FeePct = [], LiquidityFloorSol = [], VirtualSol = [] }));
+    }
+
+    [Fact]
+    public void Idealized_fills_are_valid()
+    {
+        Assert.True(IsValid(new BotOptions { RealisticFills = false }));
+    }
 }
