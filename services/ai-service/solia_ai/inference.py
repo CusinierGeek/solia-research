@@ -43,6 +43,7 @@ from .checkpoints import resolve_checkpoint_path  # noqa: F401  (re-exported for
 from .dataset import pad_window
 from .eligibility import EligibilityRule
 from .features import FEATURE_COLUMNS, is_ordered_subset
+from .liquidity import LiquidityFloor
 from .model import IncompatibleCheckpointError, SoliaTransformer
 
 # Pinned so the pipeline's ONNXRuntime always sees the same operator set the export was tested
@@ -271,6 +272,12 @@ class Predictor:
         """The eligibility rule the champion was trained under (disabled for a model recorded
         before the rule existed): the bot only scores the tokens it accepts."""
         return EligibilityRule.of(self.metadata.get("hyperparams"))
+
+    @property
+    def liquidity_floor(self) -> LiquidityFloor:
+        """The liquidity floor the champion's labels were built under (disabled for a model
+        recorded before the floor): the bot's liquidity gate should not trade below it."""
+        return LiquidityFloor.of(self.metadata.get("hyperparams"))
 
     @classmethod
     def from_checkpoint(cls, path: str | Path, *, temperature: float | None = None) -> Predictor:

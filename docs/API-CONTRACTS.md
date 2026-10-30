@@ -206,6 +206,7 @@ Base: `/`
 { "champion_version": "v3", "created_at": "...", "param_count": 123456, "metrics": {...},
   "seq_len": 64, "min_seq_len": 8,
   "eligibility": { "min_unique_traders": 3, "min_volume_sol": 0.0, "min_token_age_sec": 0.0 },
+  "liquidity_floor": { "default": 1.0, "pumpfun": 0.0, "raydium-launchpad": 0.0 },
   "trades_since_last_train": 142, "retrain_threshold": 500,
   "latest_run": { "id": 17, "trigger": "n_trades", "started_at": "...", "finished_at": null, "decision": null,
                   "progress": { "candidate": 1, "candidates": 3, "seed": 42, "epoch": 7, "epochs": 50,
@@ -214,7 +215,9 @@ Base: `/`
 ```
 `eligibility` is the token eligibility rule the champion was trained under (all `0` = every token; a model
 recorded before the rule reads as all `0`) — the bot only scores the tokens it accepts (docs/ML-MODEL.md
-"Token eligibility"). The champion fields as before; `503 no_champion` / `champion_incompatible` / `champion_unavailable` while none
+"Token eligibility"). `liquidity_floor` is the SOL floor per venue (`default` for any other) its labels and
+windows were built under (empty / all `0` = disabled, as for a model recorded before it); the bot's liquidity
+gate should not trade below it (docs/ML-MODEL.md "Liquidity floor"). The champion fields as before; `503 no_champion` / `champion_incompatible` / `champion_unavailable` while none
 can be served (the backend then reports its own progress). `trades_since_last_train` / `retrain_threshold` are the
 orchestrator's (same rule as the backend's count, against `RETRAIN_EVERY_N_TRADES`) and always come as a pair:
 both `null` when the database read fails. `latest_run` is the newest `training_events` row — `finished_at` and

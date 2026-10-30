@@ -805,3 +805,14 @@ def test_model_status_reports_the_champion_s_eligibility_rule():
     response = _client(lambda current: current or champion).get("/model/status")
 
     assert response.json()["eligibility"] == rule
+
+
+def test_model_status_reports_the_champion_s_liquidity_floor():
+    predictor = _predictor()
+    floor = {"default": 1.0, "pumpfun": 0.0}
+    predictor.metadata["hyperparams"] = {"liquidity_floor": floor}
+    champion = LoadedChampion(predictor=predictor)
+
+    response = _client(lambda current: current or champion).get("/model/status")
+
+    assert response.json()["liquidity_floor"] == floor

@@ -34,6 +34,12 @@ Only windows whose anchor (last) row is *eligible* (:mod:`solia_ai.eligibility`,
 peeks at the future; labels are unchanged, and the rows before the token became eligible may still
 sit in a window's history.
 
+Prices read off near-empty pools are artifacts (a micro-trade moves them by multiples). Under a
+liquidity floor (:mod:`solia_ai.liquidity`, ``config.yaml`` ``labeling.liquidity_floor``,
+venue-aware) a window anchored on a pool below its floor is not a sample, and a price in the horizon
+read off one counts neither towards ``pump`` nor ``expected_return`` (which falls back to the last
+counted price, the anchor's at worst). ``rug`` is unchanged: a liquidity collapse is still a rug.
+
 Consecutive snapshots of a token are ~10 s apart and nearly identical, so a window per snapshot
 shows the model the same situation many times (it memorizes). ``window_stride_seconds`` keeps at
 most **one window per stride of a token's life**: the token's time since its first row is cut into
@@ -76,6 +82,7 @@ from .features import (
     build_feature_matrix,
     check_group_coverage,
 )
+from .liquidity import LiquidityFloor
 
 DEFAULT_MAX_GAP_FRACTION = 0.25
 DEFAULT_MIN_GAP_SECONDS = 20  # two pipeline snapshot cadences: normal spacing is never a "gap"
@@ -101,6 +108,10 @@ class Samples:
     # [N, 3] float32 — the anchor row's eligibility inputs (solia_ai.eligibility.running_inputs),
     # so another rule can be applied without rebuilding (:meth:`EligibilityRule.accepts`).
     eligibility_inputs: np.ndarray | None = None
+    # [N] float32 / object — the anchor row's pool liquidity (SOL, NaN = unknown) and venue, so the
+    # windows can be split by liquidity (solia_ai.liquidity.liquidity_buckets) without a rebuild.
+    anchor_liquidity: np.ndarray | None = None
+    anchor_venue: np.ndarray | None = None
 
     def __len__(self) -> int:
         return len(self.end_row)
@@ -164,11 +175,13 @@ def build_samples(
     max_return: float = DEFAULT_MAX_RETURN,
     eligibility: EligibilityRule | None = None,
     window_stride_seconds: float = 0,
+    liquidity_floor: LiquidityFloor | None = None,
 ) -> Samples:
     """Slide windows per mint and label each by the realized future trajectory (module doc).
 
     A window ends at every row from the token's ``min_seq_len``-th on (default ``seq_len``: full
-    windows only) that ``eligibility`` accepts (default: every row) — at most one per
+    windows only) that ``eligibility`` accepts (default: every row) and whose pool is at or above
+    ``liquidity_floor`` (default: disabled; :mod:`solia_ai.liquidity`) — at most one per
     ``window_stride_seconds`` of the token's life (default 0: every row) — and holds its most
     recent ``<= seq_len`` rows. Built in vectorized passes over every token at once (one sort, one
     feature projection, the labels by searches and range extrema), never a loop per token or
@@ -176,6 +189,9 @@ def build_samples(
     """
     rule = EligibilityRule() if eligibility is None else eligibility
     rule.check_columns(df)
+    floor = LiquidityFloor() if liquidity_floor is None else liquidity_floor
+    if floor.enabled and "liquidity" not in df.columns:
+        raise ValueError("the liquidity floor needs the 'liquidity' column")
     horizons = tuple(horizons)
     if seq_len < 1:
         raise ValueError(f"seq_len must be >= 1, got {seq_len}")
@@ -230,11 +246,16 @@ def build_samples(
 
     price = _numeric(df, "price", order)
     liquidity = _numeric(df, "liquidity", order)
+    venue = df["venue"].iloc[order].to_numpy(dtype=object) if "venue" in df.columns else None
     ts_sec = ts[order].astype("datetime64[s]").astype(np.int64)
+    # Rows whose price is a tradeable outcome (solia_ai.liquidity); None = every row (no floor).
+    tradeable = floor.tradeable(liquidity, venue) if floor.enabled else None
 
     window_ends = np.flatnonzero(pos >= min_len - 1)
     anchor_inputs = _running_inputs(df, order, token)[window_ends]
     eligible = rule.accepts(anchor_inputs)  # anchored on an eligible row
+    if tradeable is not None:
+        eligible &= tradeable[window_ends]  # ... of a pool at or above the liquidity floor
     window_ends, anchor_inputs = window_ends[eligible], anchor_inputs[eligible]
     if window_stride_seconds > 0:  # thinned before labeling: only kept windows are labeled
         age = ts_sec - ts_sec[token_start]
@@ -242,7 +263,7 @@ def build_samples(
         window_ends, anchor_inputs = window_ends[strided], anchor_inputs[strided]
     pump, rug, ret, mask = _label(
         window_ends, token, token_last, ts_sec, price, liquidity,
-        horizon_s, pump_thr, rug_thr, max_gap, max_return,
+        horizon_s, pump_thr, rug_thr, max_gap, max_return, tradeable,
     )  # fmt: skip
     keep = mask.any(axis=1)  # drop windows with nothing labelable yet
     if not keep.any():
@@ -270,6 +291,8 @@ def build_samples(
         df["mint"].to_numpy(dtype=object)[order[ends]],
         horizons,
         anchor_inputs[keep].astype(np.float32),
+        liquidity[ends].astype(np.float32),
+        np.full(len(ends), None, object) if venue is None else venue[ends],
     )
 
 
@@ -306,6 +329,8 @@ def _empty_samples(seq_len: int, horizons: tuple[str, ...], n_feat: int) -> Samp
         np.empty((0,), object),
         horizons,
         np.empty((0, len(ELIGIBILITY_INPUTS)), np.float32),
+        np.empty((0,), np.float32),
+        np.empty((0,), object),
     )
 
 
@@ -337,10 +362,14 @@ def _label(
     rug_thr: np.ndarray,
     max_gap: np.ndarray,
     max_return: float,
+    tradeable: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Label every window (module doc) at once, over every token's rows (time-ordered, tokens
     contiguous). Each horizon looks at the rows ``(t, t + H]`` of the window's own token: a
-    search over ``(token, ts)`` keys, then range minima / maxima over those rows."""
+    search over ``(token, ts)`` keys, then range minima / maxima over those rows.
+
+    ``tradeable`` (``[R]`` bool, None = every row) marks the rows at or above the liquidity floor:
+    only their prices count towards ``pump`` and ``expected_return``, and only they anchor."""
     n, n_h = len(window_ends), len(horizon_s)
     pump = np.zeros((n, n_h), np.float32)
     rug = np.zeros((n, n_h), np.float32)
@@ -358,16 +387,20 @@ def _label(
     i = window_ends
     p_i, l_i, t_i = price[i], liquidity[i], ts_sec[i]
     anchored = np.isfinite(p_i) & (p_i > 0)  # no usable anchor price: unlabeled
+    if tradeable is not None:
+        anchored &= tradeable[i]
     lo = np.searchsorted(key, key[i], side="right")  # first row strictly after t_i
     last_sec = ts_sec[token_last[i]]
 
     price_finite = np.isfinite(price)
     n_price = np.r_[0, np.cumsum(price_finite)]  # finite values in [lo, hi) = n[hi] - n[lo]
     n_liq = np.r_[0, np.cumsum(np.isfinite(liquidity))]
-    # Index of the last finite price at or before each row (-1: none).
-    last_finite = np.maximum.accumulate(np.where(price_finite, np.arange(len(price)), -1))
-    price_lo = np.where(np.isnan(price), np.inf, price)  # nanmin
-    price_hi = np.where(price_finite, price, -np.inf)  # max over the finite values
+    # Prices that count towards pump / return: finite, read off a pool at or above the floor.
+    counted = price_finite if tradeable is None else price_finite & tradeable
+    # Index of the last counted price at or before each row (-1: none).
+    last_finite = np.maximum.accumulate(np.where(counted, np.arange(len(price)), -1))
+    price_lo = np.where(np.isnan(price), np.inf, price)  # nanmin (rug: dust prices included)
+    price_hi = np.where(counted, price, -np.inf)  # max over the counted values
     liq_lo = np.where(np.isnan(liquidity), np.inf, liquidity)
 
     for h in range(n_h):
@@ -387,7 +420,8 @@ def _label(
             labeled = future & (covered | crashed)
             pump[:, h] = np.where(labeled, p_max / p_i - 1.0 >= pump_thr[h], 0.0)
             rug[:, h] = np.where(labeled, crashed, 0.0)
-            # Price at (or nearest before) the horizon end, capped (module doc).
+            # Counted price at (or nearest before) the horizon end, capped (module doc). The
+            # anchor counts, so it is the fallback when the horizon only read dust pools.
             last_price = price[last_finite[hi_f - 1]]
             ret[:, h] = np.where(labeled, np.minimum(last_price / p_i - 1.0, max_return), 0.0)
         mask[:, h] = labeled
@@ -669,7 +703,8 @@ def embargo_seconds(horizons: Sequence[str]) -> int:
 
 
 def config_samples(df: pd.DataFrame, cfg: Mapping[str, Any]) -> Samples:
-    """The windows of ``df`` per ``cfg`` (anchored on rows its ``eligibility`` rule accepts);
+    """The windows of ``df`` per ``cfg`` (anchored on rows its ``eligibility`` rule accepts,
+    labeled under its ``labeling.liquidity_floor``);
     refuses rows predating an enabled feature group."""
     check_group_coverage(df, cfg.get("features", {}).get("groups", BASELINE_GROUPS))
     labeling = cfg["labeling"]
@@ -685,6 +720,7 @@ def config_samples(df: pd.DataFrame, cfg: Mapping[str, Any]) -> Samples:
         max_return=labeling.get("max_return", DEFAULT_MAX_RETURN),
         eligibility=EligibilityRule.from_config(cfg),
         window_stride_seconds=window_stride(cfg),
+        liquidity_floor=LiquidityFloor.from_config(cfg),
     )
 
 

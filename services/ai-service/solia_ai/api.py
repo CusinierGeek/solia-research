@@ -299,6 +299,7 @@ def create_app(
             "seq_len": loaded.predictor.seq_len,
             "min_seq_len": loaded.predictor.min_seq_len,
             "eligibility": loaded.predictor.eligibility.as_dict(),
+            "liquidity_floor": loaded.predictor.liquidity_floor.as_dict(),
             **service.progress(),
         }
 

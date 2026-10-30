@@ -104,6 +104,109 @@ policy required**, so the model trains from day one, before any paper trades exi
 
 Thresholds live in `config.yaml` (documented with the dataset builder, Sprint 2).
 
+### Liquidity floor (#166)
+
+A price read off a near-empty AMM pool is an artifact: one micro-trade moves it by multiples. Such prices
+created **fake pump labels** and windows the model can "predict" by recognizing an empty pool that jumps. Live
+paper trading picked exactly those (41 of the first 58 trades on 2026-10-30 entered pools with < 1 SOL, #165).
+`labeling.liquidity_floor` (`solia_ai/liquidity.py`, SOL in the SOL-quoted pool = `features.liquidity`) is
+**venue-aware**. A row's floor is its venue's floor, else `default` (NULL venue included). A row is *tradeable*
+when its floor is 0 or its liquidity is ≥ the floor. An unknown liquidity can't be proven above a positive
+floor.
+
+- **Windows**: a window whose anchor row is below its floor is not a training / validation / held-out sample.
+  It is filtered with the eligibility rule, before the stride.
+- **pump / expected_return**: a price in the horizon read off a row below the floor doesn't count. `pump` is the
+  highest *counted* price. `expected_return` is the last counted price at or before the horizon end. The anchor
+  counts, so it is the fallback when the whole horizon read dust (return 0).
+- **rug: unchanged.** A liquidity collapse (into dust or not) and a price crash are still rugs.
+- **Recorded with every model**: `hyperparams["liquidity_floor"]`, in the checkpoint and the `models` row,
+  reported by `GET /model/status`. A model recorded without one predates the floor (read as disabled). A retrain
+  whose champion was trained under another floor logs a note: both models are scored on the config's windows and
+  labels. **The bot's liquidity gate (#165) must not trade below its champion's floor**, so that the bot trades
+  the population the model learned on.
+
+**Per-venue rule, from data** (6 h of `features`, 2026-10-30, share of consecutive same-venue snapshots whose
+price moved ×2 or more):
+
+| venue | < 0.1 SOL | 0.1–1 | 1–10 | ≥ 10 |
+|---|---:|---:|---:|---:|
+| pumpswap | 1.18 % | 0.42 % | 0.03 % | 0.02 % |
+| raydium | 0.34 % | 0.09 % | 0.02 % | 0.00 % |
+| meteora | 0.64 % | 0.09 % | 0.07 % | 0.09 % |
+| pumpfun (curve) | 0.73 % | 2.21 % | 0.34 % | 0.05 % |
+
+On the AMMs the artifacts stop at ~1 SOL, hence `default: 1.0`. Bonding curves (`pumpfun`, `raydium-launchpad`,
+`meteora-launchpad`, `bonk`) price off **virtual** reserves (pumpfun: ~30 SOL virtual + the real SOL), so a
+micro-trade can't multiply the price. Their jumps under 1 SOL are real early-life moves and dumps. They get a
+floor of 0. 65 % of pumpfun rows hold < 1 SOL of real SOL, and an AMM-style floor would have dropped most of the
+curve population by mistake.
+
+**Diagnostic by liquidity bucket** (`python -m solia_ai.liquidity_report`, read-only; buckets of the anchor:
+`amm` / `curve` × `<1` / `1-10` / `>=10` SOL):
+
+```bash
+python -m solia_ai.liquidity_report --champion --labels none --out /app/models/reports/liquidity-none.json
+# several models on the same windows (after every model's data), labeled under the config's floor:
+python -m solia_ai.liquidity_report --champion --checkpoint /app/models/x.pt --labels config --out ...
+#   --no-sweep (skip the per-bucket entry-rule sweep)  --bootstrap-samples 200  --device cuda (default if available)
+```
+
+Champion `solia-20261030T012910179875Z`, 2 406 074 held-out windows, labels without the floor, entry rule 15m
+`pump ≥ 0.25, rug ≤ 0.2` (report: [`reports/liquidity-none-solia-20261030T012910179875Z.txt`](reports/liquidity-none-solia-20261030T012910179875Z.txt)):
+
+| bucket | % windows | % pumps | pump PR-AUC 15m | base 15m | % rule trades | precision | median return | % rule P&L |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| all | 100 | 100 | 0.258 | 0.064 | 100 (4 112) | 0.28 | −1.5 % | 100 |
+| **amm ≥ 10** | 25.6 | 60.8 | **0.342** | 0.089 | 38.9 | **0.44** | **+23.4 %** | 80.2 |
+| amm 1–10 | 5.9 | 2.1 | 0.141 | 0.029 | 3.5 | 0.15 | −12.7 % | −3.5 |
+| amm < 1 | 13.9 | 7.9 | 0.167 | 0.065 | **43.9** | 0.19 | −12.1 % | 24.1 |
+| curve < 1 | 37.6 | 15.2 | 0.207 | 0.052 | 1.3 | 0.33 | −3.3 % | 1.7 |
+| curve 1–10 | 10.0 | 5.2 | 0.067 | 0.026 | 3.8 | 0.00 | −1.0 % | −0.3 |
+| curve ≥ 10 | 7.0 | 8.8 | 0.148 | 0.047 | 8.5 | 0.18 | −8.4 % | −2.1 |
+
+- **The model's quality does not come from dust pools.** It is best on realistic AMM pools (≥ 10 SOL: PR-AUC
+  0.34 against 0.26 overall, entry precision 44 %, 80 % of the rule's P&L).
+- **The entry rule wastes 44 % of its entries in AMM pools under 1 SOL.** They are half as precise, with a
+  negative median, and their "gains" are the artifact prices. The dust bucket's pump base rate (6.5 %) is more
+  than twice the 1–10 SOL one (2.9 %): those are the fake pumps the floor removes.
+- Curve tokens under 1 SOL keep a usable signal (PR-AUC 0.21), which confirms the curve exemption.
+
+**Retrain with the floor** (same bounded read, 4 M rows, scratch, `solia_ai.candidate`; 1 427 105 training
+windows, best epoch 1: the #160 overfitting pattern) vs the champion, both scored on the same held-out windows
+**labeled under the floor**:
+
+754 375 shared held-out windows (after both models' data; AMM < 1 SOL anchors are dropped by the floor; reports:
+[`champion`](reports/liquidity-compare-solia-20261030T012910179875Z.txt),
+[`floor candidate`](reports/liquidity-compare-solia-floor-166.txt)):
+
+| pump PR-AUC | 30s | 1m | 5m | 15m | 1h |
+|---|---:|---:|---:|---:|---:|
+| all — champion | 0.213 | 0.217 | 0.284 | 0.215 | 0.108 |
+| all — **floor candidate** | **0.254** | **0.257** | **0.307** | **0.239** | **0.144** |
+| amm ≥ 10 — champion | 0.214 | 0.227 | 0.321 | 0.255 | 0.129 |
+| amm ≥ 10 — **floor candidate** | **0.254** | **0.262** | **0.336** | **0.271** | **0.180** |
+
+Rug PR-AUC also rises on every horizon (all, 15m: 0.829 → 0.842; amm ≥ 10, 15m: 0.738 → 0.748).
+
+| 15m entry rule `pump ≥ 0.25, rug ≤ 0.2` | trades | precision | win | mean / median return |
+|---|---:|---:|---:|---:|
+| champion, all | 752 | 0.326 | 0.57 | +0.245 / +0.094 |
+| floor candidate, all | 984 | 0.236 | 0.49 | +0.042 / −0.008 |
+| champion, amm ≥ 10 | 536 | 0.410 | 0.65 | +0.319 / +0.208 |
+| floor candidate, amm ≥ 10 | 940 | 0.238 | 0.50 | +0.036 / 0.000 |
+
+- **Predictive metrics (primary) favour the floor candidate** on the realistic bucket and overall. The
+  candidate's rule trades sit almost entirely in realistic pools (95.5 % in AMM ≥ 10, none in curve dust), where
+  the champion's rule still spread 29 % of its trades over thinner pools.
+- **The fixed entry thresholds don't transfer.** The candidate's probability scale differs (it fires 1.3× more
+  often at 0.25), so its rule P&L at the champion's thresholds is not comparable. The entry sweep must be re-run
+  for any new champion (see "Choosing the entry rule").
+- **Caveats.** One seed, one held-out slice. The candidate is also trained on fresher data than the champion
+  (2026-10-30 01:29), so this comparison mixes the floor with recency. The promotion gate (windows × seeds,
+  same config for both) is what decides a promotion. The floor ships enabled, so the next retrain trains its
+  candidate under it, and the gate scores the champion on the floored labels.
+
 Labels require the token's **full lifecycle** — including **post-bonding** price/liquidity on the
 AMM. The pipeline captures pre- and post-bonding events (see [`DATA-SOURCES.md`](DATA-SOURCES.md)),
 so a pump/rug after migration is labeled correctly; a pre-bonding-only dataset would bias labels.
@@ -640,6 +743,8 @@ the best epoch moved past 1 and the gap narrowed, or why not.
 | `ablation.py` | Per-feature-group lift across windows & seeds |
 | `eligibility.py` | Token eligibility rule (causal, shared with the bot) |
 | `eligibility_ablation.py` | Lift of eligibility rules (rule's model vs every-token model on the rule's population) |
+| `liquidity.py` | Venue-aware liquidity floor for labels & windows (recorded with the model) |
+| `liquidity_report.py` | Held-out metrics & entry rule split by anchor pool liquidity (one or several models, same windows) |
 | `search.py` | Hyperparameter, regularization, stride & labeling-threshold search (proposes a `config.yaml` diff); spaces in `sweeps/` |
 | `inference.py` | Load champion, run predictions (+ ONNX export) |
 | `retrain.py` | Continuous-training orchestrator: trade-count trigger, one run at a time, `training_events` audit, promote/reject, rollback, prune |

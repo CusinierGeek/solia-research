@@ -61,6 +61,7 @@ from .db import add_data_bounds_arguments
 from .eligibility import EligibilityRule
 from .evaluate import calibrate
 from .features import BASELINE_GROUPS
+from .liquidity import LiquidityFloor
 from .loss import SoliaLoss
 from .model import SoliaTransformer
 
@@ -94,7 +95,8 @@ def default_version(now: datetime | None = None) -> str:
 def hyperparams_snapshot(config: Mapping[str, Any]) -> dict[str, Any]:
     """The config knobs worth recording with a checkpoint (model + training + loss + calibration +
     horizons + the enabled feature groups, so the model is rebuilt with the mask it trained
-    with, + the eligibility rule, so the bot trades the population it trained on)."""
+    with, + the eligibility rule and the liquidity floor, so the bot trades the population it
+    trained on)."""
     return {
         "model": dict(config["model"]),
         "training": dict(config["training"]),
@@ -103,6 +105,7 @@ def hyperparams_snapshot(config: Mapping[str, Any]) -> dict[str, Any]:
         "horizons": list(config["horizons"]),
         "features": {"groups": list(config.get("features", {}).get("groups", BASELINE_GROUPS))},
         "eligibility": EligibilityRule.from_config(config).as_dict(),
+        "liquidity_floor": LiquidityFloor.from_config(config).as_dict(),
     }
 
 

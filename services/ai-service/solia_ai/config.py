@@ -182,6 +182,28 @@ def eligibility_error(values: Any) -> str | None:
     return None
 
 
+def liquidity_floor_error(values: Any) -> str | None:
+    """Why a ``labeling.liquidity_floor`` mapping (``default`` and venue -> SOL floor) is invalid
+    (non-string key, a venue listed twice once normalized, non-numeric, negative or non-finite
+    floor), or ``None`` when it is valid."""
+    name = "labeling.liquidity_floor"
+    if not isinstance(values, dict):
+        return f"'{name}' must be a mapping of venue -> SOL floor, got {values!r}"
+    seen: set[str] = set()
+    for key, value in values.items():
+        if not isinstance(key, str) or not key.strip():
+            return f"'{name}' keys must be venue names (or 'default'), got {key!r}"
+        venue = key.strip().lower()
+        if venue in seen:
+            return f"'{name}' lists venue {venue!r} twice"
+        seen.add(venue)
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            return f"'{name}.{key}' must be a number (SOL), got {value!r}"
+        if not 0 <= value < float("inf"):  # also rejects NaN
+            return f"'{name}.{key}' must be a finite number >= 0 (0 disables it), got {value!r}"
+    return None
+
+
 def model_shape_error(*, d_model: int, n_heads: int, seq_len: int, min_seq_len: int) -> str | None:
     """Why a model shape is invalid, or None. Shared by config validation and the model itself
     (so the rules live in one place, without importing torch here)."""
@@ -467,6 +489,10 @@ def _validate(config: Any, source: str) -> None:
         number("labeling", "min_gap_seconds")
     if "max_return" in labeling:
         number("labeling", "max_return", positive=True)
+    if "liquidity_floor" in labeling and (
+        problem := liquidity_floor_error(labeling["liquidity_floor"])
+    ):
+        fail(problem)
     for kind in ("pump_threshold", "rug_threshold"):
         thresholds = labeling.get(kind)
         if not isinstance(thresholds, dict):

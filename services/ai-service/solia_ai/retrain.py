@@ -440,6 +440,22 @@ def eligibility_note(checkpoint: Mapping[str, Any], config: Mapping[str, Any]) -
     )
 
 
+def liquidity_floor_note(checkpoint: Mapping[str, Any], config: Mapping[str, Any]) -> str | None:
+    """A warning when the champion was trained under another liquidity floor than ``config``'s
+    (``None`` when they match): both models are scored on the config's labels and windows."""
+    from .liquidity import LiquidityFloor
+
+    trained = LiquidityFloor.of(checkpoint.get("hyperparams"))
+    wanted = LiquidityFloor.from_config(config)
+    if trained == wanted:
+        return None
+    return (
+        f"champion {checkpoint.get('version')} was trained under liquidity floor "
+        f"[{trained.describe()}], the config's is [{wanted.describe()}]: both are scored on the "
+        "config's windows and labels"
+    )
+
+
 def load_champion_checkpoint(
     champion: ModelRecord | None, config: Mapping[str, Any]
 ) -> dict[str, Any] | None:
@@ -533,8 +549,10 @@ def train_and_evaluate(
     if champion_ckpt is None and champion is not None:
         champion_ckpt = load_champion_checkpoint(champion, config)
 
-    if champion_ckpt is not None and (note := eligibility_note(champion_ckpt, config)):
-        notes.append(note)
+    if champion_ckpt is not None:
+        for check in (eligibility_note, liquidity_floor_note):
+            if note := check(champion_ckpt, config):
+                notes.append(note)
 
     samples = config_samples(df, config)
     embargo = embargo_seconds(samples.horizons)

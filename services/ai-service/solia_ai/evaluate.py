@@ -78,13 +78,15 @@ def score_logits(
 
     was_training = model.training
     model.eval()
+    # Batches go wherever the model lives (a model moved to CUDA scores there).
+    device = next(model.parameters()).device
     try:
         with torch.no_grad():
             loader = batch_loader(dataset, SequentialSampler(dataset), batch_size=batch_size)
             for x, padding_mask, targets in loader:
-                out = model(x, padding_mask)
+                out = model(x.to(device), padding_mask.to(device))
                 for key in LOGIT_KEYS:
-                    outs[key].append(out[key].numpy())
+                    outs[key].append(out[key].cpu().numpy())
                 for key in TRUE_KEYS:
                     trues[key].append(targets[key].numpy())
     finally:

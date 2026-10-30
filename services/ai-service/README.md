@@ -92,6 +92,11 @@ the realized future:
 - **expected_return** — the price at the horizon end vs. the anchor, capped at `labeling.max_return`
   (default +1000 %) so a dust-pool price after a rug can't dominate the loss.
 
+Under `labeling.liquidity_floor` (venue-aware, SOL; bonding curves exempt) a window anchored on a pool
+below the floor is dropped, and a price read off one counts neither towards pump nor expected_return;
+rug is unchanged (docs/ML-MODEL.md "Liquidity floor"). `python -m solia_ai.liquidity_report` splits a
+model's held-out metrics by the anchor pool's liquidity.
+
 Pump and rug are independent heads (a violent swing can be both). A horizon is masked when the
 data doesn't cover it or the last row inside it is stale (`max(max_gap_fraction·H,
 min_gap_seconds)`), except when a rug has already happened in the observed part — that's how a

@@ -148,6 +148,18 @@ labeling:
   # expected_return labels are capped here (+1000 %): a price read off a pool drained to dust can be
   # 10^8x the anchor, and one such label would dominate the regression loss. Floor is -1 (prices > 0).
   max_return: 10.0
+  # Liquidity floor (SOL in the SOL-quoted pool, solia_ai/liquidity.py, docs/ML-MODEL.md
+  # "Liquidity floor"): a window anchored on a pool below its venue's floor is not a sample, and a
+  # price read off one counts neither towards pump nor expected_return (rug is unchanged). An AMM
+  # price below ~1 SOL jumps x2 between snapshots 10-50x more often than above it; bonding curves
+  # price off virtual reserves, so their small real SOL is no artifact: floor 0. Unlisted venues
+  # (NULL included) take `default`. Omitted / all 0 = disabled. Recorded with every model.
+  liquidity_floor:
+    default: 1.0
+    pumpfun: 0.0
+    raydium-launchpad: 0.0
+    meteora-launchpad: 0.0
+    bonk: 0.0
 
   pump_threshold: # the highest price in the horizon rose by >= this fraction
     "30s": 0.15
