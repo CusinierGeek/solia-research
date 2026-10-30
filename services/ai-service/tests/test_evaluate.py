@@ -14,11 +14,13 @@ import solia_ai.evaluate
 from solia_ai.calibration import Calibration
 from solia_ai.dataset import embargo_seconds, make_datasets
 from solia_ai.evaluate import (
+    DEFAULT_POLICY_HORIZON,
     EvaluationReport,
     ReferencePolicy,
     apply_calibration,
     calibrate,
     classification_metrics,
+    default_policy_horizon,
     evaluate,
     expected_calibration_error,
     holdout_dataset,
@@ -149,6 +151,37 @@ def test_reference_policy_reports_none_when_no_window_qualifies():
     assert result["win_rate"] is None
     assert result["total_pnl"] == pytest.approx(0.0)
     assert result["baseline_avg_return"] == pytest.approx(0.5)
+
+
+def test_reference_policy_defaults_are_the_swept_entry_rule():
+    # The bot's defaults (BotOptions / BotHostOptions) are the same rule: 15m, pump >= 0.25,
+    # rug <= 0.2 (docs/ML-MODEL.md "Choosing the entry rule").
+    policy = ReferencePolicy(horizon=DEFAULT_POLICY_HORIZON)
+
+    assert (policy.horizon, policy.pump_threshold, policy.rug_threshold) == ("15m", 0.25, 0.2)
+
+
+def test_default_policy_horizon_falls_back_to_the_first_served_horizon():
+    assert default_policy_horizon(["30s", "1m", "15m"]) == "15m"
+    assert default_policy_horizon(("30s", "1m")) == "30s"
+    with pytest.raises(ValueError, match="no horizons"):
+        default_policy_horizon([])
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"pump_threshold": 0.0}, "pump_threshold"),  # a zero gate enters on every window
+        ({"pump_threshold": 1.1}, "pump_threshold"),
+        ({"pump_threshold": float("nan")}, "pump_threshold"),
+        ({"rug_threshold": -0.1}, "rug_threshold"),
+        ({"rug_threshold": 1.5}, "rug_threshold"),
+        ({"rug_threshold": float("inf")}, "rug_threshold"),
+    ],
+)
+def test_reference_policy_rejects_invalid_thresholds(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        ReferencePolicy(horizon="15m", **kwargs)
 
 
 def test_reference_policy_rejects_an_unknown_horizon():

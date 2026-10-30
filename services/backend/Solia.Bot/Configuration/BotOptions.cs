@@ -27,19 +27,33 @@ public sealed class BotOptions : IValidatableObject
     [Range(1, 1000)]
     public int MaxConcurrentPositions { get; set; } = 5;
 
-    /// <summary>Minimum model confidence [0, 100] required before the bot acts on a prediction.</summary>
+    /// <summary>
+    /// Minimum model confidence [0, 100] required before the bot acts on a prediction. Confidence is
+    /// derived, 200 · max(|pump − 0.5|, |rug − 0.5|) (docs/ML-MODEL.md "Confidence"), so it is a margin,
+    /// not a hit rate: with the rare-event heads mostly near 0 it is mostly high. At 60 it is implied by
+    /// every entry while <see cref="MaxRugProb"/> ≤ 0.2 (rug ≤ 0.2 ⇒ confidence ≥ 60); a looser rug gate
+    /// would let it block entries whose pump and rug both sit near 0.5 — lower it then.
+    /// </summary>
     [Range(0.0, 100.0)]
     public double MinConfidence { get; set; } = 60;
 
     /// <summary>
-    /// Entry gate: enter only when <c>pump_prob</c> is at least this, [0, 1]. Independent of
-    /// <see cref="MaxRugProb"/> — the two heads are separate (docs/ML-MODEL.md), so the thresholds
-    /// aren't compared with each other.
+    /// Entry gate: enter only when <c>pump_prob</c> (at the bot's horizon) is at least this, (0, 1] —
+    /// zero would enter on every eligible token. Independent of <see cref="MaxRugProb"/> — the two heads
+    /// are separate (docs/ML-MODEL.md), so the thresholds aren't compared with each other. The defaults
+    /// (0.25 / 0.2 at 15m) were chosen by the entry-rule sweep on the champion's held-out windows
+    /// (<c>python -m solia_ai.entry_sweep</c>, docs/ML-MODEL.md "Choosing the entry rule"): calibrated
+    /// pump probabilities are low, so the pre-calibration 0.6 never fired. Re-run the sweep after a
+    /// promotion — a new champion can shift the probability scale — and keep the ai-service's
+    /// <c>ReferencePolicy</c> defaults in step.
     /// </summary>
-    [Range(0.0, 1.0)]
-    public double MinPumpProb { get; set; } = 0.6;
+    [Range(0.0, 1.0, MinimumIsExclusive = true)]
+    public double MinPumpProb { get; set; } = 0.25;
 
-    /// <summary>Entry gate: enter only when <c>rug_prob</c> is at most this, [0, 1].</summary>
+    /// <summary>
+    /// Entry gate: enter only when <c>rug_prob</c> is at most this, [0, 1]. Also the exit signal: a fresh
+    /// prediction above it for a held mint closes the position (see <c>SignalClassifier</c>).
+    /// </summary>
     [Range(0.0, 1.0)]
     public double MaxRugProb { get; set; } = 0.2;
 

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
@@ -221,6 +222,23 @@ def regression_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, Any]
 # --------------------------------------------------------------------------- reference policy
 
 
+# The entry rule chosen by the entry-rule sweep (solia_ai.entry_sweep, docs/ML-MODEL.md "Choosing
+# the entry rule") on the champion's held-out windows — the bot's defaults (Bot:Horizon,
+# Bot:MinPumpProb, Bot:MaxRugProb) are the same values. Re-run the sweep after a promotion: a new
+# champion can shift the probability scale.
+DEFAULT_POLICY_HORIZON = "15m"
+DEFAULT_PUMP_THRESHOLD = 0.25
+DEFAULT_RUG_THRESHOLD = 0.2
+
+
+def default_policy_horizon(horizons: Any) -> str:
+    """:data:`DEFAULT_POLICY_HORIZON` when the model serves it, else its first horizon."""
+    horizons = list(horizons)
+    if not horizons:
+        raise ValueError("no horizons to pick a policy horizon from")
+    return DEFAULT_POLICY_HORIZON if DEFAULT_POLICY_HORIZON in horizons else horizons[0]
+
+
 @dataclass(frozen=True)
 class ReferencePolicy:
     """A deliberately simple entry rule, used **only** to put a P&L number on the signal.
@@ -228,12 +246,20 @@ class ReferencePolicy:
     Enter a (unit-sized) position on a window when, at ``horizon``, ``pump_prob >= pump_threshold``
     and ``rug_prob <= rug_threshold``; the realized outcome is that horizon's labeled return. The
     real policy — sizing, TP/SL, dynamic thresholds — lives in the bot (docs/ML-MODEL.md "Policy
-    layer"); this one is a fixed yardstick, not a tunable strategy.
+    layer"); this one is a fixed yardstick, not a tunable strategy. Its default thresholds are the
+    bot's entry gates, so the yardstick measures the rule the bot trades.
     """
 
     horizon: str
-    pump_threshold: float = 0.6
-    rug_threshold: float = 0.3
+    pump_threshold: float = DEFAULT_PUMP_THRESHOLD
+    rug_threshold: float = DEFAULT_RUG_THRESHOLD
+
+    def __post_init__(self) -> None:
+        # Same bounds as the bot's BotOptions: a pump gate of 0 would enter on every window.
+        if not (math.isfinite(self.pump_threshold) and 0.0 < self.pump_threshold <= 1.0):
+            raise ValueError(f"pump_threshold must be in (0, 1], got {self.pump_threshold!r}")
+        if not (math.isfinite(self.rug_threshold) and 0.0 <= self.rug_threshold <= 1.0):
+            raise ValueError(f"rug_threshold must be in [0, 1], got {self.rug_threshold!r}")
 
     def horizon_index(self, horizons: Any) -> int:
         """The policy horizon's column in ``horizons``; raises when the model doesn't serve it."""
@@ -375,10 +401,10 @@ def evaluate(
 ) -> EvaluationReport:
     """Score ``dataset`` with ``model`` and build the full :class:`EvaluationReport`.
 
-    The ``policy`` defaults to :class:`ReferencePolicy` on the model's first horizon. Each horizon
-    is scored on its labeled samples only. The dataset must be labeled for exactly the model's
-    horizons, in the model's order — prediction column ``h`` is only comparable to label column
-    ``h`` then — and the policy horizon is checked up front, before the inference pass.
+    The ``policy`` defaults to :class:`ReferencePolicy` on :func:`default_policy_horizon`. Each
+    horizon is scored on its labeled samples only. The dataset must be labeled for exactly the
+    model's horizons, in the model's order — prediction column ``h`` is only comparable to label
+    column ``h`` then — and the policy horizon is checked up front, before the inference pass.
 
     Probabilities go through ``calibration`` (or a uniform ``temperature`` override; identity when
     neither is given), exactly as ``/predict`` serves them; the classification metrics of the raw
@@ -392,7 +418,7 @@ def evaluate(
             f"the dataset is labeled for horizons {horizons} but the model predicts "
             f"{list(model.horizons)}; build the dataset with the model's horizons"
         )
-    policy = policy or ReferencePolicy(horizon=horizons[0])
+    policy = policy or ReferencePolicy(horizon=default_policy_horizon(horizons))
     policy.horizon_index(horizons)
     calibration = resolve_calibration(horizons, calibration, temperature)
 
@@ -488,7 +514,9 @@ def main(argv: list[str] | None = None) -> None:
         help="override the checkpoint's calibration with one uniform temperature",
     )
     parser.add_argument("--bins", type=int, default=DEFAULT_ECE_BINS, help="ECE bin count")
-    parser.add_argument("--policy-horizon", help="reference-policy horizon (default: first)")
+    parser.add_argument(
+        "--policy-horizon", help="reference-policy horizon (default: 15m if served, else first)"
+    )
     parser.add_argument("--pump-threshold", type=float, default=ReferencePolicy.pump_threshold)
     parser.add_argument("--rug-threshold", type=float, default=ReferencePolicy.rug_threshold)
     args = parser.parse_args(argv)
@@ -507,7 +535,7 @@ def main(argv: list[str] | None = None) -> None:
         predictor = Predictor.from_checkpoint(args.checkpoint, temperature=args.temperature)
 
     policy = ReferencePolicy(
-        horizon=args.policy_horizon or predictor.horizons[0],
+        horizon=args.policy_horizon or default_policy_horizon(predictor.horizons),
         pump_threshold=args.pump_threshold,
         rug_threshold=args.rug_threshold,
     )

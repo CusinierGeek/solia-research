@@ -6,6 +6,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Solia.Api.Bot;
 using Solia.Bot;
+using Solia.Bot.Configuration;
 using Solia.Bot.Intake;
 using Solia.Bot.Logging;
 using Solia.Core.Data;
@@ -82,6 +83,18 @@ public class BotHostingTests
         Assert.Equal(horizons, PredictionHorizons.All);
         Assert.All(horizons, h => Assert.True(new BotHostOptions { Horizon = h }.HasKnownHorizon(), h));
         Assert.False(new BotHostOptions { Horizon = "1M" }.HasKnownHorizon());
+    }
+
+    [Fact]
+    public void The_default_horizon_is_the_swept_entry_rule_horizon()
+    {
+        // The entry-rule sweep chose 15m (docs/ML-MODEL.md "Choosing the entry rule"), the same as the
+        // ai-service's ReferencePolicy default horizon, and the span of the default position timeout.
+        var options = new BotHostOptions();
+
+        Assert.Equal("15m", options.Horizon);
+        Assert.True(options.HasKnownHorizon());
+        Assert.Equal(15 * 60, new BotOptions().PositionTimeoutSeconds);
     }
 
     [Fact]

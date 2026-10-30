@@ -197,6 +197,72 @@ configurable without retraining. They consume the model's predictions, for examp
 Keeping decisions out of the model lets risk appetite change instantly and keeps the model purely
 predictive. A *learned* policy (e.g. RL) is possible later only if it clearly beats the rules.
 
+### Choosing the entry rule
+
+The entry thresholds are chosen **from data**, not by hand: calibrated probabilities of a rare event
+are low (pumps are 0.6 % of 1m windows, 1.6 % of 15m ones), so the pre-calibration rule
+`pump ≥ 0.6, rug ≤ 0.2` fired once in ~880 k held-out windows and the reference P&L was 0.
+`solia_ai/entry_sweep.py` scores a checkpoint once over its held-out windows (the retrain's bounded
+read, windows after the checkpoint's data) and reports, per horizon and per rule — absolute
+`pump_prob ≥ P` × `rug_prob ≤ R` thresholds, and the top-X % of `pump_prob` (with its implied
+threshold) — n_trades, **precision** (share of real pumps) and its lift over the base rate, win
+rate, mean / median realized return, total P&L and a 95 % bootstrap CI of the mean, against the
+buy-everything baseline. Read-only: nothing is written but the report.
+
+**Current rule** (champion `solia-20261030T012910179875Z`, 886 797 held-out windows; report in
+[`reports/entry-sweep-solia-20261030T012910179875Z.txt`](reports/entry-sweep-solia-20261030T012910179875Z.txt)):
+**horizon 15m, `pump_prob ≥ 0.25`, `rug_prob ≤ 0.2`** — the bot's `Bot:Horizon` / `MinPumpProb` /
+`MaxRugProb` defaults and the `ReferencePolicy` defaults (`evaluate.py`), kept in step.
+
+| 15m rule | trades | precision (lift) | win rate | mean / median return | mean CI |
+|---|---:|---:|---:|---:|---:|
+| buy everything | 534 039 | 0.016 (1×) | 0.45 | +0.018 / 0.000 | [+0.017, +0.020] |
+| `pump ≥ 0.25, rug ≤ 0.2` (**chosen**) | 672 | 0.384 (24.7×) | 0.59 | +0.504 / +0.094 | [+0.41, +0.60] |
+| `pump ≥ 0.3, rug ≤ 0.2` | 186 | 0.500 (32.1×) | 0.60 | +0.574 / +0.112 | [+0.42, +0.73] |
+| `pump ≥ 0.25, rug ≤ 0.3` | 1 429 | 0.300 (19.3×) | 0.57 | +0.445 / +0.028 | [+0.37, +0.52] |
+| `pump ≥ 0.25`, no rug gate | 4 161 | 0.336 (21.5×) | 0.54 | +0.458 / +0.026 | [+0.41, +0.51] |
+
+Why this one — **predictive quality first, P&L second**:
+
+- **Precision.** 15m has the highest precision among rules with hundreds of trades (38 % of entries
+  are real pumps, i.e. a ≥ +100 % move within 15 min); the 1m rules top out at ~22 % and the 5m ones
+  at ~32 %. 1h is unusable as is (`pump_prob` max 0.16, rug gates collapse precision).
+- **Enough trades.** `pump ≥ 0.3` is more precise (0.50) but on 186 windows — consecutive windows of
+  the same token overlap, so the independent events are far fewer; 0.25 keeps 3.6× the trades for
+  a precision still 25× the base rate. Its neighbours (rug ≤ 0.3, no rug gate) stay close, so the
+  choice is not a lucky grid point.
+- **P&L, heavy tails.** The mean is driven by a few large winners (labels capped at +1000 %), hence
+  the median (+9 %) and the CI are read alongside it; both clear the baseline by far.
+- **Rug gate.** At 15m a *tight* rug gate (≤ 0.1) destroys precision (0.9×): the tokens with almost
+  no rug risk are mostly dead ones that don't pump either. 0.2 is the sweet spot.
+- **Horizon = position timeout.** 15m is the span of the bot's default 900 s position timeout.
+
+**Confidence.** `confidence = 200 · max(|pump − 0.5|, |rug − 0.5|)` is a margin, not a hit rate: with
+both heads mostly near 0 it is mostly high. `rug ≤ 0.2` alone implies `confidence ≥ 60`, so the
+bot's `MinConfidence` 60 never blocks an entry the rug gate allows; loosen `MaxRugProb` above 0.2 and
+it starts blocking entries whose heads both sit near 0.5 — lower it then.
+
+**Caveats.** The bootstrap treats windows as independent; overlapping windows of one token are not,
+so the CIs are optimistic — weigh trade counts accordingly. The returns are realized at the horizon
+(unit size, no fees/slippage, no TP/SL), a yardstick for the entry rule, not the bot's P&L.
+
+**Re-run after every promotion.** The probability scale belongs to one model: a new champion (other
+data, calibration, loss weights) can move it, and a stale threshold silently stops (or floods)
+entries. After a promotion:
+
+```bash
+python -m solia_ai.entry_sweep --champion --out /app/models/reports/entry_sweep.json   # + .txt table
+#   --pump-thresholds 0.1,0.2,0.3  --rug-thresholds none,0.3,0.2  --top-fractions 0.001,0.01
+#   --min-trades 100  --min-confidence 60 (the bot's gate)  --all-rules (print rules under min_trades)
+```
+
+Each horizon's `recommended` rule (most precise with ≥ `min_trades` trades whose mean-return CI
+clears the baseline) is a starting point, not a deployment: pick by the criteria above, then update
+`Bot:Horizon` / `Bot:MinPumpProb` / `Bot:MaxRugProb` (config, or the defaults in `BotOptions` /
+`BotHostOptions`) **and** `DEFAULT_POLICY_HORIZON` / `DEFAULT_PUMP_THRESHOLD` /
+`DEFAULT_RUG_THRESHOLD` in `evaluate.py` together, so the promotion gate's P&L guard measures the rule
+the bot trades.
+
 ## Continuous training loop
 
 1. Count new **closed** trades since last training (`training_events`).
@@ -492,6 +558,7 @@ python -m solia_ai.search --trials 30 --max-minutes 240 --windows 3 --seeds 0 1 
 | `train.py` | Initial training entrypoint |
 | `candidate.py` | Candidate training for a retrain (warm start from champion or scratch, refreshed time split, never registered) |
 | `evaluate.py` | Held-out evaluation (predictive metrics + reference-policy P&L) |
+| `entry_sweep.py` | Entry-rule sweep: precision / win rate / P&L per threshold rule on held-out windows (chooses the bot's entry gates) |
 | `ablation.py` | Per-feature-group lift across windows & seeds |
 | `eligibility.py` | Token eligibility rule (causal, shared with the bot) |
 | `eligibility_ablation.py` | Lift of eligibility rules (rule's model vs every-token model on the rule's population) |

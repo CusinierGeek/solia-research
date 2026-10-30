@@ -50,7 +50,14 @@ import pandas as pd
 from .calibration import settings as calibration_settings
 from .config import DEFAULT_EVAL_FRACTION
 from .dataset import SequenceDataset, config_samples, embargo_seconds, temporal_split
-from .evaluate import EvaluationReport, ReferencePolicy, evaluate, fmt, json_safe
+from .evaluate import (
+    EvaluationReport,
+    ReferencePolicy,
+    default_policy_horizon,
+    evaluate,
+    fmt,
+    json_safe,
+)
 from .features import BASELINE_GROUPS, FEATURE_GROUPS, check_group_coverage
 from .lift import PREDICTIVE_METRICS, lift, summarize
 from .train import fit, fit_calibration_window
@@ -403,7 +410,7 @@ def run_ablation(
     check_group_coverage(df, [g for v in variants for g in v.groups])
     samples = config_samples(df, config)
     horizons = list(samples.horizons)
-    policy = policy or ReferencePolicy(horizon=horizons[0])
+    policy = policy or ReferencePolicy(horizon=default_policy_horizon(horizons))
     policy.horizon_index(horizons)
     windows = walk_forward_windows(
         samples.end_ts,
@@ -574,7 +581,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--margin", type=float, default=DEFAULT_MARGIN, help="predictive metrics")
     parser.add_argument("--pnl-margin", type=float, default=DEFAULT_PNL_MARGIN)
-    parser.add_argument("--policy-horizon", help="reference-policy horizon (default: first)")
+    parser.add_argument(
+        "--policy-horizon", help="reference-policy horizon (default: 15m if served, else first)"
+    )
     parser.add_argument("--pump-threshold", type=float, default=ReferencePolicy.pump_threshold)
     parser.add_argument("--rug-threshold", type=float, default=ReferencePolicy.rug_threshold)
     parser.add_argument("--limit", type=int, help="cap the number of feature rows read")
@@ -591,7 +600,7 @@ def main(argv: list[str] | None = None) -> None:
     try:
         variants = plan_variants(args.groups)
         policy = ReferencePolicy(
-            horizon=args.policy_horizon or config["horizons"][0],
+            horizon=args.policy_horizon or default_policy_horizon(config["horizons"]),
             pump_threshold=args.pump_threshold,
             rug_threshold=args.rug_threshold,
         )

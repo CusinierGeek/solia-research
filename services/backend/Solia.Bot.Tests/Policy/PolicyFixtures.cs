@@ -6,7 +6,7 @@ namespace Solia.Bot.Tests.Policy;
 /// <summary>Shared builders so each policy test states only the fields it cares about.</summary>
 public static class PolicyFixtures
 {
-    /// <summary>Options with the production defaults (MinConfidence 60, MinPumpProb 0.6, MaxRugProb 0.2, …).</summary>
+    /// <summary>Options with the production defaults (MinConfidence 60, MinPumpProb 0.25, MaxRugProb 0.2, …).</summary>
     internal static BotOptions Options() => new();
 
     /// <summary>A prediction that clears every default gate: strong pump, low rug, high confidence, positive edge.</summary>

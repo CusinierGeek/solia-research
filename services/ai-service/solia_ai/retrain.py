@@ -520,7 +520,7 @@ def train_and_evaluate(
     from .ablation import run_metrics, walk_forward_windows
     from .candidate import CandidateSettings, champion_data_end_ts, train_candidate
     from .dataset import SequenceDataset, config_samples, embargo_seconds
-    from .evaluate import ReferencePolicy, evaluate
+    from .evaluate import ReferencePolicy, default_policy_horizon, evaluate
     from .inference import load_checkpoint, recorded_min_seq_len
     from .promotion import PromotionSettings
     from .train import default_version
@@ -586,7 +586,7 @@ def train_and_evaluate(
     heldout_start = windows[0].eval_start_ts
     if fresh_after is not None:  # the candidate trains up to the champion's data, never past it
         heldout_start = max(heldout_start, fresh_after)
-    policy = ReferencePolicy(horizon=list(samples.horizons)[0])
+    policy = ReferencePolicy(horizon=default_policy_horizon(samples.horizons))
 
     def score(scorer: tuple[Any, Any], scored: Any) -> list[dict[str, float | None]]:
         model, calibration = scorer

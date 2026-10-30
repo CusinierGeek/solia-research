@@ -21,9 +21,12 @@ public sealed class BotHostOptions
         ParseLimitsInInvariantCulture = true, ConvertValueInInvariantCulture = true)]
     public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(2);
 
-    /// <summary>The single horizon the bot trades on; must be one the <c>predictions</c> table accepts.</summary>
+    /// <summary>
+    /// The single horizon the bot trades on; must be one the <c>predictions</c> table accepts. 15m is the entry-rule
+    /// sweep's choice (see <see cref="BotOptions.MinPumpProb"/>) and the span of the default position timeout (900 s).
+    /// </summary>
     [Required]
-    public string Horizon { get; set; } = "1m";
+    public string Horizon { get; set; } = "15m";
 
     /// <summary>Most <c>features</c> rows read (as price ticks) per poll, [1, 100 000].</summary>
     [Range(1, 100_000)]

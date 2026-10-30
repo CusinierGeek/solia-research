@@ -55,7 +55,7 @@ from .ablation import (
 from .config import DEFAULT_EVAL_FRACTION
 from .dataset import Samples, SequenceDataset, config_samples, embargo_seconds
 from .eligibility import EligibilityRule
-from .evaluate import ReferencePolicy, evaluate, json_safe
+from .evaluate import ReferencePolicy, default_policy_horizon, evaluate, json_safe
 from .lift import summarize
 from .train import fit, fit_calibration_window
 
@@ -239,7 +239,7 @@ def run_eligibility_ablation(
     cfg.pop("eligibility", None)  # every window: each rule is a mask over them
     samples = config_samples(df, cfg)
     horizons = list(samples.horizons)
-    policy = policy or ReferencePolicy(horizon=horizons[0])
+    policy = policy or ReferencePolicy(horizon=default_policy_horizon(horizons))
     policy.horizon_index(horizons)
     windows = walk_forward_windows(
         samples.end_ts,
@@ -389,7 +389,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--val-fraction", type=float, default=DEFAULT_VAL_FRACTION)
     parser.add_argument("--margin", type=float, default=DEFAULT_MARGIN, help="predictive metrics")
     parser.add_argument("--pnl-margin", type=float, default=DEFAULT_PNL_MARGIN)
-    parser.add_argument("--policy-horizon", help="reference-policy horizon (default: first)")
+    parser.add_argument(
+        "--policy-horizon", help="reference-policy horizon (default: 15m if served, else first)"
+    )
     parser.add_argument("--out", help="write the JSON report to this path")
     parser.add_argument("--device", help="torch device (default: cuda if available, else cpu)")
     parser.add_argument("--epochs", type=int, help="override training.epochs (a faster sweep)")
@@ -408,7 +410,9 @@ def main(argv: list[str] | None = None) -> None:
         config["training"] = {**config["training"], "epochs": args.epochs}
     try:
         rules = [parse_rule(spec) for spec in args.rule] if args.rule else list(DEFAULT_RULES)
-        policy = ReferencePolicy(horizon=args.policy_horizon or config["horizons"][0])
+        policy = ReferencePolicy(
+            horizon=args.policy_horizon or default_policy_horizon(config["horizons"])
+        )
         policy.horizon_index(config["horizons"])
         settings = DataSettings.from_config(
             config, lookback_days=args.lookback_days, max_rows=args.max_rows

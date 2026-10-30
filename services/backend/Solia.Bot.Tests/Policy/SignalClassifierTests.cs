@@ -29,7 +29,7 @@ public class SignalClassifierTests
     [Fact]
     public void Weak_pump_with_acceptable_rug_is_hold()
     {
-        ModelPrediction weak = PolicyFixtures.Buyable() with { PumpProb = 0.3 };
+        ModelPrediction weak = PolicyFixtures.Buyable() with { PumpProb = Opts.MinPumpProb - 0.01 };
         Assert.Equal(TradeSignal.Hold, SignalClassifier.Classify(weak, Opts));
     }
 

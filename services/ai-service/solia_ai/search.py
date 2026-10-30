@@ -65,7 +65,7 @@ from .ablation import (
 )
 from .config import ConfigError, validate_config
 from .dataset import SequenceDataset, config_samples, embargo_seconds
-from .evaluate import ReferencePolicy, fmt, json_safe
+from .evaluate import ReferencePolicy, default_policy_horizon, fmt, json_safe
 
 INT_PARAMS = ("seq_len", "d_model", "n_layers")
 FLOAT_PARAMS = ("dropout", "learning_rate", "pump_threshold_scale", "rug_threshold_scale")
@@ -404,7 +404,7 @@ def run_search(
 
     reference = config_samples(df, config)  # the scored windows and their (base) labels
     horizons = list(reference.horizons)
-    policy = policy or ReferencePolicy(horizon=horizons[0])
+    policy = policy or ReferencePolicy(horizon=default_policy_horizon(horizons))
     policy.horizon_index(horizons)
     embargo = embargo_seconds(horizons)
 
@@ -581,7 +581,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--eval-fraction", type=float, default=DEFAULT_EVAL_FRACTION)
     parser.add_argument("--val-fraction", type=float, default=DEFAULT_VAL_FRACTION)
     parser.add_argument("--margin", type=float, default=DEFAULT_MARGIN)
-    parser.add_argument("--policy-horizon", help="reference-policy horizon (default: first)")
+    parser.add_argument(
+        "--policy-horizon", help="reference-policy horizon (default: 15m if served, else first)"
+    )
     parser.add_argument("--pump-threshold", type=float, default=ReferencePolicy.pump_threshold)
     parser.add_argument("--rug-threshold", type=float, default=ReferencePolicy.rug_threshold)
     parser.add_argument("--limit", type=int, help="cap the number of feature rows read")
@@ -610,7 +612,7 @@ def main(argv: list[str] | None = None) -> None:
             pnl_margin=0.0,
         )
         policy = ReferencePolicy(
-            horizon=args.policy_horizon or config["horizons"][0],
+            horizon=args.policy_horizon or default_policy_horizon(config["horizons"]),
             pump_threshold=args.pump_threshold,
             rug_threshold=args.rug_threshold,
         )

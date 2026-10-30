@@ -128,6 +128,15 @@ or a constant series), and the JSON report nulls any non-finite metric.
 python -m solia_ai.evaluate --champion --out report.json   # or --checkpoint path/to/model.pt
 ```
 
+Its default `ReferencePolicy` is the bot's entry rule (15m, `pump_prob ≥ 0.25`, `rug_prob ≤ 0.2`),
+chosen by the **entry-rule sweep** (`solia_ai/entry_sweep.py`): precision, win rate and P&L of a grid
+of thresholds / top-X % rules on the held-out windows. Re-run it after every promotion — a new
+champion can shift the probability scale (docs/ML-MODEL.md "Choosing the entry rule"):
+
+```bash
+python -m solia_ai.entry_sweep --champion --out reports/entry_sweep.json   # JSON + .txt table
+```
+
 ## Prediction API
 
 `solia_ai/api.py` — the internal FastAPI the backend calls (`docs/API-CONTRACTS.md`):

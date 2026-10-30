@@ -49,7 +49,9 @@ public class BotOptionsValidationTests
 
     [Theory]
     [InlineData(-0.1, 0.2)]  // pump prob below range
+    [InlineData(0.0, 0.2)]   // a zero pump gate would enter on every eligible token
     [InlineData(1.1, 0.2)]   // pump prob above range
+    [InlineData(double.NaN, 0.2)]
     [InlineData(0.6, -0.1)]  // rug prob below range
     [InlineData(0.6, 1.1)]   // rug prob above range
     public void Out_of_range_entry_probabilities_are_rejected(double pump, double rug)
@@ -60,10 +62,38 @@ public class BotOptionsValidationTests
     [Theory]
     [InlineData(0.3, 0.35)] // modest pump signal, looser rug gate — a coherent policy
     [InlineData(0.6, 0.6)]
-    [InlineData(0.0, 1.0)]  // gates fully open
+    [InlineData(0.01, 1.0)] // gates nearly fully open
     public void Entry_thresholds_are_independent_of_each_other(double pump, double rug)
     {
         Assert.True(IsValid(new BotOptions { MinPumpProb = pump, MaxRugProb = rug }));
+    }
+
+    [Fact]
+    public void Default_entry_rule_is_the_swept_one()
+    {
+        // The entry-rule sweep's choice on the champion's held-out windows (docs/ML-MODEL.md
+        // "Choosing the entry rule"); the ai-service's ReferencePolicy defaults are the same values.
+        var options = new BotOptions();
+
+        Assert.Equal(0.25, options.MinPumpProb);
+        Assert.Equal(0.2, options.MaxRugProb);
+        Assert.Equal(60, options.MinConfidence);
+        Assert.True(IsValid(options));
+    }
+
+    [Theory]
+    [InlineData(0.25, 0.0)]
+    [InlineData(0.25, 0.1)]
+    [InlineData(0.25, 0.2)]
+    [InlineData(0.9, 0.2)]
+    public void Default_confidence_gate_never_blocks_an_entry_the_default_rug_gate_allows(double pump, double rug)
+    {
+        // Confidence = 200 · max(|pump − 0.5|, |rug − 0.5|): rug ≤ 0.2 alone guarantees ≥ 60.
+        var options = new BotOptions();
+        double confidence = 200 * Math.Max(Math.Abs(pump - 0.5), Math.Abs(rug - 0.5));
+
+        Assert.True(rug <= options.MaxRugProb);
+        Assert.True(confidence >= options.MinConfidence);
     }
 
     [Theory]
