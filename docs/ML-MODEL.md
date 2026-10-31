@@ -798,7 +798,18 @@ that survives eval-sample and initialization luck.
 - **Data**: the same bounded read as a retrain (`--lookback-days` / `--max-rows`, default config
   `data`), widened to the largest `max_rows` of the space.
 - **Output**: a JSON report (`--out`) and a **proposed** `config.yaml` diff (`--diff-out`), never
-  applied. Trials never save a checkpoint, register a model or touch `is_champion`.
+  applied. Trials never save a model checkpoint, register a model or touch `is_champion`.
+- **Resume (#181)**: with `--out x.json`, each finished trial is appended (and fsynced) to
+  `x.trials.jsonl` as it ends. Its first line fingerprints the search: settings (space, strategy,
+  trials, seeds, windows, objective, …), the base config and the data read (window bounds, rows,
+  tokens). A rerun with the same `--out` re-reads **the window the search started on** (not today's:
+  live rows keep arriving) and skips the trials already in the file, so a reboot loses at most the
+  trial in progress; time already spent counts against `--max-minutes`. A file of another search
+  (any fingerprint difference, or a trial recorded with other parameters) is refused before training,
+  naming what differs; `--restart` discards it. A torn last line (killed mid-write) is ignored.
+- **Failures**: a candidate trial that raises (e.g. CUDA out of memory) is recorded as failed (report
+  `failed`, with its error), never ranked, and the search goes on; a rerun doesn't retry it. A failing
+  baseline still stops the search.
 
 ```bash
 python -m solia_ai.search --trials 30 --max-minutes 240 --windows 3 --seeds 0 1 2     --out reports/search.json --diff-out reports/search.diff
@@ -869,6 +880,37 @@ python -m solia_ai.search --space overfitting-regularization --trials 10 --windo
 The report gives, per trial, the objective (mean ± std), the best epoch and the val − train gap, and, for the
 baseline and the best trial, the rug ROC-AUC / PR-AUC per held-out slice (drift).
 
+**Unattended overnight run (#181).** Both stages in one detached, resumable command, from the host
+(Git Bash), against the running GPU stack:
+
+```bash
+infra/scripts/overnight-sweep.sh --dry-run   # preconditions only
+infra/scripts/overnight-sweep.sh             # preflight, then stage 1 -> stage 2, detached
+```
+
+- **Preflight** (`python -m solia_ai.overnight preflight`, in the ai-service container) refuses to
+  start, listing every problem: a retrain or rollback holds the retrain advisory lock;
+  `RETRAIN_SCHEDULER_ENABLED` (ai-service) or `PAPER_BOT_ENABLED` (backend) is true — both share the
+  GPU and the database; CUDA isn't visible (CPU image); less than 20 GB free on the models volume; a
+  search or overnight run is already running. It then reminds you to **pause Windows Update**. Live
+  ingestion stays on (training reads `features`, not the bot).
+- **Detached**: `docker exec -d` runs `python -u -m solia_ai.overnight run` in the container, so the
+  terminal or the docker client can go away. Log: `/app/models/reports/overnight.log` (appended).
+- **Stages**: stage 1 is the `overfitting-data` grid (5 trials); stage 2 the `overfitting-regularization`
+  random search (10 trials), 2 windows × seeds 0 1, objective `pr_auc` (flags: `--stage1-trials`,
+  `--stage2-trials`, `--windows`, `--seeds`, `--objective`). Stage 2 runs on stage 1's
+  `window_stride_seconds` / `max_rows`: the best stage-1 trial's only when its objective lift over
+  the baseline is `better` (paired verdict), else the base config's. The choice is written to
+  `reports/overfitting-regularization.config.yaml` and given to stage 2 as `SOLIA_AI_CONFIG`;
+  `--stride` / `--max-rows` override it (stage 2 then runs even if stage 1 failed).
+- **After a reboot** (or a crash, or `docker compose up` recreating the container): run the same
+  command again. Each stage resumes from its `<report>.trials.jsonl`; finished trials are not rerun.
+  `--restart` starts both stages over.
+- **Summary**: `reports/overnight-summary.txt` — per stage the trials finished / failed, what stopped
+  it, the training time, the baseline and top-3 scores, the best trial's lift and verdict, stage 2's
+  data, and every failure (a stage that stopped or crashed, a failed trial). The run exits 1 when
+  anything failed. `python -m solia_ai.overnight summary` rewrites it from the reports.
+
 **Results & chosen defaults.** *Pending the overnight runs above.* Until they are measured, the shipped config
 keeps the pre-#160 behaviour (`window_stride_seconds: 0`, `max_rows` 4 M, `dropout` 0.1, `weight_decay` 0.01,
 `learning_rate` 3e-4, `d_model` 128): defaults are measured, not guessed. Record here each stage's table (trial,
@@ -891,7 +933,8 @@ the best epoch moved past 1 and the gap narrowed, or why not.
 | `eligibility_ablation.py` | Lift of eligibility rules (rule's model vs every-token model on the rule's population) |
 | `liquidity.py` | Venue-aware liquidity floor for labels & windows (recorded with the model) |
 | `liquidity_report.py` | Held-out metrics & entry rule split by anchor pool liquidity (one or several models, same windows) |
-| `search.py` | Hyperparameter, regularization, stride & labeling-threshold search (proposes a `config.yaml` diff); spaces in `sweeps/` |
+| `search.py` | Hyperparameter, regularization, stride & labeling-threshold search (proposes a `config.yaml` diff; resumable); spaces in `sweeps/` |
+| `overnight.py` | Unattended #160 sweep: preflight, stage 1 → stage 2, summary (`infra/scripts/overnight-sweep.sh`) |
 | `inference.py` | Load champion, run predictions (+ ONNX export) |
 | `retrain.py` | Continuous-training orchestrator: trade-count trigger, one run at a time, `training_events` audit, promote/reject, rollback, prune |
 | `retrain_service.py` | Retrains inside the API: manual start (`POST /model/retrain`), background trade-count trigger, status progress |

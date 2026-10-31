@@ -206,11 +206,16 @@ def _compact(chunk: pd.DataFrame) -> pd.DataFrame:
 
 
 def read_training_features(
-    engine: Engine, settings: DataSettings, *, chunksize: int = TRAINING_CHUNKSIZE
+    engine: Engine,
+    settings: DataSettings,
+    *,
+    chunksize: int = TRAINING_CHUNKSIZE,
+    end: datetime | None = None,
 ) -> tuple[pd.DataFrame, DataBounds]:
     """The ``features`` a training run uses, bounded by ``settings``, ordered by ``(mint, ts)``.
 
-    1. The window is ``[newest - lookback_days, newest]``, ``newest`` being the newest row.
+    1. The window is ``[newest - lookback_days, newest]``, ``newest`` being the newest row, or
+       ``end`` when given (a resumed search re-reads the window it started on, not today's).
     2. Only **whole tokens** are kept: one with a row before the window is dropped, never cut.
     3. When those hold more than ``max_rows`` rows, tokens are kept in ``md5(mint)`` order while
        the running total fits: deterministic across runs and unrelated to time, so the sample
@@ -225,7 +230,7 @@ def read_training_features(
     """
     _check_positive("chunksize", chunksize)
     with engine.connect() as conn:
-        newest = conn.execute(text("SELECT max(ts) FROM features")).scalar()
+        newest = end or conn.execute(text("SELECT max(ts) FROM features")).scalar()
         if newest is None:
             raise ValueError("the features table is empty: nothing to train on")
         end = newest.astimezone(UTC)

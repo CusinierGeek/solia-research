@@ -32,6 +32,13 @@ saved, registered or promoted.
 * **Fit diagnostics** — each trial reports its best epoch and the validation - train loss gap at it
   (overfitting shows as an early best epoch and a wide gap), and the rug metrics per walk-forward
   slice for the baseline and the best trial (drift across time).
+* **Resume** — with a checkpoint (the CLI: ``--out`` gives ``<out>.trials.jsonl``), each finished
+  trial is appended to a trials file as it ends. A rerun of the same search (same settings, base
+  config and data window: the CLI re-reads the window the search started on) skips the trials
+  already there, so a reboot loses at most the trial in progress; a different search refuses the
+  file rather than mixing two searches.
+* **Failures** — a candidate trial that raises (e.g. out of GPU memory) is recorded as failed, with
+  its error, and the search goes on; the baseline failing still stops it (nothing to compare to).
 * **Labels** — a threshold change alters the *target*. Training (and calibration) use the trial's
   labels, but every trial is **scored against the base config's labels** on the same windows, so
   the metrics keep one definition across trials: "how well does this model rank the reference
@@ -48,6 +55,7 @@ import hashlib
 import itertools
 import json
 import math
+import os
 import sys
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -353,6 +361,21 @@ class Trial:
     # Per walk-forward slice (oldest first): the rug metrics, mean over the seeds — drift in time.
     drift: list[dict[str, Any]] = field(default_factory=list)
 
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> Trial:
+        fields = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
+        return cls(**{**fields, "runs": [RunResult(**r) for r in data["runs"]]})
+
+
+@dataclass
+class FailedTrial:
+    """A candidate trial that raised: reported, never ranked."""
+
+    name: str
+    params: dict[str, Any]
+    error: str
+    seconds: float
+
 
 @dataclass
 class SearchReport:
@@ -366,6 +389,9 @@ class SearchReport:
     ranking: list[str] = field(default_factory=list)
     best: str = BASELINE
     stopped: str = "trials"  # what ended the search: trials | time | space
+    failed: list[FailedTrial] = field(default_factory=list)
+    resumed: list[str] = field(default_factory=list)  # taken from the checkpoint, not rerun
+    elapsed_seconds: float = 0.0  # every trial's time, resumed ones included
     # Best vs baseline, paired run for run: the objective, then every metric (positive = better).
     comparison: dict[str, dict[str, Any]] = field(default_factory=dict)
     proposed_config: dict[str, Any] = field(default_factory=dict)
@@ -405,6 +431,11 @@ class SearchReport:
                 f"{name:>10} | {_pm(t.objective):>20} | {fmt(t.score):>8} | {epoch:>7} | "
                 f"{gap:>13} | {params}"
             )
+        if self.resumed:
+            lines += ["", f"Resumed from the checkpoint (not rerun): {', '.join(self.resumed)}"]
+        for f in self.failed:
+            params = ", ".join(f"{k}={v}" for k, v in f.params.items())
+            lines += ["", f"FAILED {f.name} ({params}) after {f.seconds:.0f} s: {f.error}"]
         for name in dict.fromkeys((BASELINE, self.best)):
             lines += ["", *render_drift(by_name[name], self.horizons)]
         if self.best == BASELINE:
@@ -469,6 +500,115 @@ def drift_by_window(
     return rows
 
 
+# --------------------------------------------------------------------------- resume
+
+
+def checkpoint_path(out: str | Path) -> Path:
+    """The trials file of a search reported to ``out``: ``x.json`` -> ``x.trials.jsonl``."""
+    out = Path(out)
+    return out.with_name(f"{out.stem}.trials.jsonl")
+
+
+def _canonical(value: Any) -> Any:
+    """``value`` as it reads back from JSON (tuples as lists, non-finite floats as None)."""
+    return json.loads(json.dumps(json_safe(value), sort_keys=True, default=str))
+
+
+def read_checkpoint_header(path: str | Path) -> dict[str, Any] | None:
+    """The fingerprint a trials file was started with; None when there is no file yet."""
+    path = Path(path)
+    if not path.is_file() or path.stat().st_size == 0:
+        return None
+    with path.open(encoding="utf-8") as fh:
+        first = fh.readline()
+    try:
+        header = json.loads(first)
+    except json.JSONDecodeError:
+        header = None
+    if not isinstance(header, dict) or header.get("kind") != "header":
+        raise ValueError(f"{path} is not a search trials file; delete it or choose another --out")
+    return header["fingerprint"]
+
+
+def _differences(a: Mapping[str, Any], b: Mapping[str, Any]) -> list[str]:
+    """The ``section.key`` entries where two fingerprints differ."""
+    out = []
+    for section in sorted(a.keys() | b.keys()):
+        x, y = a.get(section), b.get(section)
+        if isinstance(x, dict) and isinstance(y, dict):
+            out += [f"{section}.{k}" for k in sorted(x.keys() | y.keys()) if x.get(k) != y.get(k)]
+        elif x != y:
+            out.append(section)
+    return out
+
+
+class TrialLog:
+    """The finished trials of one search, one JSON line each, appended (and synced) as they end.
+
+    The first line is the search's fingerprint (settings, base config, data window). Opening a
+    file written by another search raises ``ValueError``; a torn last line (the process died
+    mid-write) is ignored, so that trial simply runs again.
+    """
+
+    def __init__(
+        self, path: Path, finished: dict[str, Trial | FailedTrial], windows: list[dict[str, Any]]
+    ):
+        self.path = path
+        self.finished = finished
+        self.windows = windows  # the baseline's described walk-forward windows
+
+    @classmethod
+    def open(cls, path: str | Path, fingerprint: Mapping[str, Any]) -> TrialLog:
+        path = Path(path)
+        fingerprint = _canonical(fingerprint)
+        stored = read_checkpoint_header(path)
+        if stored is None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            log = cls(path, {}, [])
+            log._append({"kind": "header", "fingerprint": fingerprint}, mode="w")
+            return log
+        if stored != fingerprint:
+            raise ValueError(
+                f"{path} holds the trials of another search (differs in: "
+                f"{', '.join(_differences(fingerprint, stored))}); rerun with the same settings, "
+                "or delete it (--restart) to start over"
+            )
+        finished: dict[str, Trial | FailedTrial] = {}
+        windows: list[dict[str, Any]] = []
+        lines = path.read_text(encoding="utf-8").splitlines()[1:]
+        for i, line in enumerate(lines):
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                if i == len(lines) - 1:
+                    break  # torn last write: that trial runs again
+                raise ValueError(
+                    f"{path}: line {i + 2} is corrupt; delete it to start over"
+                ) from None
+            kind = record.pop("kind")
+            if kind == "failed":
+                finished[record["name"]] = FailedTrial(**record)
+            else:
+                windows = record.pop("windows", None) or windows
+                finished[record["name"]] = Trial.from_dict(record)
+        return cls(path, finished, windows)
+
+    def record(
+        self, trial: Trial | FailedTrial, windows: list[dict[str, Any]] | None = None
+    ) -> None:
+        record = {"kind": "failed" if isinstance(trial, FailedTrial) else "trial", **asdict(trial)}
+        if windows is not None:
+            record["windows"] = windows
+        self.finished[trial.name] = trial
+        self._append(json_safe(record))
+
+    def _append(self, record: Mapping[str, Any], mode: str = "a") -> None:
+        with self.path.open(mode, encoding="utf-8") as fh:
+            fh.write(json.dumps(record, default=str) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+
+
 # --------------------------------------------------------------------------- orchestration
 
 
@@ -491,9 +631,13 @@ def run_search(
     device: Any = None,
     progress: Callable[[str], None] | None = None,
     clock: Callable[[], float] = time.monotonic,
+    checkpoint: str | Path | None = None,
+    data: Mapping[str, Any] | None = None,
 ) -> SearchReport:
     """Run the baseline then up to ``n_trials - 1`` candidates within ``max_seconds``; see the
-    module doc. Raises ``ValueError`` on bad settings or an invalid space before any training."""
+    module doc. ``checkpoint``: the trials file to resume from and append to; ``data`` (the read's
+    bounds) is part of what must match to resume. Raises ``ValueError`` on bad settings, an invalid
+    space or another search's checkpoint before any training."""
     seeds = check_settings(
         n_windows=n_windows,
         seeds=seeds,
@@ -585,25 +729,94 @@ def run_search(
         )
         return trial, described
 
+    settings = {
+        "strategy": strategy,
+        "space": space,
+        "n_trials": n_trials,
+        "max_seconds": max_seconds,
+        "search_seed": search_seed,
+        "objective": objective,
+        "n_windows": n_windows,
+        "seeds": seeds,
+        "eval_fraction": eval_fraction,
+        "val_fraction": val_fraction,
+        "margin": margin,
+        "policy": {
+            "horizon": policy.horizon,
+            "pump_threshold": policy.pump_threshold,
+            "rug_threshold": policy.rug_threshold,
+        },
+        "embargo_seconds": embargo,
+        "eval_labels": {
+            "pump_threshold": dict(config["labeling"]["pump_threshold"]),
+            "rug_threshold": dict(config["labeling"]["rug_threshold"]),
+        },
+    }
+    log = (
+        None
+        if checkpoint is None
+        else TrialLog.open(checkpoint, {"settings": settings, "config": config, "data": data})
+    )
+    resumed: list[str] = []
+
+    def from_log(name: str, params: Mapping[str, Any]) -> Trial | FailedTrial | None:
+        done = None if log is None else log.finished.get(name)
+        if done is None:
+            return None
+        if _canonical(done.params) != _canonical(params):
+            raise ValueError(
+                f"{log.path}: {name} ran with {done.params}, this search would run {dict(params)}; "
+                "delete it (--restart) to start over"
+            )
+        resumed.append(name)
+        if progress:
+            progress(f"{name}: already finished, taken from {log.path}")
+        return done
+
     start = clock()
-    baseline, windows = run_trial(BASELINE, {})
+    done = from_log(BASELINE, {})
+    if isinstance(done, Trial):
+        baseline, windows = done, log.windows
+    else:
+        baseline, windows = run_trial(BASELINE, {})
+        if log is not None:
+            log.record(baseline, windows)
     trials = [baseline]
+    failed: list[FailedTrial] = []
+    resumed_seconds = baseline.seconds if resumed else 0.0  # spent before this process started
     stopped = "space"
     candidates = candidate_params(space, strategy=strategy, seed=search_seed)
     while True:
-        if len(trials) >= n_trials:
+        count = len(trials) + len(failed)
+        if count >= n_trials:
             stopped = "trials"
             break
-        if max_seconds is not None and clock() - start >= max_seconds:
+        if max_seconds is not None and clock() - start + resumed_seconds >= max_seconds:
             stopped = "time"
             break
         params = next(candidates, None)
         if params is None:
             break
-        name = f"trial-{len(trials):02d}"
-        if progress:
-            progress(f"[{len(trials) + 1}/{n_trials}] {name}: {params}")
-        trials.append(run_trial(name, params)[0])
+        name = f"trial-{count:02d}"
+        done = from_log(name, params)
+        if done is not None:
+            resumed_seconds += done.seconds
+        else:
+            if progress:
+                progress(f"[{count + 1}/{n_trials}] {name}: {params}")
+            started = clock()
+            try:
+                done = run_trial(name, params)[0]
+            except (
+                Exception
+            ) as exc:  # one bad trial (e.g. GPU out of memory) must not end the night
+                error = f"{type(exc).__name__}: {exc}"
+                done = FailedTrial(name, dict(params), error, clock() - started)
+                if progress:
+                    progress(f"{name} FAILED: {error}")
+            if log is not None:
+                log.record(done)
+        (failed if isinstance(done, FailedTrial) else trials).append(done)
 
     ranking = [
         t.name
@@ -638,35 +851,16 @@ def run_search(
 
     return SearchReport(
         generated_at=datetime.now(UTC).isoformat(),
-        settings={
-            "strategy": strategy,
-            "space": space,
-            "n_trials": n_trials,
-            "max_seconds": max_seconds,
-            "search_seed": search_seed,
-            "objective": objective,
-            "n_windows": n_windows,
-            "seeds": seeds,
-            "eval_fraction": eval_fraction,
-            "val_fraction": val_fraction,
-            "margin": margin,
-            "policy": {
-                "horizon": policy.horizon,
-                "pump_threshold": policy.pump_threshold,
-                "rug_threshold": policy.rug_threshold,
-            },
-            "embargo_seconds": embargo,
-            "eval_labels": {
-                "pump_threshold": dict(config["labeling"]["pump_threshold"]),
-                "rug_threshold": dict(config["labeling"]["rug_threshold"]),
-            },
-        },
+        settings=settings,
         horizons=horizons,
         windows=windows,
         trials=trials,
         ranking=ranking,
         best=best.name,
         stopped=stopped,
+        failed=failed,
+        resumed=resumed,
+        elapsed_seconds=sum(t.seconds for t in [*trials, *failed]),
         comparison=comparison,
         proposed_config=proposed if best is not baseline else {},
         proposed_diff=proposed_diff(config, proposed) if best is not baseline else "",
@@ -729,7 +923,14 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--pump-threshold", type=float, default=ReferencePolicy.pump_threshold)
     parser.add_argument("--rug-threshold", type=float, default=ReferencePolicy.rug_threshold)
     add_data_bounds_arguments(parser)  # the retrain's bounded read (config.yaml `data`)
-    parser.add_argument("--out", help="write the JSON report to this path")
+    parser.add_argument(
+        "--out",
+        help="write the JSON report to this path; each finished trial also goes to "
+        "<out>.trials.jsonl as it ends, and a rerun with the same --out and settings resumes",
+    )
+    parser.add_argument(
+        "--restart", action="store_true", help="discard <out>.trials.jsonl and start over"
+    )
     parser.add_argument("--diff-out", help="write the proposed config.yaml diff to this path")
     parser.add_argument("--device", help="torch device (default: cuda if available, else cpu)")
     args = parser.parse_args(argv)
@@ -769,7 +970,21 @@ def main(argv: list[str] | None = None) -> None:
     config = {**config, "data": {**config.get("data", {}), "max_rows": data.max_rows}}
     data = DataSettings(data.lookback_days, read_rows(normalized, data.max_rows))
 
-    df, bounds = read_training_features(make_engine(), data)
+    checkpoint, end = None, None
+    if args.out:
+        checkpoint = checkpoint_path(args.out)
+        if args.restart:
+            checkpoint.unlink(missing_ok=True)
+        try:
+            header = read_checkpoint_header(checkpoint)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from None
+        if header is not None and isinstance(header.get("data"), dict):
+            # Resume on the window the search started on, not today's: live rows keep arriving.
+            end = datetime.fromisoformat(header["data"]["window_end"])
+            print(f"resuming {checkpoint} (window ending {end.isoformat()})", file=sys.stderr)
+
+    df, bounds = read_training_features(make_engine(), data, end=end)
     print(bounds.describe(), file=sys.stderr)
     try:
         report = run_search(
@@ -789,6 +1004,8 @@ def main(argv: list[str] | None = None) -> None:
             policy=policy,
             device=args.device or ("cuda" if torch.cuda.is_available() else "cpu"),
             progress=lambda msg: print(msg, file=sys.stderr),
+            checkpoint=checkpoint,
+            data=bounds.as_dict(),
         )
     except ValueError as exc:
         raise SystemExit(str(exc)) from None

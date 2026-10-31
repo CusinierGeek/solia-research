@@ -142,6 +142,23 @@ champion can shift the probability scale (docs/ML-MODEL.md "Choosing the entry r
 python -m solia_ai.entry_sweep --champion --out reports/entry_sweep.json   # JSON + .txt table
 ```
 
+### Overnight search (#181)
+
+`solia_ai/search.py` (hyperparameter / stride / threshold search) checkpoints every finished trial
+next to its report (`--out x.json` → `x.trials.jsonl`); rerunning the same command resumes on the
+same data window and skips finished trials (`--restart` starts over). The #160 overfitting sweep
+(stage 1 data, then stage 2 regularization on stage 1's choice) runs unattended from the host:
+
+```bash
+infra/scripts/overnight-sweep.sh --dry-run   # preflight only: no retrain running, scheduler and
+                                             # paper bot off, CUDA visible, disk free, no other sweep
+infra/scripts/overnight-sweep.sh             # detached; log + reports in /app/models/reports
+```
+
+After a reboot, run it again: it resumes. The summary (`overnight-summary.txt`) lists the best
+trials, the baseline, the elapsed time and every failure. Details: docs/ML-MODEL.md, "Overfitting:
+window stride & regularization (#160)".
+
 ## Prediction API
 
 `solia_ai/api.py` — the internal FastAPI the backend calls (`docs/API-CONTRACTS.md`):

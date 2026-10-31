@@ -173,3 +173,15 @@ def test_a_window_of_only_partial_tokens_is_an_error(engine):
 def test_a_non_positive_chunksize_is_rejected(engine, seeded):
     with pytest.raises(ValueError, match="chunksize"):
         read_training_features(engine, settings(), chunksize=0)
+
+
+def test_a_pinned_end_rereads_the_same_window_after_new_rows_arrive(engine, seeded):
+    first, a = read_training_features(engine, settings())
+    insert(engine, history("NEW", NEWEST + timedelta(hours=1), 3))  # live rows since the start
+
+    again, b = read_training_features(engine, settings(), end=a.window_end)
+
+    pd.testing.assert_frame_equal(first, again)
+    assert a == b and b.window_end == NEWEST
+    _, moved = read_training_features(engine, settings())  # unpinned: the window moved on
+    assert moved.window_end > NEWEST

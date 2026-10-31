@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import json
+from datetime import UTC, datetime
 
 import numpy as np
 import pytest
@@ -347,13 +348,20 @@ def test_run_search_rejects_bad_setups(kwargs, message, monkeypatch):
 # --- CLI ---
 
 
-def fake_bounded_read(_engine, settings):
+FAKE_WINDOW_END = datetime(2026, 10, 30, 12, tzinfo=UTC)
+
+
+def fake_bounded_read(_engine, settings, end=None):
     df = make_features_df()
 
     class Bounds:
         @staticmethod
         def describe() -> str:
             return f"read {len(df)} rows (max_rows {settings.max_rows})"
+
+        @staticmethod
+        def as_dict() -> dict:
+            return {"window_end": (end or FAKE_WINDOW_END).isoformat(), "rows_read": len(df)}
 
     return df, Bounds()
 
@@ -549,9 +557,9 @@ def test_a_row_budget_trial_trains_on_fewer_tokens_but_scores_the_same_windows(
 def test_main_reads_the_largest_row_budget(offline_cli, no_registry, tmp_path, monkeypatch):
     read: list[int] = []
 
-    def recording_read(engine, settings):
+    def recording_read(engine, settings, end=None):
         read.append(settings.max_rows)
-        return fake_bounded_read(engine, settings)
+        return fake_bounded_read(engine, settings, end)
 
     monkeypatch.setattr(solia_ai.db, "read_training_features", recording_read)
     space = tmp_path / "space.yaml"
@@ -570,3 +578,214 @@ def test_the_shipped_sweep_spaces_are_valid(name):
     by_path = search.load_space(Path(search.__file__).parent / "sweeps" / name)
     assert search.load_space(Path(name).stem) == by_path  # by name, as the CLI takes it
     check_space(by_path, load_config(), strategy="grid")
+
+
+# --- resume (#181) ---
+
+RESUME = {"space": SMALL_SPACE, "n_trials": 3, "n_windows": 1, "seeds": [0]}
+DATA = {"window_end": "2026-10-30T12:00:00+00:00", "rows_read": 123}
+
+
+class Interrupted(BaseException):
+    """Stands for the reboot: not an Exception, so the search can't record it as a failed trial."""
+
+
+def counting_trainer(monkeypatch, *, die_on: int | None = None) -> list[int]:
+    """Counts train_and_score calls; the ``die_on``-th call (1-based) interrupts the process."""
+    calls: list[int] = []
+    real = ablation.train_and_score
+
+    def trainer(*args, **kwargs):
+        calls.append(1)
+        if die_on is not None and len(calls) == die_on:
+            raise Interrupted
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(search, "train_and_score", trainer)
+    return calls
+
+
+def trial_lines(path) -> list[dict]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def rewrite(path, records) -> None:
+    path.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
+
+
+def test_the_checkpoint_name_follows_the_report():
+    assert search.checkpoint_path("/app/models/reports/x.json").name == "x.trials.jsonl"
+
+
+def test_a_rerun_skips_finished_trials_and_reruns_the_interrupted_one(
+    no_registry, tmp_path, monkeypatch
+):
+    df, cfg, ckpt = make_features_df(), small_config(), tmp_path / "s.trials.jsonl"
+    full = run_search(df, cfg, **RESUME)
+
+    counting_trainer(monkeypatch, die_on=3)  # baseline, trial-01 finish; trial-02 dies mid-way
+    with pytest.raises(Interrupted):
+        run_search(df, cfg, **RESUME, checkpoint=ckpt, data=DATA)
+    assert [r.get("name") for r in trial_lines(ckpt)] == [None, "baseline", "trial-01"]
+
+    calls = counting_trainer(monkeypatch)
+    resumed = run_search(df, cfg, **RESUME, checkpoint=ckpt, data=DATA)
+
+    assert len(calls) == 1  # only trial-02 trained again (1 window x 1 seed)
+    assert resumed.resumed == ["baseline", "trial-01"]
+    assert [t.name for t in resumed.trials] == [t.name for t in full.trials]
+    assert [t.params for t in resumed.trials] == [t.params for t in full.trials]
+    assert [r.metrics for t in resumed.trials for r in t.runs] == [
+        r.metrics for t in full.trials for r in t.runs
+    ]  # as if never interrupted
+    assert resumed.windows == full.windows and resumed.ranking == full.ranking
+    assert "Resumed from the checkpoint" in resumed.render()
+
+    calls = counting_trainer(monkeypatch)
+    again = run_search(df, cfg, **RESUME, checkpoint=ckpt, data=DATA)
+    assert calls == [] and again.resumed == ["baseline", "trial-01", "trial-02"]
+
+
+def test_a_torn_last_line_reruns_that_trial(no_registry, tmp_path, monkeypatch):
+    df, cfg, ckpt = make_features_df(), small_config(), tmp_path / "s.trials.jsonl"
+    run_search(df, cfg, **RESUME, checkpoint=ckpt, data=DATA)
+    lines = ckpt.read_text(encoding="utf-8").splitlines()
+    ckpt.write_text("\n".join(lines[:-1]) + "\n" + lines[-1][:40], encoding="utf-8")
+
+    calls = counting_trainer(monkeypatch)
+    report = run_search(df, cfg, **RESUME, checkpoint=ckpt, data=DATA)
+
+    assert len(calls) == 1 and report.resumed == ["baseline", "trial-01"]
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"seeds": [0, 1]}, "settings.seeds"),
+        ({"search_seed": 7}, "settings.search_seed"),
+        ({"space": {"n_layers": {"choices": [1, 2]}}}, "settings.space"),
+        ({"data": {**DATA, "rows_read": 124}}, "data.rows_read"),
+        ({"config": True}, "config.model"),
+    ],
+)
+def test_a_checkpoint_of_another_search_is_refused(
+    change, message, no_registry, tmp_path, monkeypatch
+):
+    df, cfg, ckpt = make_features_df(), small_config(), tmp_path / "s.trials.jsonl"
+    run_search(df, cfg, **{**RESUME, "n_trials": 1}, checkpoint=ckpt, data=DATA)
+    before = ckpt.read_text(encoding="utf-8")
+    kwargs = {**RESUME, "n_trials": 1, "data": DATA, **change}
+    if kwargs.pop("config", False):
+        cfg = {**cfg, "model": {**cfg["model"], "dropout": 0.3}}
+    calls = counting_trainer(monkeypatch)
+
+    with pytest.raises(ValueError, match=f"another search.*{message}"):
+        run_search(df, cfg, **kwargs, checkpoint=ckpt)
+
+    assert calls == [] and ckpt.read_text(encoding="utf-8") == before  # untouched
+
+
+def test_a_trial_recorded_with_other_params_is_refused(no_registry, tmp_path):
+    df, cfg, ckpt = make_features_df(), small_config(), tmp_path / "s.trials.jsonl"
+    run_search(df, cfg, **{**RESUME, "n_trials": 2}, checkpoint=ckpt, data=DATA)
+    lines = trial_lines(ckpt)
+    lines[-1]["params"] = {"n_layers": 9}
+    rewrite(ckpt, lines)
+
+    with pytest.raises(ValueError, match="trial-01 ran with"):
+        run_search(df, cfg, **{**RESUME, "n_trials": 2}, checkpoint=ckpt, data=DATA)
+
+
+def test_a_file_that_is_not_a_checkpoint_is_refused(tmp_path):
+    path = tmp_path / "s.trials.jsonl"
+    path.write_text('{"something": "else"}\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="not a search trials file"):
+        search.read_checkpoint_header(path)
+    assert search.read_checkpoint_header(tmp_path / "missing.jsonl") is None
+
+
+def test_a_failed_trial_is_reported_and_the_search_goes_on(no_registry, tmp_path, monkeypatch):
+    df, cfg, ckpt = make_features_df(), small_config(), tmp_path / "s.trials.jsonl"
+    real = ablation.train_and_score
+    calls: list[int] = []
+
+    def oom_on_second(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2:
+            raise RuntimeError("CUDA out of memory")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(search, "train_and_score", oom_on_second)
+    report = run_search(df, cfg, **RESUME, checkpoint=ckpt, data=DATA)
+
+    assert [t.name for t in report.trials] == ["baseline", "trial-02"]
+    assert [(f.name, f.error) for f in report.failed] == [
+        ("trial-01", "RuntimeError: CUDA out of memory")
+    ]
+    assert "trial-01" not in report.ranking
+    assert "FAILED trial-01" in report.render()
+    assert json.loads(report.to_json())["failed"][0]["params"] == report.failed[0].params
+
+    calls = counting_trainer(monkeypatch)  # a rerun doesn't retry the recorded failure
+    again = run_search(df, cfg, **RESUME, checkpoint=ckpt, data=DATA)
+    assert calls == [] and [f.name for f in again.failed] == ["trial-01"]
+
+
+def test_a_failing_baseline_still_stops_the_search(no_registry, monkeypatch):
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(search, "train_and_score", broken)
+    with pytest.raises(RuntimeError, match="boom"):
+        run_search(make_features_df(), small_config(), **RESUME)
+
+
+def test_resumed_time_counts_against_the_time_budget(no_registry, tmp_path):
+    df, cfg, ckpt = make_features_df(), small_config(), tmp_path / "s.trials.jsonl"
+    kwargs = {**RESUME, "n_trials": 50, "max_seconds": 1000.0, "data": DATA, "checkpoint": ckpt}
+    run_search(df, cfg, **{**kwargs, "n_trials": 2})
+    lines = trial_lines(ckpt)
+    lines[0]["fingerprint"]["settings"]["n_trials"] = 50
+    for record in lines[1:]:
+        record["seconds"] = 600.0  # 1 200 s already spent before the "reboot"
+    rewrite(ckpt, lines)
+
+    report = run_search(df, cfg, **kwargs)
+
+    assert report.stopped == "time" and len(report.trials) == 2  # no new trial started
+    assert report.elapsed_seconds == 1200.0
+
+
+def test_main_resumes_on_the_window_it_started_on(offline_cli, no_registry, tmp_path, monkeypatch):
+    ends: list = []
+
+    def recording_read(engine, settings, end=None):
+        ends.append(end)
+        return fake_bounded_read(engine, settings, end)
+
+    monkeypatch.setattr(solia_ai.db, "read_training_features", recording_read)
+    space = tmp_path / "space.yaml"
+    space.write_text("n_layers:\n  choices: [2]\n", encoding="utf-8")
+    out = tmp_path / "search.json"
+    argv = ["--space", str(space), "--trials", "2", "--windows", "1", "--seeds", "0",
+            "--device", "cpu", "--out", str(out)]  # fmt: skip
+
+    search.main(argv)
+    ckpt = search.checkpoint_path(out)
+    assert len(trial_lines(ckpt)) == 3  # header, baseline, trial-01
+    calls = counting_trainer(monkeypatch)
+    search.main(argv)
+    assert calls == []  # everything resumed
+    assert ends == [None, FAKE_WINDOW_END]  # the rerun read the first run's window
+    assert json.loads(out.read_text(encoding="utf-8"))["resumed"] == ["baseline", "trial-01"]
+
+    search.main([*argv, "--restart"])
+    assert ends[-1] is None and len(calls) == 2  # discarded: today's window, trained again
+
+
+def test_main_refuses_a_foreign_checkpoint_before_reading(offline_cli, tmp_path, monkeypatch):
+    out = tmp_path / "search.json"
+    search.checkpoint_path(out).write_text("not json\n", encoding="utf-8")
+    monkeypatch.setattr(solia_ai.db, "read_training_features", None)  # must not be called
+    with pytest.raises(SystemExit, match="not a search trials file"):
+        search.main(["--trials", "1", "--out", str(out)])
