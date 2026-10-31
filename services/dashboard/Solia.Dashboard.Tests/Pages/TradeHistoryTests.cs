@@ -163,6 +163,28 @@ public class TradeHistoryTests : MudTestContext
     }
 
     [Fact]
+    public void In_the_browser_zone_times_and_date_filters_are_local_while_the_url_stays_utc()
+    {
+        TimeZoneInfo toronto = TimeZoneInfo.FindSystemTimeZoneById("America/Toronto");
+        Navigation.NavigateTo("trades?from=2026-10-01T04:00:00Z");
+        Returns(total: 1, Closed(7, pnl: 0.0123m, pnlPct: 0.2156));
+        Render<MudPopoverProvider>();
+
+        IRenderedComponent<TradeHistory> page = Render<TradeHistory>(p => p.AddCascadingValue(toronto));
+
+        page.WaitForAssertion(() => Assert.Single(Rows(page)));
+        Assert.Equal("2026-10-27 08:05:00", Cell(Rows(page)[0], "opened"));
+        Assert.Equal("2026-10-27 08:08:07", Cell(Rows(page)[0], "closed"));
+        Assert.Contains("Opened (local)", page.Find("thead").TextContent);
+        Assert.Equal("2026-10-01T00:00:00", page.Find(".solia-filter-from input").GetAttribute("value"));
+
+        page.Find(".solia-filter-to input").Input("2026-10-02T12:30");
+        page.Find("form.solia-filter-bar").Submit();
+
+        page.WaitForAssertion(() => Assert.Equal("?from=2026-10-01T04%3A00%3A00Z&to=2026-10-02T16%3A30%3A00Z", Query));
+    }
+
+    [Fact]
     public void Filters_and_page_are_read_from_the_url()
     {
         Navigation.NavigateTo("trades?status=closed&from=2026-10-01T00:00:00Z&to=2026-10-02T00:00:00Z&page=2&pageSize=25");

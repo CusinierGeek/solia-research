@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
+using Solia.Dashboard.Formatting;
 using Solia.Dashboard.Components.Layout;
 using Solia.Dashboard.Live;
 using Solia.Dashboard.Tests.Live;
@@ -51,6 +52,26 @@ public class LayoutTests : MudTestContext
         IRenderedComponent<MainLayout> layout = RenderLayout();
 
         Assert.Equal("reconnecting", layout.Find(".solia-live-indicator").GetAttribute("data-state"));
+    }
+
+    [Fact]
+    public void Times_are_shown_in_the_browser_zone_once_it_is_known()
+    {
+        JSInterop.Setup<string?>(DisplayTimeZone.BrowserFunction).SetResult("America/Toronto");
+
+        IRenderedComponent<MainLayout> layout = RenderLayout();
+
+        layout.WaitForAssertion(() => Assert.Equal("local", DisplayTimeZone.Label(layout.Instance.TimeZone)));
+    }
+
+    [Fact]
+    public void An_unknown_or_unreadable_browser_zone_keeps_utc()
+    {
+        JSInterop.Setup<string?>(DisplayTimeZone.BrowserFunction).SetException(new JSException("no Intl"));
+
+        IRenderedComponent<MainLayout> layout = RenderLayout();
+
+        Assert.Same(TimeZoneInfo.Utc, layout.Instance.TimeZone);
     }
 
     [Fact]

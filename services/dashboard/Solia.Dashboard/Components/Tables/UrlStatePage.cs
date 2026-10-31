@@ -2,6 +2,7 @@ using System.Globalization;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Routing;
 using Solia.Dashboard.Api;
+using Solia.Dashboard.Formatting;
 
 namespace Solia.Dashboard.Components.Tables;
 
@@ -16,6 +17,9 @@ public abstract class UrlStatePage : ComponentBase, IDisposable
     private const string InputFormat = "yyyy-MM-dd'T'HH:mm:ss";
 
     [Inject] protected NavigationManager Navigation { get; set; } = default!;
+
+    /// <summary>The viewer's zone, cascaded by the layout (UTC outside it): every time shown or typed is in it.</summary>
+    [CascadingParameter] protected TimeZoneInfo DisplayZone { get; set; } = TimeZoneInfo.Utc;
 
     /// <summary>The page's base-relative path, without a query string (e.g. <c>trades</c>).</summary>
     protected abstract string Path { get; }
@@ -56,11 +60,12 @@ public abstract class UrlStatePage : ComponentBase, IDisposable
     /// <summary>An enum filter's label: its wire spelling, or "All" when not filtered.</summary>
     protected static string Wire<T>(T? value) where T : struct, Enum => value is { } v ? QueryValues.Format(v) : "All";
 
-    protected static string? ToInput(DateTimeOffset? ts) =>
-        ts?.UtcDateTime.ToString(InputFormat, CultureInfo.InvariantCulture);
+    protected string? ToInput(DateTimeOffset? ts) =>
+        ts is { } t ? DisplayTimeZone.ToWallClock(t, DisplayZone).ToString(InputFormat, CultureInfo.InvariantCulture) : null;
 
-    // A datetime-local value has no zone: it is read as UTC, like the column it filters.
-    protected static DateTimeOffset? FromInput(string? value) => QueryValues.ParseTimestamp(value);
+    // A datetime-local value has no zone: it is read in the display zone, like the column it filters (the URL keeps UTC).
+    protected DateTimeOffset? FromInput(string? value) =>
+        QueryValues.ParseTimestamp(value) is { } parsed ? DisplayTimeZone.FromWallClock(parsed.UtcDateTime, DisplayZone) : null;
 
     public virtual void Dispose()
     {

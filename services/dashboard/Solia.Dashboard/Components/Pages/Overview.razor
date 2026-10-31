@@ -69,7 +69,7 @@
                 @if (context.CreatedAt is { } trainedAt)
                 {
                     <MudText Typo="Typo.body2" Class="solia-model__trained mud-text-secondary">
-                        Trained @DisplayFormat.Timestamp(trainedAt) UTC
+                        Trained @DisplayFormat.Timestamp(trainedAt, DisplayZone) @DisplayTimeZone.Label(DisplayZone)
                     </MudText>
                 }
             }
@@ -91,6 +91,9 @@
 </MudGrid>
 
 @code {
+    // The viewer's zone, cascaded by the layout (UTC outside it): every time shown is in it.
+    [CascadingParameter] private TimeZoneInfo DisplayZone { get; set; } = TimeZoneInfo.Utc;
+
     /// <summary>How long a burst of closes is gathered before the cards re-fetch, once.</summary>
     internal static readonly TimeSpan RefreshDelay = TimeSpan.FromSeconds(1);
 

@@ -163,6 +163,34 @@ public class EquityCurveTests
     }
 
     [Fact]
+    public void In_a_local_zone_times_are_plotted_and_written_on_its_wall_clock()
+    {
+        TimeZoneInfo toronto = TimeZoneInfo.FindSystemTimeZoneById("America/Toronto");
+        EquityCurve curve = Curve(1.4m,
+            new EquityPoint(T0, 101.5m, 1.5m),
+            new EquityPoint(T0.AddMinutes(1), 101.4m, -0.1m)).InZone(toronto);
+
+        Assert.Same(toronto, curve.Zone);
+        Assert.Equal(new DateTime(2026, 10, 27, 5, 0, 0, DateTimeKind.Utc), curve.EquitySeries[0].Time);
+        Assert.Equal(new DateTime(2026, 10, 27, 5, 1, 0, DateTimeKind.Utc), curve.PnlSeries[1].Time);
+        Assert.Equal(("Equity 101.4 · P&L -0.1", "2026-10-27 05:01:00 local"), Hover(curve, EquitySeriesKind.Equity, curve.EquitySeries[1]));
+    }
+
+    [Fact]
+    public void A_dst_fall_back_keeps_the_local_plot_times_increasing()
+    {
+        TimeZoneInfo toronto = TimeZoneInfo.FindSystemTimeZoneById("America/Toronto");
+        DateTimeOffset beforeFallBack = new(2026, 11, 1, 5, 45, 0, TimeSpan.Zero); // 01:45 EDT, then 01:15 EST
+        EquityCurve curve = Curve(2m,
+            new EquityPoint(beforeFallBack, 101m, 1m),
+            new EquityPoint(beforeFallBack.AddMinutes(30), 102m, 1m)).InZone(toronto);
+
+        Assert.True(curve.EquitySeries[1].Time > curve.EquitySeries[0].Time);
+        Assert.Equal("Equity 102 · P&L +1", Hover(curve, EquitySeriesKind.Equity, curve.EquitySeries[1]).Title);
+        Assert.Equal("2026-11-01 01:15:00 local", Hover(curve, EquitySeriesKind.Equity, curve.EquitySeries[1]).Subtitle);
+    }
+
+    [Fact]
     public void Trades_closed_at_the_same_instant_each_get_their_own_tooltip()
     {
         EquityCurve curve = Curve(3m,

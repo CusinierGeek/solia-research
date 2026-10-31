@@ -22,7 +22,7 @@
             <span data-part="model">Champion @(shown.ModelVersion ?? DisplayFormat.Missing)</span>
             <span> · </span>
             <span data-part="period">
-                @DisplayFormat.Timestamp(shown.StartedAt) → @(shown.EndedAt is { } ended ? DisplayFormat.Timestamp(ended) : "now") UTC
+                @DisplayFormat.Timestamp(shown.StartedAt, DisplayZone) → @(shown.EndedAt is { } ended ? DisplayFormat.Timestamp(ended, DisplayZone) : "now") @DisplayTimeZone.Label(DisplayZone)
             </span>
             <span> · </span>
             <span data-part="open">@DisplayFormat.Count(shown.Open) open (@DisplayFormat.Amount(shown.Committed) SOL committed)</span>
@@ -50,6 +50,9 @@
 </div>
 
 @code {
+    // The viewer's zone, cascaded by the layout (UTC outside it): every time shown is in it.
+    [CascadingParameter] private TimeZoneInfo DisplayZone { get; set; } = TimeZoneInfo.Utc;
+
     private IReadOnlyList<BotSessionDto> _sessions = [];
     private bool _loaded;
     private bool _failed;

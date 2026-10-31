@@ -16,6 +16,8 @@
 <body>
     <Routes @rendermode="PageRenderMode" />
     <ReconnectModal />
+    @* The browser's IANA zone, read by the layout so the dashboard shows times in local time (DisplayTimeZone). *@
+    <script>window.soliaTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;</script>
     <script src="@Assets["_framework/blazor.web.js"]"></script>
     <script src="@Assets["_content/MudBlazor/MudBlazor.min.js"]"></script>
 </body>

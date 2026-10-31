@@ -19,10 +19,10 @@
             <MudSelectItem T="TradeStatus?" Value="status">@QueryValues.Format(status)</MudSelectItem>
         }
     </MudSelect>
-    <MudTextField T="string" Label="Opened from (UTC)" InputType="InputType.DateTimeLocal" ShrinkLabel="true"
+    <MudTextField T="string" Label="@($"Opened from ({DisplayTimeZone.Label(DisplayZone)})")" InputType="InputType.DateTimeLocal" ShrinkLabel="true"
                   Variant="Variant.Outlined" Margin="Margin.Dense" Class="solia-filter-from" Immediate="true"
                   Value="ToInput(context.Draft.From)" ValueChanged="v => context.Edit(f => f with { From = FromInput(v) })" />
-    <MudTextField T="string" Label="Opened to (UTC)" InputType="InputType.DateTimeLocal" ShrinkLabel="true"
+    <MudTextField T="string" Label="@($"Opened to ({DisplayTimeZone.Label(DisplayZone)})")" InputType="InputType.DateTimeLocal" ShrinkLabel="true"
                   Variant="Variant.Outlined" Margin="Margin.Dense" Class="solia-filter-to" Immediate="true"
                   Value="ToInput(context.Draft.To)" ValueChanged="v => context.Edit(f => f with { To = FromInput(v) })" />
 </FilterBar>
@@ -42,8 +42,8 @@
     <Header>
         <th>Id</th>
         <th>Token</th>
-        <th>Opened (UTC)</th>
-        <th>Closed (UTC)</th>
+        <th>Opened (@DisplayTimeZone.Label(DisplayZone))</th>
+        <th>Closed (@DisplayTimeZone.Label(DisplayZone))</th>
         <th>Entry</th>
         <th>Exit</th>
         <th>Size</th>
@@ -62,8 +62,8 @@
             <td class="solia-token" data-col="token" title="@context.Mint">
                 <span class="solia-mint">@DisplayFormat.ShortMint(context.Mint)</span>
             </td>
-            <td data-col="opened">@DisplayFormat.Timestamp(context.OpenedAt)</td>
-            <td data-col="closed">@DisplayFormat.Timestamp(context.ClosedAt)</td>
+            <td data-col="opened">@DisplayFormat.Timestamp(context.OpenedAt, DisplayZone)</td>
+            <td data-col="closed">@DisplayFormat.Timestamp(context.ClosedAt, DisplayZone)</td>
             <td data-col="entry">@DisplayFormat.Amount(context.EntryPrice)</td>
             <td data-col="exit">@DisplayFormat.Amount(context.ExitPrice)</td>
             <td data-col="size">@DisplayFormat.Amount(context.Size)</td>

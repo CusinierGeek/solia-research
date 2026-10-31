@@ -64,12 +64,16 @@ public static class DisplayFormat
         };
     }
 
-    /// <summary>A UTC timestamp to the second: <c>2026-10-27 11:58:00</c>.</summary>
-    public static string Timestamp(DateTimeOffset ts) =>
-        ts.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+    /// <summary>A timestamp to the second in the display zone (see <see cref="DisplayTimeZone"/>): <c>2026-10-27 07:58:00</c>.</summary>
+    public static string Timestamp(DateTimeOffset ts, TimeZoneInfo zone) =>
+        DisplayTimeZone.ToWallClock(ts, zone).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
 
-    /// <summary><see cref="Timestamp(DateTimeOffset)"/>, or <see cref="Missing"/> when there is none.</summary>
-    public static string Timestamp(DateTimeOffset? ts) => ts is { } t ? Timestamp(t) : Missing;
+    /// <summary><see cref="Timestamp(DateTimeOffset, TimeZoneInfo)"/>, or <see cref="Missing"/> when there is none.</summary>
+    public static string Timestamp(DateTimeOffset? ts, TimeZoneInfo zone) => ts is { } t ? Timestamp(t, zone) : Missing;
+
+    /// <summary>A timestamp to the tick with its zone's offset, for a hover title: <c>2026-10-27T07:58:00.0000000-04:00</c>.</summary>
+    public static string ExactTimestamp(DateTimeOffset ts, TimeZoneInfo zone) =>
+        TimeZoneInfo.ConvertTime(ts, zone).ToString("O", CultureInfo.InvariantCulture);
 
     /// <summary>How long ago <paramref name="ts"/> was, in its largest unit: <c>now</c>, <c>12s</c>, <c>3m</c>, <c>2h</c>, <c>5d</c>.</summary>
     public static string Age(DateTimeOffset ts, DateTimeOffset now)

@@ -27,10 +27,10 @@
             <MudSelectItem T="TradeStrategy?" Value="strategy">@QueryValues.Format(strategy)</MudSelectItem>
         }
     </MudSelect>
-    <MudTextField T="string" Label="From (UTC)" InputType="InputType.DateTimeLocal" ShrinkLabel="true"
+    <MudTextField T="string" Label="@($"From ({DisplayTimeZone.Label(DisplayZone)})")" InputType="InputType.DateTimeLocal" ShrinkLabel="true"
                   Variant="Variant.Outlined" Margin="Margin.Dense" Class="solia-filter-from" Immediate="true"
                   Value="ToInput(context.Draft.From)" ValueChanged="v => context.Edit(f => f with { From = FromInput(v) })" />
-    <MudTextField T="string" Label="To (UTC)" InputType="InputType.DateTimeLocal" ShrinkLabel="true"
+    <MudTextField T="string" Label="@($"To ({DisplayTimeZone.Label(DisplayZone)})")" InputType="InputType.DateTimeLocal" ShrinkLabel="true"
                   Variant="Variant.Outlined" Margin="Margin.Dense" Class="solia-filter-to" Immediate="true"
                   Value="ToInput(context.Draft.To)" ValueChanged="v => context.Edit(f => f with { To = FromInput(v) })" />
 </FilterBar>
@@ -39,7 +39,7 @@
             PageChanged="GoToPage" PageSizeChanged="SetPageSize" Class="solia-prediction-history"
             EmptyMessage="No predictions match these filters." ErrorMessage="Could not load the prediction history from the backend.">
     <Header>
-        <th>Time (UTC)</th>
+        <th>Time (@DisplayTimeZone.Label(DisplayZone))</th>
         <th>Token</th>
         <th>Horizon</th>
         <th>Pump</th>
@@ -53,7 +53,7 @@
     </Header>
     <Row>
         <tr @key="context.Id" data-id="@context.Id">
-            <td data-col="ts">@DisplayFormat.Timestamp(context.Ts)</td>
+            <td data-col="ts">@DisplayFormat.Timestamp(context.Ts, DisplayZone)</td>
             <td class="solia-token" title="@context.Mint">
                 <strong>@(context.Symbol ?? "?")</strong>
                 <span class="mud-text-secondary ml-1 solia-mint">@DisplayFormat.ShortMint(context.Mint)</span>

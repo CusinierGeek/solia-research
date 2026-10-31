@@ -73,7 +73,7 @@
                         <td data-col="strategy"><StrategyChip Strategy="@p.Strategy" /></td>
                         <td data-col="confidence">@DisplayFormat.Score(p.Confidence)</td>
                         <td data-col="model">@(p.ModelVersion ?? DisplayFormat.Missing)</td>
-                        <td data-col="age" title="@p.Ts.UtcDateTime.ToString("u")">@DisplayFormat.Age(p.Ts, now)</td>
+                        <td data-col="age" title="@DisplayFormat.Timestamp(p.Ts, DisplayZone)">@DisplayFormat.Age(p.Ts, now)</td>
                     </tr>
                 }
             </tbody>
@@ -82,6 +82,9 @@
 }
 
 @code {
+    // The viewer's zone, cascaded by the layout (UTC outside it): every time shown is in it.
+    [CascadingParameter] private TimeZoneInfo DisplayZone { get; set; } = TimeZoneInfo.Utc;
+
     /// <summary>Rows kept (and asked of <c>/predictions/live</c>): one per (token, horizon).</summary>
     internal const int Capacity = 500;
 

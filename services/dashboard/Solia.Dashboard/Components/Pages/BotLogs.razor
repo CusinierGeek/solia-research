@@ -74,7 +74,7 @@
         <MudSimpleTable Dense="true" Hover="true" Class="solia-bot-logs">
             <thead>
                 <tr>
-                    <th>Time (UTC)</th>
+                    <th>Time (@DisplayTimeZone.Label(DisplayZone))</th>
                     <th>Service</th>
                     <th>Level</th>
                     <th>Message</th>
@@ -87,7 +87,7 @@
                     bool expandable = IsExpandable(log);
                     bool expanded = expandable && _expanded.Contains(log.Id);
                     <tr @key="log.Id" data-id="@log.Id" data-level="@log.Level" data-service="@log.Service">
-                        <td data-col="ts" class="solia-log__ts" title="@log.Ts.UtcDateTime.ToString("O")">@DisplayFormat.Timestamp(log.Ts)</td>
+                        <td data-col="ts" class="solia-log__ts" title="@DisplayFormat.ExactTimestamp(log.Ts, DisplayZone)">@DisplayFormat.Timestamp(log.Ts, DisplayZone)</td>
                         <td data-col="service">@log.Service</td>
                         <td data-col="level">
                             <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="LevelColor(log.Level)">@log.Level</MudChip>

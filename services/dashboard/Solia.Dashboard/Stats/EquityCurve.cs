@@ -28,7 +28,12 @@ public enum EquitySeriesKind
 /// </param>
 /// <param name="TotalPnl">The realized P&amp;L over every closed trade.</param>
 /// <param name="IsComplete">Whether every closed trade is on the curve (no older one was cut off).</param>
-public sealed record EquityCurve(IReadOnlyList<EquityCurvePoint> Points, decimal? StartingBalance, decimal TotalPnl, bool IsComplete)
+/// <param name="Zone">
+/// The zone the times are plotted and written in (see <see cref="DisplayTimeZone"/>); null is UTC. Set through
+/// <see cref="InZone"/>, which recomputes the plotted times.
+/// </param>
+public sealed record EquityCurve(
+    IReadOnlyList<EquityCurvePoint> Points, decimal? StartingBalance, decimal TotalPnl, bool IsComplete, TimeZoneInfo? Zone = null)
 {
     /// <summary>The time-label spacings the x axis picks from, smallest first; past the last, multiples of it.</summary>
     internal static readonly TimeSpan[] LabelSpacings =
@@ -49,7 +54,7 @@ public sealed record EquityCurve(IReadOnlyList<EquityCurvePoint> Points, decimal
     internal static readonly TimeSpan MinPlotGap = TimeSpan.FromMilliseconds(1);
 
     // Computed once: every refresh reads them for the axes, the series and the chart options.
-    private readonly DateTime[] _plotTimes = PlotTimes(Points);
+    private readonly DateTime[] _plotTimes = PlotTimes(Points, Zone ?? TimeZoneInfo.Utc);
 
     public bool IsEmpty => Points.Count == 0;
 
@@ -74,6 +79,9 @@ public sealed record EquityCurve(IReadOnlyList<EquityCurvePoint> Points, decimal
         return new EquityCurve(points, start, response.TotalPnl, complete);
     }
 
+    /// <summary>The same curve plotted and written in <paramref name="zone"/>.</summary>
+    public EquityCurve InZone(TimeZoneInfo zone) => new(Points, StartingBalance, TotalPnl, IsComplete, zone);
+
     /// <summary>The axis of the equity panel, fitted to the equity and the starting balance.</summary>
     public ChartAxis EquityAxis { get; } = ChartAxis.Fit(
         Points.Select(p => (double)p.Equity).Concat(StartingBalance is { } start ? [(double)start] : []));
@@ -81,7 +89,7 @@ public sealed record EquityCurve(IReadOnlyList<EquityCurvePoint> Points, decimal
     /// <summary>The axis of the P&amp;L panel, which always shows zero (gains above, losses below).</summary>
     public ChartAxis PnlAxis { get; } = ChartAxis.Fit(Points.Select(p => (double)p.Pnl), includeZero: true);
 
-    /// <summary>The equity after each trade over its plotted UTC time, in <see cref="EquityAxis"/> units.</summary>
+    /// <summary>The equity after each trade over its plotted wall-clock time in <see cref="Zone"/>, in <see cref="EquityAxis"/> units.</summary>
     public IReadOnlyList<(DateTime Time, double Value)> EquitySeries => Series(EquityAxis, p => p.Equity);
 
     /// <summary>The starting balance as a flat line under the same times (empty when nothing closed).</summary>
@@ -124,7 +132,7 @@ public sealed record EquityCurve(IReadOnlyList<EquityCurvePoint> Points, decimal
 
     /// <summary>
     /// The tooltip of the <paramref name="series"/> point plotted at <paramref name="time"/> (written in
-    /// <see cref="TooltipTimeFormat"/>), the UTC timestamp as its subtitle: equity and trade P&amp;L for a trade, the
+    /// <see cref="TooltipTimeFormat"/>), the timestamp in <see cref="Zone"/> as its subtitle: equity and trade P&amp;L for a trade, the
     /// balance for the reference line. A time the curve can't place (the library wrote it some other way) still
     /// gets a tooltip, from what the library hovered: <paramref name="plotted"/> (in <see cref="TooltipValueFormat"/>)
     /// labelled in the series' units, and the time as written.
@@ -141,7 +149,8 @@ public sealed record EquityCurve(IReadOnlyList<EquityCurvePoint> Points, decimal
             return (value, time ?? "");
         }
         EquityCurvePoint point = Points[index];
-        string subtitle = $"{DisplayFormat.Timestamp(point.Ts)} UTC";
+        TimeZoneInfo zone = Zone ?? TimeZoneInfo.Utc;
+        string subtitle = $"{DisplayFormat.Timestamp(point.Ts, zone)} {DisplayTimeZone.Label(zone)}";
         return series == EquitySeriesKind.StartingBalance
             ? ($"Starting balance {DisplayFormat.Amount(StartingBalance)}", subtitle)
             : ($"Equity {DisplayFormat.Amount(point.Equity)} · P&L {DisplayFormat.SignedAmount(point.Pnl)}", subtitle);
@@ -178,13 +187,15 @@ public sealed record EquityCurve(IReadOnlyList<EquityCurvePoint> Points, decimal
         return (at - _plotTimes[nearest]).Duration() * 2 < MinPlotGap ? nearest : null;
     }
 
-    // Each point's UTC close time, pushed just past the previous one when they tie (or the backend's order dips).
-    private static DateTime[] PlotTimes(IReadOnlyList<EquityCurvePoint> points)
+    // Each point's close time on the zone's wall clock, pushed just past the previous one when they tie (or the
+    // backend's order dips, or a DST fall-back repeats an hour). Tagged UTC like the library's own times, so it
+    // writes and labels them as they are, with no conversion of its own.
+    private static DateTime[] PlotTimes(IReadOnlyList<EquityCurvePoint> points, TimeZoneInfo zone)
     {
         var times = new DateTime[points.Count];
         for (int i = 0; i < times.Length; i++)
         {
-            DateTime time = points[i].Ts.UtcDateTime;
+            DateTime time = DateTime.SpecifyKind(DisplayTimeZone.ToWallClock(points[i].Ts, zone), DateTimeKind.Utc);
             times[i] = i > 0 && time < times[i - 1] + MinPlotGap ? times[i - 1] + MinPlotGap : time;
         }
         return times;

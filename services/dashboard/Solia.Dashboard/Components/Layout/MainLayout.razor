@@ -22,7 +22,9 @@
     </MudDrawer>
     <MudMainContent>
         <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="py-6">
-            @Body
+            <CascadingValue Value="_timeZone">
+                @Body
+            </CascadingValue>
         </MudContainer>
     </MudMainContent>
 </MudLayout>
@@ -37,7 +39,12 @@
     private bool _drawerOpen = true;
     private bool _darkMode = true;
 
+    // UTC until the browser tells its zone; every view reads it as a cascading TimeZoneInfo.
+    private TimeZoneInfo _timeZone = TimeZoneInfo.Utc;
+
     internal bool IsDarkMode => _darkMode;
+
+    internal TimeZoneInfo TimeZone => _timeZone;
 
     // The theme choice survives reloads and reconnects in the browser's localStorage (dark by default).
     internal const string DarkModeStorageKey = "solia-dark-mode";
@@ -48,12 +55,26 @@
         {
             return;
         }
+        string? zoneId = null;
+        try
+        {
+            zoneId = await JS.InvokeAsync<string?>(DisplayTimeZone.BrowserFunction);
+        }
+        catch (Exception ex) when (IsJsUnavailable(ex))
+        {
+        }
+        TimeZoneInfo zone = DisplayTimeZone.Resolve(zoneId);
+        if (zone.Id != _timeZone.Id)
+        {
+            _timeZone = zone;
+            StateHasChanged();
+        }
         string? stored = null;
         try
         {
             stored = await JS.InvokeAsync<string?>("localStorage.getItem", DarkModeStorageKey);
         }
-        catch (Exception ex) when (IsStorageUnavailable(ex))
+        catch (Exception ex) when (IsJsUnavailable(ex))
         {
         }
         if (bool.TryParse(stored, out bool darkMode) && darkMode != _darkMode)
@@ -72,11 +93,11 @@
         {
             await JS.InvokeVoidAsync("localStorage.setItem", DarkModeStorageKey, _darkMode ? "true" : "false");
         }
-        catch (Exception ex) when (IsStorageUnavailable(ex))
+        catch (Exception ex) when (IsJsUnavailable(ex))
         {
         }
     }
 
-    // Storage is a nicety: blocked storage or a dropped circuit must not break the layout.
-    private static bool IsStorageUnavailable(Exception ex) => ex is JSException or JSDisconnectedException;
+    // Storage and the browser zone are niceties: blocked storage or a dropped circuit must not break the layout.
+    private static bool IsJsUnavailable(Exception ex) => ex is JSException or JSDisconnectedException;
 }

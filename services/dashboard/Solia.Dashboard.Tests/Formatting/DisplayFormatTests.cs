@@ -84,7 +84,7 @@ public class DisplayFormatTests
         Assert.Equal(expected, DisplayFormat.PnlClass((double?)ratio));
 
     [Fact]
-    public void A_missing_timestamp_is_the_placeholder() => Assert.Equal("—", DisplayFormat.Timestamp((DateTimeOffset?)null));
+    public void A_missing_timestamp_is_the_placeholder() => Assert.Equal("—", DisplayFormat.Timestamp((DateTimeOffset?)null, TimeZoneInfo.Utc));
 
     [Fact]
     public void Formats_are_culture_invariant()
@@ -122,7 +122,7 @@ public class DisplayFormatTests
             Assert.Equal("1,234,567", DisplayFormat.Count(1_234_567));
             Assert.Equal("1.5", DisplayFormat.Amount(1.5m));
             Assert.Equal("2026-10-27 11:58:00",
-                DisplayFormat.Timestamp(new DateTimeOffset(2026, 10, 27, 7, 58, 0, TimeSpan.FromHours(-4))));
+                DisplayFormat.Timestamp(new DateTimeOffset(2026, 10, 27, 7, 58, 0, TimeSpan.FromHours(-4)), TimeZoneInfo.Utc));
         }
         finally
         {

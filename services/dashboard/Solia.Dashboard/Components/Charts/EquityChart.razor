@@ -32,6 +32,9 @@
 </div>
 
 @code {
+    // The viewer's zone, cascaded by the layout (UTC outside it): every time shown is in it.
+    [CascadingParameter] private TimeZoneInfo DisplayZone { get; set; } = TimeZoneInfo.Utc;
+
     // SVG paint attributes don't resolve CSS variables, so the series carry literal colours that read in both themes.
     internal const string EquityColor = "#7c6cf0";
     internal const string StartingBalanceColor = "#9e9e9e";
@@ -42,6 +45,7 @@
     /// <summary>The index of the starting-balance series in the equity panel (the library's <c>SvgPath.Index</c>).</summary>
     internal const int StartingBalanceSeries = 1;
 
+    private EquityCurve? _source;
     private EquityCurve? _mapped;
     private List<ChartSeries<double>> _equity = [];
     private List<ChartSeries<double>> _pnl = [];
@@ -51,29 +55,30 @@
     /// <summary>The curve to draw, already mapped from <c>/stats/performance</c>.</summary>
     [Parameter, EditorRequired] public EquityCurve Curve { get; set; } = default!;
 
-    // Rebuilt only when the data changes: new series lists make the chart redraw from scratch (and drop a hovered
-    // tooltip), while a live refresh with nothing new hands over a new but equal curve.
+    // Rebuilt only when the data or the zone changes: new series lists make the chart redraw from scratch (and drop a
+    // hovered tooltip), while a live refresh with nothing new hands over a new but equal curve.
     protected override void OnParametersSet()
     {
-        if (Curve.HasSameData(_mapped))
+        if (Curve.HasSameData(_source) && _mapped?.Zone == DisplayZone)
         {
             return;
         }
-        _mapped = Curve;
+        _source = Curve;
+        EquityCurve curve = _mapped = Curve.InZone(DisplayZone);
         _equity =
         [
-            Series("Equity", Curve.EquitySeries),
-            Series("Starting balance", Curve.StartingBalanceSeries),
+            Series("Equity", curve.EquitySeries),
+            Series("Starting balance", curve.StartingBalanceSeries),
         ];
-        _pnl = [Series("Trade P&L", Curve.PnlSeries)];
-        _equityOptions = Options(Curve.EquityAxis, [EquityColor, StartingBalanceColor], showLegend: true);
-        _pnlOptions = Options(Curve.PnlAxis, [PnlColor], showLegend: false);
+        _pnl = [Series("Trade P&L", curve.PnlSeries)];
+        _equityOptions = Options(curve.EquityAxis, [EquityColor, StartingBalanceColor], showLegend: true);
+        _pnlOptions = Options(curve.PnlAxis, [PnlColor], showLegend: false);
         _pnlOptions.YAxisRequireZeroPoint = true;
     }
 
     // Read from the mapped curve, which the template's own render may already see replaced.
     private (string Title, string Subtitle) Tooltip(SvgPath segment, EquitySeriesKind series) =>
-        (_mapped ?? Curve).Tooltip(series, segment.LabelXValue, segment.LabelYValue);
+        (_mapped ?? Curve.InZone(DisplayZone)).Tooltip(series, segment.LabelXValue, segment.LabelYValue);
 
     private static ChartSeries<double> Series(string name, IReadOnlyList<(DateTime Time, double Value)> points) => new()
     {
@@ -96,6 +101,6 @@
         TimeLabelSpacing = Curve.LabelSpacing,
         TimeLabelFormat = Curve.LabelFormat,
         TooltipTimeLabelFormat = EquityCurve.TooltipTimeFormat,
-        XAxisTitle = "UTC",
+        XAxisTitle = DisplayTimeZone.Label(DisplayZone),
     };
 }
