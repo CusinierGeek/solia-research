@@ -208,6 +208,38 @@ Rug PR-AUC also rises on every horizon (all, 15m: 0.829 → 0.842; amm ≥ 10, 1
   same config for both) is what decides a promotion. The floor ships enabled, so the next retrain trains its
   candidate under it, and the gate scores the champion on the floored labels.
 
+**The "inverted" 1 h head of retrain #3's candidate (#179): model-side, labels correct.** The candidate
+`solia-20261030T203422233817Z` (first warm start under the floor) scored precision 0 at 1 h on `pump ≥ 0.25,
+rug ≤ 0.2`. A read-only analysis of its held-out top 1 % 1 h windows (`p ≥ 0.235`, report:
+[`reports/inverted-1h-179.txt`](reports/inverted-1h-179.txt), script
+[`.py`](reports/inverted-1h-179.py)):
+
+| top 1 % 1 h, rug gate | windows | tokens | 1 h precision |
+|---|---:|---:|---:|
+| none | 8 307 | 362 | **0.268** (base 0.038, ×7.1) |
+| rug ≤ 0.5 | 3 719 | 122 | 0.245 |
+| rug ≤ 0.3 | 666 | 28 | 0.027 |
+| rug ≤ 0.2 | 417 | **11** | 0.000 |
+
+- **The labels follow the documented rule.** All 8 307 windows were relabeled independently, one window at a
+  time: 8 307 / 8 307 match. 73 % of them see their pool drained below the floor within the hour (median first
+  drained read at 12 min). The floor removes those dust prices from `pump` as designed: 1 301 pumps that would
+  exist without the floor are gone (dust reads up to 1.9·10⁸ × the anchor). `rug` is kept (81 %). The hypothesis
+  that the floor drops a spike-then-drain token's post-drain prices while keeping its rug holds, but the labels
+  are consistent: such a window is a rug, and a pump only if it pumped while tradeable.
+- **The pump head is not inverted.** The pump head alone ranks: the top 1 % hits ×7 the base rate, over 362
+  tokens.
+- **The 1 h rug head's low tail is where it fails.** Among high-pump windows, `rug ≤ 0.2` isolates 11 tokens.
+  353 of the 417 windows (85 %) come from **one token**, `G4vG…pump`: a pumpswap pool of 150–200 SOL with a flat
+  price, active for an hour, then emptied in one dump (≈10 600 sells in two snapshots; price ×0.01; liquidity
+  202 → 2.0 SOL). 2 SOL is above the 1 SOL floor, so that crash is a counted price: a real rug, labeled right.
+  Nothing in the window history announced it.
+- **Overfitting signal.** On its own training windows the same score region has 1 h precision 0.58 (mean
+  return +2.03); held out, 0.27.
+- **Handed to #172.** A rule must also report its number of distinct tokens. A precision built on 11 tokens,
+  85 % from one, is an anecdote. Judge the 1 h rug gate on rug calibration (held-out, per token), not on one
+  slice. The floor values are not in question.
+
 Labels require the token's **full lifecycle** — including **post-bonding** price/liquidity on the
 AMM. The pipeline captures pre- and post-bonding events (see [`DATA-SOURCES.md`](DATA-SOURCES.md)),
 so a pump/rug after migration is labeled correctly; a pre-bonding-only dataset would bias labels.

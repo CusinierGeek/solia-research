@@ -1,0 +1,35 @@
+#179 — the "inverted" 1h pump head of retrain #3's candidate (solia-20261030T203422233817Z)
+Read-only (GPU container, no registry write): python -u inverted-1h-179.py <ckpt> <out.json>
+Data: the retrain's bounded read (3 999 995 rows), labels under the config floor (= the checkpoint's:
+1 SOL, curves 0). 2 236 072 windows; train 216 338 (1h-labeled), held-out 822 923 (1h-labeled).
+
+Held-out top 1 % by 1h pump_prob (p >= 0.2348), by 1h rug gate:
+  rug gate      windows  tokens  1h precision
+  none            8 307     362         0.268   (base 0.038: x7.1)
+  rug <= 0.5      3 719     122         0.245
+  rug <= 0.3        666      28         0.027
+  rug <= 0.2        417      11         0.000   <- the sweep's "inverted" row
+
+top 1 %, no gate     8 307 windows / 362 tokens; top-5 tokens 17.6 %; 96 % AMM >= 10 SOL (median 111 SOL)
+                     1h: pump 0.266, rug 0.814, mean ret +0.358, median +0.030
+                     without token G4vG...: 7 927 / 361 tokens, pump 0.281, mean ret +0.425
+top 1 % & rug <= 0.2 417 windows / 11 tokens; G4vGFQje...H8pump alone = 353 (85 %)
+                     1h: pump 0.000, rug 0.828, mean ret -0.830, median -0.989
+                     without G4vG...: 64 windows / 10 tokens, pump 0.000, rug 0.75
+train, p >= 0.2348   4 545 windows / 197 tokens: 1h pump 0.584, rug 0.731, mean ret +2.03
+                     (held-out 0.268: the region generalizes at half its training precision)
+
+Labels: all 8 307 held-out top windows recomputed independently (naive per-window loop, documented rule):
+  8 307 / 8 307 match the stored pump / rug / expected_return at 1h.
+  In 72.7 % of them a pool reads below its floor within the hour (median first at 732 s; median min
+  liquidity / anchor 7e-7: drained). The floor turns 1 301 no-floor pumps (dust prices up to 1.9e8 x the
+  anchor) into pump = 0 and changes 5 391 returns, as designed; rug is kept (81.5 %).
+
+Token G4vG...pump (pumpswap, 16:13-17:24 UTC 2026-10-30): a ~150-200 SOL pool, price flat within +-20 %,
+~300 buys / ~200 sells per snapshot, then at 17:26 one dump (3 394 then 7 195 sells): price x0.0099,
+liquidity 201.8 -> 2.0 SOL. 2.0 SOL >= the 1 SOL floor, so the crash is a counted, tradeable price: every
+window anchored in the hour before it is pump 0, rug 1, return ~ -0.99. Correct labels.
+
+Conclusion: model-side, not a labeling defect. The 1h pump head ranks (x7 lift on 362 tokens); what fails
+is the 1h *rug* head's low tail: rug <= 0.2 among the high-pump windows isolates 11 tokens, 85 % one
+token that rugged in a single unannounced dump. Handed to #172.
