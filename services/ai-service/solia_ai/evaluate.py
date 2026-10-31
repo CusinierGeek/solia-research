@@ -7,6 +7,9 @@ It scores a trained model over the validation split and reports, per horizon:
   when a horizon has only one class in the window (undefined, not zero).
 * **expected_return** (regression): information coefficient (Spearman rank IC) and Pearson
   correlation — do higher predictions line up with higher realized returns? — plus the MAE.
+* **entry selection**: the top ``entry_top_fraction`` windows by pump probability, with and
+  without the reference policy's rug gate — precision vs the base rate, distinct tokens and the
+  most frequent token's share (:mod:`solia_ai.entry_selection`).
 * **economic**: a simulated win-rate and P&L via a **simple reference policy** (enter when the
   pump probability is high and the rug probability low, equal-sized, realized at the horizon).
   This is a *yardstick* for the signal only — the real, tunable policy lives in the bot
@@ -45,7 +48,9 @@ from .calibration import (
     Calibration,
     fit_calibration,
 )
+from .config import ENTRY_SELECTION_DEFAULTS
 from .dataset import SequenceDataset, batch_loader, make_datasets, make_holdout_dataset
+from .entry_selection import select_entries
 from .inference import contract_outputs, resolve_calibration
 from .model import SoliaTransformer
 
@@ -319,6 +324,8 @@ class EvaluationReport:
     # classification metrics on the raw (identity) probabilities — the ECE "before".
     calibration: dict[str, Any] = field(default_factory=dict)
     uncalibrated: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
+    # Per horizon, the "gated" (rug gate) and "pump_only" entry selections (select_entries).
+    entry: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         """A JSON-safe dict (non-finite metrics, which JSON can't hold, become ``null``)."""
@@ -360,6 +367,18 @@ class EvaluationReport:
                     f"{horizon:>8} | pump {fmt(before['pump'])} -> {fmt(self.pump[horizon]['ece'])}"
                     f" | rug {fmt(before['rug'])} -> {fmt(self.rug[horizon]['ece'])}"
                 )
+        if self.entry:
+            lines += ["", "Entry selection (top by pump prob): precision / base rate, tokens"]
+            for horizon in self.horizons:
+                parts = []
+                for kind in ("gated", "pump_only"):
+                    s = self.entry[horizon][kind]
+                    gate = "all" if s["rug_threshold"] is None else f"rug<={s['rug_threshold']}"
+                    parts.append(
+                        f"{gate} {s['windows']} win {fmt(s['precision'])}/{fmt(s['base_rate'])} "
+                        f"{s['tokens']} tok (top {fmt(s['top_token_share'])})"
+                    )
+                lines.append(f"{horizon:>8} | " + " | ".join(parts))
         pol = self.policy
         lines += [
             "",
@@ -400,6 +419,7 @@ def evaluate(
     temperature: float | None = None,
     n_bins: int = DEFAULT_ECE_BINS,
     batch_size: int = 256,
+    entry_top_fraction: float = ENTRY_SELECTION_DEFAULTS["top_fraction"],
 ) -> EvaluationReport:
     """Score ``dataset`` with ``model`` and build the full :class:`EvaluationReport`.
 
@@ -411,6 +431,7 @@ def evaluate(
     Probabilities go through ``calibration`` (or a uniform ``temperature`` override; identity when
     neither is given), exactly as ``/predict`` serves them; the classification metrics of the raw
     probabilities are reported alongside (``uncalibrated``), so the ECE before/after is visible.
+    The entry selections take the top ``entry_top_fraction`` windows under the policy's rug gate.
     """
     horizons = list(dataset.samples.horizons)
     if not horizons:
@@ -432,6 +453,8 @@ def evaluate(
     rug: dict[str, dict[str, Any]] = {}
     ret: dict[str, dict[str, Any]] = {}
     uncalibrated: dict[str, dict[str, dict[str, Any]]] = {"pump": {}, "rug": {}}
+    entry: dict[str, dict[str, dict[str, Any]]] = {}
+    mints = np.asarray(dataset.samples.mint, dtype=object)[dataset.indices]
     for h, horizon in enumerate(horizons):
         labeled = truth["mask"][:, h] == 1
         for head, out in (("pump", pump), ("rug", rug)):
@@ -448,6 +471,17 @@ def evaluate(
             truth["expected_return"][:, h][labeled],
             predictions["expected_return"][:, h][labeled],
         )
+        columns = (
+            predictions["pump_prob"][:, h][labeled],
+            predictions["rug_prob"][:, h][labeled],
+            truth["pump"][:, h][labeled],
+            truth["expected_return"][:, h][labeled],
+            mints[labeled],
+        )
+        entry[horizon] = {
+            kind: select_entries(*columns, top_fraction=entry_top_fraction, rug_threshold=gate)
+            for kind, gate in (("gated", policy.rug_threshold), ("pump_only", None))
+        }
 
     return EvaluationReport(
         model_version=model_version,
@@ -460,6 +494,7 @@ def evaluate(
         policy=policy.simulate(predictions, truth, horizons),
         calibration=calibration.as_dict(),
         uncalibrated=uncalibrated,
+        entry=entry,
     )
 
 

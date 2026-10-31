@@ -14,6 +14,14 @@ the ablation harness and the hyper-parameter search:
   — a lift carried by one lucky window is not a lift.
 * **Guard rails.** The candidate is rejected when calibration (ECE) or any other predictive metric
   (ROC-AUC / PR-AUC on any head and horizon) regresses beyond its tolerance, on average over runs.
+* **Entry selection** (``entry_selection``, :mod:`solia_ai.entry_selection`). Per horizon, the
+  candidate's top ``top_fraction`` windows by ``pump_prob`` among those passing the reference
+  policy's rug gate must, on average over runs, beat the base rate (precision >= ``min_top_lift``
+  x base rate) and be broad (>= ``min_tokens`` distinct tokens, none above ``max_token_share``):
+  averaged metrics can't see a confidently wrong rule concentrated on a few tokens (#179). A
+  selection drawn from fewer than ``min_tokens`` tokens is undefined — reported, never passed nor
+  rejected. The pump-only selection and the champion's are reported, never blocking. Like the P&L
+  veto it can reject, never promote; it also applies to the first (``initial``) candidate.
 * **P&L is a sanity check, never a reason to promote.** The reference-policy P&L lift is reported
   with a bootstrap confidence interval (over runs); with ``pnl_veto`` a lift whose whole interval
   lies below zero rejects the candidate.
@@ -38,7 +46,13 @@ from typing import Any
 
 import numpy as np
 
-from .config import PROMOTION_DEFAULTS, PROMOTION_HEADS, validate_config
+from .config import (
+    ENTRY_SELECTION_DEFAULTS,
+    PROMOTION_DEFAULTS,
+    PROMOTION_HEADS,
+    validate_config,
+)
+from .entry_selection import GATED, PUMP_ONLY, RUG_THRESHOLD_KEY, summarize_selection
 from .features import FEATURE_COLUMNS, is_ordered_subset
 from .lift import PREDICTIVE_METRICS, lift, summarize
 from .registry import ModelRecord
@@ -54,6 +68,20 @@ RunMetrics = Mapping[RunKey, Mapping[str, float | None]]
 
 
 # --------------------------------------------------------------------------- settings
+
+
+@dataclass(frozen=True)
+class EntrySelectionSettings:
+    """The ``promotion.entry_selection`` knobs; ``min_top_lift`` 0 reports without guarding."""
+
+    top_fraction: float
+    min_top_lift: float
+    min_tokens: int
+    max_token_share: float
+
+    @property
+    def enabled(self) -> bool:
+        return self.min_top_lift > 0
 
 
 @dataclass(frozen=True)
@@ -74,6 +102,7 @@ class PromotionSettings:
     bootstrap_samples: int
     confidence: float
     seed: int
+    entry_selection: EntrySelectionSettings | None = None  # None = guard off, nothing reported
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any]) -> PromotionSettings:
@@ -84,11 +113,21 @@ class PromotionSettings:
         knobs = {**PROMOTION_DEFAULTS, **config.get("promotion", {})}
         if knobs["horizon"] is None:
             knobs["horizon"] = horizons[len(horizons) // 2]
+        if knobs["entry_selection"] is not None:
+            knobs["entry_selection"] = EntrySelectionSettings(
+                **{**ENTRY_SELECTION_DEFAULTS, **knobs["entry_selection"]}
+            )
         return cls(horizons=horizons, **knobs)
 
     @property
     def primary_key(self) -> str:
         return f"{self.head}/{self.horizon}/{self.metric}"
+
+    @property
+    def entry_top_fraction(self) -> float:
+        """The top fraction the runs' entry selections are measured at."""
+        entry = self.entry_selection
+        return ENTRY_SELECTION_DEFAULTS["top_fraction"] if entry is None else entry.top_fraction
 
     @property
     def expected_runs(self) -> int:
@@ -141,6 +180,72 @@ def bootstrap_ci(
 
 def _defined(value: Any) -> bool:
     return value is not None and math.isfinite(value)
+
+
+# --------------------------------------------------------------------------- entry selection
+
+
+def check_entry_selection(
+    candidate: Sequence[Mapping[str, float | None]],
+    champion: Sequence[Mapping[str, float | None]] | None,
+    settings: PromotionSettings,
+) -> tuple[dict[str, Any], list[str]]:
+    """The entry-selection guard over the candidate's runs: ``(summary, reasons to reject)``.
+
+    Per horizon, ``candidate`` is the rug-gated selection the guard checks (``status`` ``pass`` /
+    ``fail`` / ``undefined`` / ``report-only``); ``pump_only`` and the champion's selections are
+    reported alongside, never blocking. See the module doc.
+    """
+    entry = settings.entry_selection
+    if entry is None:
+        return {}, []
+    rug = next(
+        (r[RUG_THRESHOLD_KEY] for r in candidate if _defined(r.get(RUG_THRESHOLD_KEY))), None
+    )
+    top = f"top-{entry.top_fraction * 100:g}%"
+    gate = "rug gate" if rug is None else f"rug<={rug:g}"
+    reasons: list[str] = []
+    horizons: dict[str, Any] = {}
+    for horizon in settings.horizons:
+        sel = summarize_selection(candidate, GATED, horizon, min_tokens=entry.min_tokens)
+        failures: list[str] = []
+        if sel["defined"] and entry.enabled:
+            label = f"pump/{horizon} entry {top} ({gate})"
+            precision, base = sel["precision"], sel["base_rate"]
+            if base is not None and precision < entry.min_top_lift * base:
+                failures.append(
+                    f"{label}: precision {precision:.3f} < "
+                    + ("" if entry.min_top_lift == 1 else f"{entry.min_top_lift:g} x ")
+                    + f"base rate {base:.3f}"
+                )
+            breadth = (
+                f"{label}: {sel['windows']:.0f} windows from {sel['tokens']:.4g} tokens "
+                f"(top token {sel['top_token_share']:.0%})"
+            )
+            if sel["tokens"] < entry.min_tokens:
+                failures.append(f"{breadth} < min_tokens {entry.min_tokens}")
+            if sel["top_token_share"] > entry.max_token_share:
+                failures.append(f"{breadth} > max_token_share {entry.max_token_share:.0%}")
+        reasons += failures
+        if not sel["defined"]:
+            sel["status"] = "undefined"
+        elif not entry.enabled:
+            sel["status"] = "report-only"
+        else:
+            sel["status"] = "fail" if failures else "pass"
+
+        def reported(runs: Any, prefix: str, horizon: str = horizon) -> dict[str, Any] | None:
+            if runs is None:
+                return None
+            return summarize_selection(runs, prefix, horizon, min_tokens=entry.min_tokens)
+
+        horizons[horizon] = {
+            "candidate": sel,
+            "pump_only": reported(candidate, PUMP_ONLY),
+            "champion": reported(champion, GATED),
+            "champion_pump_only": reported(champion, PUMP_ONLY),
+        }
+    return {"rug_threshold": rug, "horizons": horizons}, reasons
 
 
 # --------------------------------------------------------------------------- decision
@@ -234,9 +339,19 @@ def decide_promotion(
             + ("" if champion is not None else " (a single seed without a champion)")
         )
 
+    entry, entry_reasons = check_entry_selection(
+        [candidate[run] for run in runs],
+        None if champion is None else [champion[run] for run in runs],
+        settings,
+    )
+    if entry:
+        summary["entry_selection"] = entry
+
     if champion is None:
         values = [candidate[run][key] for run in runs]
         summary["candidate"] = {"mean": float(np.mean(values))}
+        if entry_reasons:
+            return reject(*entry_reasons)
         return PromotionDecision(True, True, ("no champion yet: first valid candidate",), summary)
 
     corrupt = non_finite("champion", champion)
@@ -324,6 +439,7 @@ def decide_promotion(
             f"reference-policy P&L lift is significantly negative "
             f"({ci['confidence']:.0%} CI [{ci['low']:+.4f}, {ci['high']:+.4f}])"
         )
+    reasons += entry_reasons
 
     if reasons:
         return reject(*reasons)

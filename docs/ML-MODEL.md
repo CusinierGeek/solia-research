@@ -681,7 +681,21 @@ paper-trading account — a single live path has no counterfactual for the champ
   `(window, seed)` runs, metrics named as in `ablation.run_metrics`. Promote only if the primary
   metric (default `pump/5m/pr_auc`) lifts by > `margin` on average **and** on ≥ `min_win_share` of
   runs, with no ECE / other ROC-AUC·PR-AUC regression beyond tolerance. P&L lift gets a bootstrap
-  CI: it can veto (`pnl_veto`, CI entirely < 0), never promote. No champion → first valid candidate
+  CI: it can veto (`pnl_veto`, CI entirely < 0), never promote. **Entry-selection guard**
+  (`promotion.entry_selection`, `solia_ai/entry_selection.py`, #180): averaged metrics count each
+  window once, so a few near-duplicate windows of one token can hide a confidently wrong entry rule
+  — or fake a good one. Retrain #3's candidate improved ROC-AUC / PR-AUC everywhere, yet its top 1 %
+  1 h windows passing the rug gate were 417 windows from 11 tokens, 85 % one token that rugged,
+  precision 0 ([#179's finding](reports/inverted-1h-179.txt); the pump head alone ranked well).
+  Per horizon, the guard takes the candidate's top `top_fraction` (1 %) held-out windows by
+  `pump_prob` **among those passing the reference policy's rug gate** (`rug_prob ≤` the bot's
+  `MaxRugProb`) and, averaged over runs, requires precision ≥ `min_top_lift` (1.0) × the horizon's
+  base rate and ≥ `min_tokens` (20) distinct tokens with none above `max_token_share` (50 %). A
+  selection drawn from fewer than `min_tokens` tokens is *undefined*: reported, neither passed nor
+  rejected. The pump-only top-k and the champion's selections are reported, never blocking; all are
+  in `training_events.metrics.entry_selection` and in the run metrics (`entry/<h>/…`,
+  `entry_pump/<h>/…`) of ablation / search reports. It can reject — the first candidate too — never
+  promote; omit the block or set `min_top_lift: 0` to disable it. No champion → first valid candidate
   is promoted (`initial`) — and since seeds only matter for a paired comparison, a retrain without
   a champion trains **one** candidate (noted in the run); missing/NaN metrics (candidate or
   champion), or runs that are not exactly `windows` distinct windows × `seeds` distinct seeds

@@ -80,6 +80,7 @@ from .ablation import (
 )
 from .config import ConfigError, validate_config
 from .dataset import SequenceDataset, config_samples, embargo_seconds, window_stride
+from .entry_selection import entry_keys
 from .evaluate import ReferencePolicy, default_policy_horizon, fmt, json_safe
 from .lift import PREDICTIVE_METRICS
 
@@ -575,7 +576,9 @@ def run_search(
             runs=runs,
             objective=stats,
             score=robust_score(stats),
-            summary={k: summarize(r.metrics.get(k) for r in runs) for k in keys},
+            summary={
+                k: summarize(r.metrics.get(k) for r in runs) for k in [*keys, *entry_keys(horizons)]
+            },
             seconds=clock() - started,
             fit=fit,
             drift=drift_by_window(runs, described, horizons),

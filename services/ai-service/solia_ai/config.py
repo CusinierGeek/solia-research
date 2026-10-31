@@ -51,6 +51,15 @@ PROMOTION_DEFAULTS: dict[str, Any] = {
     "bootstrap_samples": 2000,
     "confidence": 0.95,
     "seed": 0,
+    # The entry-selection guard (solia_ai.entry_selection); omitted or null = disabled.
+    "entry_selection": None,
+}
+# Its knobs, when the ``promotion.entry_selection`` block is given (an omitted knob keeps these).
+ENTRY_SELECTION_DEFAULTS: dict[str, Any] = {
+    "top_fraction": 0.01,
+    "min_top_lift": 1.0,
+    "min_tokens": 20,
+    "max_token_share": 0.5,
 }
 
 # The most recent share of labeled windows the walk-forward evaluation holds out
@@ -443,6 +452,36 @@ def _validate(config: Any, source: str) -> None:
             fail("'promotion.confidence' must be in (0, 1)")
         if not isinstance(promotion.get("pnl_veto", True), bool):
             fail(f"'promotion.pnl_veto' must be a boolean, got {promotion['pnl_veto']!r}")
+        entry = promotion.get("entry_selection")
+        if entry is not None:
+            if not isinstance(entry, dict):
+                fail("'promotion.entry_selection' must be a mapping (or null to disable it)")
+            unknown = [str(k) for k in entry if k not in ENTRY_SELECTION_DEFAULTS]
+            if unknown:
+                fail(f"'promotion.entry_selection' has unknown key(s): {', '.join(unknown)}")
+            ranges = {
+                "top_fraction": (lambda v: 0 < v <= 0.5, "in (0, 0.5]"),
+                "min_top_lift": (lambda v: v >= 0, ">= 0"),
+                "max_token_share": (lambda v: 0 < v <= 1, "in (0, 1]"),
+            }
+            for key, (ok, bounds) in ranges.items():
+                value = entry.get(key, ENTRY_SELECTION_DEFAULTS[key])
+                if (
+                    isinstance(value, bool)
+                    or not isinstance(value, int | float)
+                    or not math.isfinite(value)
+                    or not ok(value)
+                ):
+                    fail(
+                        f"'promotion.entry_selection.{key}' must be a number {bounds}, "
+                        f"got {value!r}"
+                    )
+            tokens = entry.get("min_tokens", ENTRY_SELECTION_DEFAULTS["min_tokens"])
+            if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens < 1:
+                fail(
+                    "'promotion.entry_selection.min_tokens' must be an integer >= 1, "
+                    f"got {tokens!r}"
+                )
 
     if "candidate" in config:
         candidate = section("candidate")

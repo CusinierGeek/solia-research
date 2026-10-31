@@ -50,6 +50,7 @@ import pandas as pd
 from .calibration import settings as calibration_settings
 from .config import DEFAULT_EVAL_FRACTION
 from .dataset import SequenceDataset, config_samples, embargo_seconds, temporal_split
+from .entry_selection import RUG_THRESHOLD_KEY, entry_keys, flatten
 from .evaluate import (
     EvaluationReport,
     ReferencePolicy,
@@ -224,7 +225,8 @@ def raw_key(key: str) -> str:
 
 def run_metrics(report: EvaluationReport) -> dict[str, float | None]:
     """The ablation metrics of one evaluation (``None`` where a metric is undefined), plus the
-    uncalibrated predictive metrics under :func:`raw_key`."""
+    uncalibrated predictive metrics under :func:`raw_key` and the entry selections
+    (:func:`solia_ai.entry_selection.entry_keys`, with the rug gate they used)."""
     out: dict[str, float | None] = {}
     for head in HEADS:
         per_horizon = getattr(report, head)
@@ -236,6 +238,8 @@ def run_metrics(report: EvaluationReport) -> dict[str, float | None]:
                     out[raw_key(f"{head}/{h}/{m}")] = _finite(raw[h][m])
     for m in POLICY_METRICS:
         out[f"policy/{m}"] = _finite(report.policy[m])
+    out.update(flatten(report.entry))
+    out[RUG_THRESHOLD_KEY] = _finite(report.policy.get("rug_threshold"))
     return out
 
 
@@ -443,7 +447,7 @@ def run_ablation(
     keys = metric_keys(horizons)
     by_variant = {v.name: _ordered(runs, v.name, windows, seeds) for v in variants}
     summary = {
-        name: {k: summarize(r.metrics[k] for r in rs) for k in keys}
+        name: {k: summarize(r.metrics.get(k) for r in rs) for k in [*keys, *entry_keys(horizons)]}
         for name, rs in by_variant.items()
     }
     lifts: dict[str, dict[str, dict[str, Any]]] = {}

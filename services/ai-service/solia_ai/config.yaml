@@ -83,6 +83,15 @@ promotion:
   bootstrap_samples: 2000
   confidence: 0.95 # bootstrap CI level
   seed: 0 # bootstrap RNG seed (reproducible decisions)
+  # Entry-selection guard (#180, docs/ML-MODEL.md "Promotion gate"): per horizon, the top
+  # `top_fraction` held-out windows by pump_prob among those passing the reference policy's rug
+  # gate must beat buying everything and spread over enough tokens. Can reject, never promote.
+  # Omit the block (or set min_top_lift: 0) to disable it.
+  entry_selection:
+    top_fraction: 0.01 # in (0, 0.5]
+    min_top_lift: 1.0 # precision >= this x the horizon's base rate
+    min_tokens: 20 # distinct tokens in the selection (fewer in the pool = undefined)
+    max_token_share: 0.5 # no token above this share of the selected windows
 
 # Candidate training (solia_ai/candidate.py): each retrain fits a candidate on every labeled window
 # ending before the held-out window (the most recent `heldout_fraction`, minus the label embargo),

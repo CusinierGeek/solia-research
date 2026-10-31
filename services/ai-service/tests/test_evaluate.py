@@ -484,3 +484,28 @@ def test_holdout_starts_after_the_calibration_window():
 
     ends = held_out.samples.end_ts[held_out.indices]
     assert ends.min() > calibration_end_ts + embargo_seconds(cfg["horizons"])
+
+
+def test_evaluate_reports_the_entry_selections_and_run_metrics_flatten_them():
+    from solia_ai.ablation import run_metrics
+    from solia_ai.entry_selection import RUG_THRESHOLD_KEY, entry_key, entry_keys
+
+    model, val_ds = _trained_tiny()
+    policy = ReferencePolicy(horizon=val_ds.samples.horizons[0], rug_threshold=1.0)
+
+    report = evaluate(model, val_ds, policy=policy, entry_top_fraction=0.5)
+
+    horizons = list(val_ds.samples.horizons)
+    for h, horizon in enumerate(horizons):
+        gated, every = report.entry[horizon]["gated"], report.entry[horizon]["pump_only"]
+        labeled = int((val_ds.samples.mask[val_ds.indices][:, h] == 1).sum())
+        assert gated["rug_threshold"] == 1.0 and every["rug_threshold"] is None
+        assert gated["pool_windows"] == every["pool_windows"] == labeled  # rug <= 1 keeps all
+        assert every["windows"] == -(-labeled // 2) and 1 <= every["tokens"] <= 8
+    metrics = run_metrics(report)
+    assert set(entry_keys(horizons)) <= set(metrics)
+    assert metrics[RUG_THRESHOLD_KEY] == 1.0
+    assert metrics[entry_key("entry", horizons[0], "windows")] == float(
+        report.entry[horizons[0]]["gated"]["windows"]
+    )
+    assert "Entry selection" in report.render()

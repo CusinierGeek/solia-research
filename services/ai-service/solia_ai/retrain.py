@@ -615,6 +615,7 @@ def train_and_evaluate(
                     SequenceDataset(scored, w.eval_idx),
                     policy=policy,
                     calibration=calibration,
+                    entry_top_fraction=gate.entry_top_fraction,
                 )
             )
             for w in windows
