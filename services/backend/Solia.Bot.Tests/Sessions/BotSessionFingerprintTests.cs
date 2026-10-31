@@ -49,6 +49,12 @@ public class BotSessionFingerprintTests
         o => o.LiquidityFloorSol["default"] = 2m,
         o => o.MaxPositionFraction = 0.1,
         o => o.StartingBalance = 20m,
+        o => o.EntryLatencyMs = 0,
+        o => o.ExitLatencyMs = 500,
+        o => o.NetworkFeeSol = 0m,
+        o => o.AccountRentSol = 0m,
+        o => o.MaxSlippagePct = 0.3,
+        o => o.MaxExitRetries = 1,
     ];
 
     [Fact]

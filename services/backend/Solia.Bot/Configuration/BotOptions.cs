@@ -78,11 +78,13 @@ public sealed class BotOptions : IValidatableObject
     /// entry gate also requires the balance to be at least this much, [0, 1 000 000]. Zero disables the
     /// floor. Avoids economically meaningless positions. Must not exceed the largest position the bot could
     /// ever open (<see cref="StartingBalance"/> · <see cref="MaxPositionFraction"/>), or every trade would
-    /// be dust. Money is <see cref="decimal"/>.
+    /// be dust, and while enabled must cover the fixed cost of a round trip (<see cref="RoundTripFixedCostSol"/>), or
+    /// the smallest trade would lose more than its size to network fees. Default 0.01 (the default round trip costs
+    /// ~0.0024: ~24 % of a minimum position). Money is <see cref="decimal"/>.
     /// </summary>
     [Range(typeof(decimal), "0", "1000000",
         ParseLimitsInInvariantCulture = true, ConvertValueInInvariantCulture = true)]
-    public decimal MinPositionSize { get; set; } = 0.001m;
+    public decimal MinPositionSize { get; set; } = 0.01m;
 
     /// <summary>Take-profit as a fraction above entry price (e.g. 0.5 = +50%), (0, 10] — zero would close every position immediately.</summary>
     [Range(0.0, 10.0, MinimumIsExclusive = true)]
@@ -220,6 +222,63 @@ public sealed class BotOptions : IValidatableObject
     };
 
     /// <summary>
+    /// Execution latency of an entry, in ms of event time, [0, 60 000] (see Trading.PositionManager, docs/ML-MODEL.md
+    /// "Execution realism"). An entry decided at <c>t</c> fills at the mint's first mark at or after <c>t + latency</c>;
+    /// with none within <see cref="MaxMarkAgeSeconds"/> after that it is abandoned. Default 3 000: the snapshot is
+    /// written (~1 s), the bot polls it (<c>PollInterval</c> 2 s, ~1 s on average), the ai-service scores it (~0.1 s), and
+    /// the transaction is sent and lands (~1 s, 2–3 slots). Zero disables it: the order fills at the decision mark.
+    /// </summary>
+    [Range(0, 60_000)]
+    public int EntryLatencyMs { get; set; } = 3_000;
+
+    /// <summary>
+    /// Execution latency of an exit (TP/SL, signal, timeout), in ms of event time, [0, 60 000]. A triggered exit fills at
+    /// the first mark at or after <c>trigger + latency</c>; with none within <see cref="MaxMarkAgeSeconds"/> after that it
+    /// falls back to the stale-mark rule. Default 2 000: the trigger mark is seen through the same feed (~1 s), no
+    /// scoring for a price exit, then send + inclusion (~1 s). Zero disables it.
+    /// </summary>
+    [Range(0, 60_000)]
+    public int ExitLatencyMs { get; set; } = 2_000;
+
+    /// <summary>
+    /// Fixed Solana cost of one transaction, in SOL, [0, 1]: base fee (0.000005 per signature) + priority fee + tip.
+    /// Charged on every entry and exit attempt, filled or failed, whatever the size, so it is in <c>pnl</c>. Default
+    /// 0.0002 (base + a ~0.0001 priority fee + a ~0.0001 Jito tip, typical for a retail bot in 2026, approximate).
+    /// Zero disables it.
+    /// </summary>
+    [Range(typeof(decimal), "0", "1", ParseLimitsInInvariantCulture = true, ConvertValueInInvariantCulture = true)]
+    public decimal NetworkFeeSol { get; set; } = 0.0002m;
+
+    /// <summary>
+    /// Net token-account rent a trade doesn't get back, in SOL, [0, 1], charged once on entry (in <c>pnl</c>). Default
+    /// 0.00203928, the rent-exempt minimum of a 165-byte SPL token account, on the assumption the account is left open
+    /// after the sale (closing it refunds the rent but costs another transaction, and bots commonly skip it); set the
+    /// net of a close to model closing it. Zero disables it.
+    /// </summary>
+    [Range(typeof(decimal), "0", "1", ParseLimitsInInvariantCulture = true, ConvertValueInInvariantCulture = true)]
+    public decimal AccountRentSol { get; set; } = 0.00203928m;
+
+    /// <summary>
+    /// Slippage tolerance, as a fraction of the fill quoted at decision time, [0, 1): an entry whose fill price at
+    /// execution is more than this above its quote fails (no position, the network fee is still charged); an exit whose
+    /// fill is more than this below its quote fails and is retried at the next mark (see <see cref="MaxExitRetries"/>).
+    /// Default 0.15, the range retail memecoin bots default to (10–20 %). Zero disables it: every order fills.
+    /// </summary>
+    [Range(0.0, 1.0, MaximumIsExclusive = true)]
+    public double MaxSlippagePct { get; set; } = 0.15;
+
+    /// <summary>
+    /// How many times a failed exit is retried within <see cref="MaxSlippagePct"/>, [0, 100]; the attempt after the last
+    /// retry fills at any price (a bot that must get out widens its tolerance), so an exit is never dropped. Each attempt
+    /// pays <see cref="NetworkFeeSol"/>.
+    /// </summary>
+    [Range(0, 100)]
+    public int MaxExitRetries { get; set; } = 3;
+
+    /// <summary>Fixed SOL a round trip pays whatever its size: two transactions and the account rent.</summary>
+    public decimal RoundTripFixedCostSol() => 2m * NetworkFeeSol + AccountRentSol;
+
+    /// <summary>
     /// Optional human label for the bot session this configuration opens (e.g. "entry 0.3 / 0.15"), at most 200
     /// characters. Only used when a new session starts — a restart that continues the current session keeps its label —
     /// and not part of the session's regime fingerprint (see Sessions.BotSessionFingerprint).
@@ -256,6 +315,27 @@ public sealed class BotOptions : IValidatableObject
                 $"{nameof(MinTakeProfitPct)} ({MinTakeProfitPct}) exceeds {nameof(TakeProfitPct)} ({TakeProfitPct}); " +
                 "no prediction could ever clear the take-profit floor.",
                 [nameof(MinTakeProfitPct), nameof(TakeProfitPct)]);
+        }
+
+        decimal roundTrip = RoundTripFixedCostSol();
+        if (MinPositionSize > 0m && roundTrip > MinPositionSize)
+        {
+            yield return new ValidationResult(
+                $"{nameof(MinPositionSize)} ({MinPositionSize}) is below the fixed cost of a round trip, 2 · {nameof(NetworkFeeSol)} + " +
+                $"{nameof(AccountRentSol)} ({roundTrip}); the smallest trade would lose more than its size.",
+                [nameof(MinPositionSize), nameof(NetworkFeeSol), nameof(AccountRentSol)]);
+        }
+
+        long timeoutMs = PositionTimeoutSeconds * 1_000L;
+        foreach ((string name, int latency) in new[] { (nameof(EntryLatencyMs), EntryLatencyMs), (nameof(ExitLatencyMs), ExitLatencyMs) })
+        {
+            if (latency >= timeoutMs)
+            {
+                yield return new ValidationResult(
+                    $"{name} ({latency}) must be below {nameof(PositionTimeoutSeconds)} ({PositionTimeoutSeconds} s); " +
+                    "an order slower than the whole holding period can't be simulated meaningfully.",
+                    [name, nameof(PositionTimeoutSeconds)]);
+            }
         }
 
         foreach (ValidationResult problem in CheckVenues(nameof(LiquidityFloorSol), LiquidityFloorSol, v => v is >= 0m and <= 1_000_000m, "[0, 1 000 000] SOL")

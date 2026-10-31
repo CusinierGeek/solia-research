@@ -278,7 +278,7 @@ public class PositionManagerTests
     [Fact]
     public async Task Capacity_is_capped_at_max_concurrent_positions()
     {
-        var bot = new PositionManager(new BotOptions { MaxConcurrentPositions = 1, RealisticFills = false }, _store);
+        var bot = new PositionManager(PolicyFixtures.WithoutExecution(new BotOptions { MaxConcurrentPositions = 1, RealisticFills = false }), _store);
         foreach (BotEvent e in new[] { Tick(0, Entry), Tick(0, Entry, mint: "b"), Predict(1), Predict(2, mint: "b") })
         {
             await bot.HandleAsync(e);

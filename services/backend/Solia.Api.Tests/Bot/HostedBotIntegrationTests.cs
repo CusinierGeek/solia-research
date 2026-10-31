@@ -61,6 +61,12 @@ public sealed class HostedBotIntegrationTests : PostgresFixture, IAsyncLifetime
                 ("Bot:TimeoutSweepSeconds", "0"),
                 // The fixed "now" is minutes after the price path: keep its rows fresh.
                 ("Bot:MaxMarkAgeSeconds", "3600"),
+                // Instant, free fills (#175 off): the assertions below are exact.
+                ("Bot:EntryLatencyMs", "0"),
+                ("Bot:ExitLatencyMs", "0"),
+                ("Bot:NetworkFeeSol", "0"),
+                ("Bot:AccountRentSol", "0"),
+                ("Bot:MaxSlippagePct", "0"),
             ],
             builder => builder.ConfigureTestServices(services =>
             {

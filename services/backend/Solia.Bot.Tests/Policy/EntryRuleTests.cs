@@ -132,8 +132,8 @@ public class EntryRuleTests
     [Fact]
     public void A_size_below_the_dust_floor_is_rejected()
     {
-        // Balance clears the floor (0.004 ≥ 0.001) but the capped size (0.004 · 0.2 = 0.0008) does not.
-        PortfolioState small = HasCapacity() with { Balance = 0.004m };
+        // Balance clears the floor (0.04 ≥ 0.01) but the capped size (0.04 · 0.2 = 0.008) does not.
+        PortfolioState small = HasCapacity() with { Balance = 0.04m };
         EntryDecision decision = EntryRule.Evaluate(PolicyFixtures.Buyable(), small, Opts);
 
         Assert.False(decision.Enter);

@@ -119,7 +119,8 @@ public class BotOptionsValidationTests
     [InlineData("1000000")] // the cap itself is allowed
     public void In_range_starting_balance_is_accepted(string balance)
     {
-        Assert.True(IsValid(new BotOptions { StartingBalance = Dec(balance) }));
+        // The dust floor off: a 0.01 balance can't open a 0.01 position.
+        Assert.True(IsValid(new BotOptions { StartingBalance = Dec(balance), MinPositionSize = 0m }));
     }
 
     [Fact]
@@ -343,5 +344,80 @@ public class BotOptionsValidationTests
     public void Idealized_fills_are_valid()
     {
         Assert.True(IsValid(new BotOptions { RealisticFills = false }));
+    }
+
+    // --- Execution realism (#175) ---
+
+    [Theory]
+    [InlineData(-1, 0)]
+    [InlineData(60_001, 0)]
+    [InlineData(0, -1)]
+    [InlineData(0, 60_001)]
+    public void Out_of_range_latencies_are_rejected(int entryMs, int exitMs)
+    {
+        Assert.False(IsValid(new BotOptions { EntryLatencyMs = entryMs, ExitLatencyMs = exitMs }));
+    }
+
+    [Theory]
+    [InlineData("-0.0001", "0")]
+    [InlineData("1.5", "0")]
+    [InlineData("0", "-0.001")]
+    [InlineData("0", "2")]
+    public void Out_of_range_network_costs_are_rejected(string fee, string rent)
+    {
+        Assert.False(IsValid(new BotOptions { NetworkFeeSol = Dec(fee), AccountRentSol = Dec(rent) }));
+    }
+
+    [Theory]
+    [InlineData(-0.01, 3)]
+    [InlineData(1.0, 3)] // a 100 % tolerance would accept any fill: disable it with 0 instead
+    [InlineData(0.15, -1)]
+    [InlineData(0.15, 101)]
+    public void Out_of_range_slippage_tolerance_or_retries_are_rejected(double slippage, int retries)
+    {
+        Assert.False(IsValid(new BotOptions { MaxSlippagePct = slippage, MaxExitRetries = retries }));
+    }
+
+    [Fact]
+    public void Every_execution_knob_at_zero_is_valid()
+    {
+        Assert.True(IsValid(new BotOptions
+        {
+            EntryLatencyMs = 0,
+            ExitLatencyMs = 0,
+            NetworkFeeSol = 0m,
+            AccountRentSol = 0m,
+            MaxSlippagePct = 0,
+            MaxExitRetries = 0,
+        }));
+    }
+
+    [Theory]
+    [InlineData(60_000, 0, 60)]
+    [InlineData(0, 30_000, 30)]
+    public void A_latency_as_long_as_the_position_timeout_is_rejected(int entryMs, int exitMs, int timeoutSeconds)
+    {
+        Assert.False(IsValid(new BotOptions { EntryLatencyMs = entryMs, ExitLatencyMs = exitMs, PositionTimeoutSeconds = timeoutSeconds }));
+        Assert.True(IsValid(new BotOptions
+        {
+            EntryLatencyMs = Math.Max(0, entryMs - 1),
+            ExitLatencyMs = Math.Max(0, exitMs - 1),
+            PositionTimeoutSeconds = timeoutSeconds,
+        }));
+    }
+
+    [Fact]
+    public void A_dust_floor_below_the_round_trip_fixed_cost_is_rejected()
+    {
+        // 2 · 0.001 + 0.002 = 0.004 > 0.003: the smallest trade would lose more than its size.
+        Assert.False(IsValid(new BotOptions { MinPositionSize = 0.003m, NetworkFeeSol = 0.001m, AccountRentSol = 0.002m }));
+        Assert.True(IsValid(new BotOptions { MinPositionSize = 0.004m, NetworkFeeSol = 0.001m, AccountRentSol = 0.002m }));
+        Assert.True(IsValid(new BotOptions { MinPositionSize = 0m, NetworkFeeSol = 0.001m, AccountRentSol = 0.002m })); // floor off
+    }
+
+    [Fact]
+    public void The_default_round_trip_fixed_cost_is_two_fees_and_the_rent()
+    {
+        Assert.Equal(2m * 0.0002m + 0.00203928m, new BotOptions().RoundTripFixedCostSol());
     }
 }

@@ -320,7 +320,8 @@ Approximations, chosen pessimistic: each side is priced against the pool as obse
 bot's own paper trade, so a round trip pays the impact twice where on-chain it would partly unwind (bounded by
 the 2 % cap, ~2 % per side). TP/SL/dead-feed-stop triggers still read the observed mark; the fill applies on top, so a
 take-profit can realize less than its level. `Equity` marks open positions at the mark (no exit impact). The
-Kelly sizing doesn't price the costs in. Out of scope: latency, MEV / priority fees, order splitting.
+Kelly sizing doesn't price the costs in. Latency, network fees and failed fills: "Execution realism" below. Out of
+scope: MEV, order splitting.
 
 **Before/after on the live period** (2026-10-30 14:06–20:05, 104 closed trades, recomputed from the stored
 trades and their pools at entry/exit: [`reports/paper-fills-165.sql`](reports/paper-fills-165.sql) →
@@ -353,6 +354,46 @@ Realistic fills apply on top in every case. The previous rule used the stop for 
 phantom stops on quiet mints: on the live DB (2026-10-30) 54 of 74 timeouts filled at the stop, 49 of them with a
 last price unchanged vs entry (≈ −28 SOL). The new option changes the bot-session fingerprint, so P&L before and
 after the fix sits in separate sessions (#171).
+
+### Execution realism (#175)
+
+Realistic fills price the pool; the bot was still optimistic on **timing** and **network costs**: an order filled at
+the very snapshot its prediction was made on, paid no Solana fees and never failed. On a pumping token the seconds an
+order spends in flight move the price most, and at the bot's sizes (pool cap 2 %, often < 1 SOL) fixed per-transaction
+costs are a material share of each trade. All knobs are `Bot:*`, part of the session fingerprint (changing one opens a
+new session, #171), and each one set to 0 disables it — all at 0 is the engine as it was before (regression-tested).
+
+| rule | config (default) | |
+|---|---|---|
+| **Entry latency** | `EntryLatencyMs` (3 000) | an entry decided at `t` fills at the mint's **first mark at or after `t + latency`**, against that mark's pool; TP/SL are set from that fill mark. Gates, sizing and the pool cap are read at decision time. While pending, the order holds its size and a slot (`MaxConcurrentPositions` counts it; the mint takes no other entry). No mark within `MaxMarkAgeSeconds` after `t + latency` → **abandoned** (no trade, size released, no fee). |
+| **Exit latency** | `ExitLatencyMs` (2 000) | a TP/SL/signal/timeout trigger sends the exit; it fills at the first mark at or after `trigger + latency`, with the trigger's reason. Further triggers are ignored meanwhile (no second exit). No mark within `MaxMarkAgeSeconds` after it → the stale-mark rule ("Stale marks on exit" above). |
+| **Network fee** | `NetworkFeeSol` (0.0002) | per transaction, any size, filled or failed: base fee 0.000005 + a ~0.0001 priority fee + a ~0.0001 Jito tip (typical retail-bot settings, 2026, approximate). |
+| **Account rent** | `AccountRentSol` (0.00203928) | charged once on entry: the rent-exempt minimum of a 165-byte SPL token account, modelled as **never refunded** — closing the account after the sale refunds it but costs another transaction, and bots commonly skip it. Set it to the net of a close to model closing. |
+| **Slippage tolerance** | `MaxSlippagePct` (0.15) | each order is quoted at decision time (the fill at the decision mark). An entry filling more than 15 % above its quote — or into a pool with no SOL left — **fails**: no position, the fee is still paid. An exit filling more than 15 % below its quote fails, pays the fee and is re-sent, quoted at what it now sees, one latency later; `MaxExitRetries` (3) bounds it, after which the exit fills at any price — an exit is never dropped. Default from the 10–20 % retail memecoin bots use. |
+
+**Latency breakdown** (the default 3 s entry): the snapshot is aggregated and written (~1 s), the bot polls it
+(`Bot:PollInterval` 2 s → ~1 s on average), the ai-service scores it (~0.1 s on GPU), then the transaction is sent and
+included (~1 s, 2–3 slots). An exit on a price trigger skips the scoring and is seen through the same feed: ~2 s.
+
+**Accounting.** `pnl = Size · exit / entry − size − entry cost − exit cost`; entry cost = fee + rent, exit cost = one
+fee per attempt. A failed entry's fee isn't a trade: it is booked in the engine's realized P&L (`RealizedPnl`,
+`ReplayResult.RealizedPnl`) and logged. Sizing uses the balance net of a round trip's fixed costs
+(`2 · NetworkFeeSol + AccountRentSol` ≈ 0.0024 SOL), and `MinPositionSize` (now 0.01) must cover them — a floor below
+would let the smallest trade lose more than its size (validated; ~24 % of a minimum position at the defaults).
+
+**Visibility.** `logs` (service = bot) get `entry failed` (reason `slippage` / `empty pool`, quote vs fill),
+`exit failed` (attempt n) and `entry abandoned`; `position opened` / `closed` carry `entryCost` / `exitCost`. The
+engine counts `FailedEntryCount`, `FailedExitCount` and `AbandonedEntryCount` — in `ReplayResult` and in the bot's
+`bot stopping` row. They aren't trades, so `/stats/*` (computed from `trades`) don't count them.
+
+**Event clock.** Latency is applied on event time, never wall time, so a `ReplayHarness` run stays reproducible: a
+pending order fills on a later tick, or expires when an event (or the live host's idle sweep, `TimeoutSweepSeconds`)
+moves the clock past its window. The live feed's `ReorderWindow` (2 s) and `MaxEventLagSeconds` (5 s) don't eat into
+the latency: an event applied late keeps its own timestamp for the "mark at or after `t + latency`" test, and a late
+prediction is decided at the (later) clock time — so the simulated latency is always at least the configured one.
+
+Out of scope: MEV / sandwiches and same-block competition (could be approximated as extra latency or slippage),
+dynamic priority fees, the same latency in the ai-service's reference policy / entry-rule sweep.
 
 ### Choosing the entry rule
 

@@ -8,13 +8,31 @@ public static class PolicyFixtures
 {
     /// <summary>
     /// Options with the production defaults (MinConfidence 60, MinPumpProb 0.25, MaxRugProb 0.2, …) but idealized
-    /// fills (<see cref="BotOptions.RealisticFills"/> off: at the mark, no pool), so policy scenarios keep round
-    /// numbers. <see cref="RealisticOptions"/> is the production default.
+    /// fills (<see cref="BotOptions.RealisticFills"/> off: at the mark, no pool) and no execution realism (see
+    /// <see cref="WithoutExecution"/>), so policy scenarios keep round numbers. <see cref="ProductionOptions"/> is the
+    /// production default.
     /// </summary>
-    internal static BotOptions Options() => new() { RealisticFills = false };
+    internal static BotOptions Options() => WithoutExecution(new() { RealisticFills = false });
 
-    /// <summary>The production defaults, realistic fills included.</summary>
-    internal static BotOptions RealisticOptions() => new();
+    /// <summary>The production pool fills (#165) without the execution realism of #175 (see <see cref="WithoutExecution"/>).</summary>
+    internal static BotOptions RealisticOptions() => WithoutExecution(new());
+
+    /// <summary>The production defaults, every realism knob included.</summary>
+    internal static BotOptions ProductionOptions() => new();
+
+    /// <summary>
+    /// <paramref name="options"/> with every execution-realism knob at 0 — no latency, network fee, rent or slippage
+    /// tolerance — which is the engine as it was before them (the regression baseline).
+    /// </summary>
+    internal static BotOptions WithoutExecution(BotOptions options)
+    {
+        options.EntryLatencyMs = 0;
+        options.ExitLatencyMs = 0;
+        options.NetworkFeeSol = 0m;
+        options.AccountRentSol = 0m;
+        options.MaxSlippagePct = 0;
+        return options;
+    }
 
     /// <summary>A prediction that clears every default gate: strong pump, low rug, high confidence, positive edge.</summary>
     internal static ModelPrediction Buyable() => new()

@@ -18,7 +18,7 @@ namespace Solia.Bot.Backtest;
 /// <param name="StartingBalance">Virtual capital the replay began with.</param>
 /// <param name="FinalBalance">Uncommitted cash at the end — starting balance, minus open sizes, plus closed proceeds.</param>
 /// <param name="FinalEquity">Final balance plus every still-open position marked at its last price.</param>
-/// <param name="RealizedPnl">Sum of realized P&amp;L over <see cref="Trades"/>.</param>
+/// <param name="RealizedPnl">Sum of realized P&amp;L over <see cref="Trades"/>, less the network fees of failed entries.</param>
 /// <param name="Trades">Closed trades in the order they closed.</param>
 /// <param name="OpenPositions">Positions still held when the event stream ran out, in opening order.</param>
 /// <param name="DroppedEventCount">
@@ -26,6 +26,9 @@ namespace Solia.Bot.Backtest;
 /// <see cref="ReplayOrder.Arrival"/> replay can drop anything; a <see cref="ReplayOrder.Timestamp"/> one is
 /// always 0.
 /// </param>
+/// <param name="FailedEntryCount">Entries that failed at execution (slippage tolerance, empty pool) — no trade, a fee paid.</param>
+/// <param name="FailedExitCount">Exit attempts that breached the slippage tolerance and were retried.</param>
+/// <param name="AbandonedEntryCount">Pending entries abandoned for want of a mark after their latency.</param>
 public sealed record ReplayResult(
     decimal StartingBalance,
     decimal FinalBalance,
@@ -33,7 +36,10 @@ public sealed record ReplayResult(
     decimal RealizedPnl,
     IReadOnlyList<ClosedTrade> Trades,
     IReadOnlyList<OpenPosition> OpenPositions,
-    int DroppedEventCount)
+    int DroppedEventCount,
+    int FailedEntryCount = 0,
+    int FailedExitCount = 0,
+    int AbandonedEntryCount = 0)
 {
     /// <summary>How many trades closed over the replay.</summary>
     public int ClosedTradeCount => Trades.Count;
@@ -67,6 +73,9 @@ public sealed record ReplayResult(
         && FinalEquity == other.FinalEquity
         && RealizedPnl == other.RealizedPnl
         && DroppedEventCount == other.DroppedEventCount
+        && FailedEntryCount == other.FailedEntryCount
+        && FailedExitCount == other.FailedExitCount
+        && AbandonedEntryCount == other.AbandonedEntryCount
         && Trades.SequenceEqual(other.Trades)
         && OpenPositions.SequenceEqual(other.OpenPositions);
 

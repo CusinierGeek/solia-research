@@ -111,11 +111,22 @@ public sealed class PaperTradingBot : BackgroundService
         }
 
         _logger.LogInformation(
-            "paper-trading bot stopping (closedTrades={Closed}, realizedPnl={Pnl}, equity={Equity})",
-            _engine.ClosedTradeCount, _engine.RealizedPnl, _engine.Equity);
+            "paper-trading bot stopping (closedTrades={Closed}, realizedPnl={Pnl}, equity={Equity}, failedEntries={FailedEntries}, " +
+            "failedExits={FailedExits}, abandonedEntries={AbandonedEntries})",
+            _engine.ClosedTradeCount, _engine.RealizedPnl, _engine.Equity, _engine.FailedEntryCount, _engine.FailedExitCount,
+            _engine.AbandonedEntryCount);
         // Not tied to the (already cancelled) stopping token, but bounded by the writer's timeout.
         await _log.WriteAsync(LogSeverity.Info, "bot stopping",
-            new { _engine.ClosedTradeCount, _engine.RealizedPnl, _engine.Equity }, CancellationToken.None);
+            new
+            {
+                _engine.ClosedTradeCount,
+                _engine.RealizedPnl,
+                _engine.Equity,
+                _engine.FailedEntryCount,
+                _engine.FailedExitCount,
+                _engine.AbandonedEntryCount,
+            },
+            CancellationToken.None);
     }
 
     /// <summary>

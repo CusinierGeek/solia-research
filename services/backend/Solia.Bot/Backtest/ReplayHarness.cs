@@ -25,6 +25,11 @@ namespace Solia.Bot.Backtest;
 /// is left open and reported in <see cref="ReplayResult.OpenPositions"/> — the replay never invents a
 /// clock move past the data to close it.</para>
 ///
+/// <para><b>Latency.</b> Execution latency (<see cref="BotOptions.EntryLatencyMs"/> / <see cref="BotOptions.ExitLatencyMs"/>)
+/// runs on the event clock too: a pending order fills on a later event's mark, or expires when an event's time passes
+/// its window — never on wall time, so a replay with latency is just as reproducible. An order still pending when the
+/// stream runs out stays pending (an entry is counted in <see cref="ReplayResult.FinalEquity"/> at its size).</para>
+///
 /// <para><b>Paper only.</b> Trades are captured in an <see cref="InMemoryTradeStore"/>; nothing reaches a
 /// database, a wallet or the chain.</para>
 /// </summary>
@@ -61,7 +66,10 @@ public static class ReplayHarness
             engine.RealizedPnl,
             store.Closed,
             [.. engine.OpenPositions.Values.OrderBy(p => p.Entry.OpenedAt).ThenBy(p => p.TradeId)],
-            engine.DroppedEventCount);
+            engine.DroppedEventCount,
+            engine.FailedEntryCount,
+            engine.FailedExitCount,
+            engine.AbandonedEntryCount);
     }
 
     private static IEnumerable<BotEvent> Sequence(IEnumerable<BotEvent> events, ReplayOrder order) => order switch
