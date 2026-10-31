@@ -7,7 +7,13 @@ import torch
 from solia_ai.config import CONFIG_ENV, load_config
 from solia_ai.dataset import pad_window
 from solia_ai.features import BASELINE_GROUPS, FEATURE_COLUMNS, FEATURE_GROUPS, group_columns
-from solia_ai.model import FeatureNormalizer, SoliaTransformer, signed_log1p
+from solia_ai.model import (
+    BOUNDED_RETURN_HEAD,
+    FeatureNormalizer,
+    IncompatibleCheckpointError,
+    SoliaTransformer,
+    signed_log1p,
+)
 
 N_FEATURES = len(FEATURE_COLUMNS)
 HORIZONS = ("30s", "1m", "5m")
@@ -164,6 +170,70 @@ def test_checkpoint_round_trip_keeps_the_feature_mask():
     restored.load_state_dict(trained.state_dict())
 
     assert torch.equal(restored.feature_mask, trained.feature_mask)
+
+
+# --------------------------------------------------------------------------- bounded return head
+
+
+def _force_return_head(model: SoliaTransformer, bias: float, weight_scale: float = 1.0) -> None:
+    last = model.return_head[-1]
+    with torch.no_grad():
+        last.weight.mul_(weight_scale)
+        last.bias.fill_(bias)
+
+
+@pytest.mark.parametrize("bias", [-1e6, -50.0, 0.0, 50.0])
+@pytest.mark.parametrize("input_scale", [1.0, 1e6])
+def test_bounded_return_head_never_drops_below_minus_one(bias, input_scale):
+    model = tiny(dropout=0.0)
+    _force_return_head(model, bias, weight_scale=1e3)
+    x = torch.randn(16, 8, N_FEATURES) * input_scale
+
+    ret = model.predict(x)["expected_return"]
+
+    assert torch.isfinite(ret).all()
+    assert (ret >= -1.0).all()
+
+
+def test_bounded_return_head_trains_through_its_bound():
+    model = tiny(dropout=0.0)
+    x = torch.randn(4, 8, N_FEATURES)
+
+    model(x)["expected_return"].sum().backward()
+
+    assert model.return_head[-1].weight.grad.abs().sum() > 0
+
+
+def test_checkpoint_round_trip_keeps_the_bounded_return_head():
+    restored = tiny()
+    restored.load_state_dict(tiny().state_dict())
+
+    assert restored.bounded_return
+    assert restored.state_dict()["_extra_state"]["return_head"] == BOUNDED_RETURN_HEAD
+
+
+def test_a_legacy_checkpoint_keeps_its_raw_return_head():
+    legacy = tiny(dropout=0.0).eval()
+    state = legacy.state_dict()
+    del state["_extra_state"]["return_head"]  # a checkpoint saved before the bounded head
+    _force_return_head(legacy, -5.0)
+    state = {**legacy.state_dict(), "_extra_state": state["_extra_state"]}
+
+    restored = tiny(dropout=0.0).eval()
+    restored.load_state_dict(state)
+    x = torch.randn(2, 8, N_FEATURES)
+
+    assert not restored.bounded_return
+    assert "return_head" not in restored.state_dict()["_extra_state"]  # re-saves as legacy
+    assert (restored(x)["expected_return"] < -1.0).all()  # unbounded: the serving clamp's job
+
+
+def test_a_checkpoint_with_an_unknown_return_head_is_incompatible():
+    state = tiny().state_dict()
+    state["_extra_state"]["return_head"] = "tanh"
+
+    with pytest.raises(IncompatibleCheckpointError, match="unknown return head"):
+        tiny().load_state_dict(state)
 
 
 def test_unknown_enabled_column_is_rejected():

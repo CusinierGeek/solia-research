@@ -25,6 +25,7 @@ from solia_ai.inference import (
     HorizonPrediction,
     Prediction,
     Predictor,
+    bound_return,
     build_model,
     contract_outputs,
     derive_confidence,
@@ -67,6 +68,16 @@ def saved_checkpoint(tmp_path, *, version: str | None = "solia-test"):
     path = tmp_path / "model.pt"
     save_checkpoint(checkpoint, path)
     return model.eval(), path
+
+
+def legacy(bias: float = -5.0) -> SoliaTransformer:
+    """A model behaving like a checkpoint saved before the bounded return head: raw ``Linear``
+    output, here forced far below -1 (the live champion's near-certain-rug drops)."""
+    model = tiny()
+    model.bounded_return = False
+    with torch.no_grad():
+        model.return_head[-1].bias.fill_(bias)
+    return model
 
 
 def window(rows: int, seed: int = 0) -> np.ndarray:
@@ -248,6 +259,54 @@ def test_predict_matches_the_model_directly():
     assert result.predictions[0].pump_prob == pytest.approx(float(out["pump_prob"][0, 0]))
     assert result.predictions[2].expected_return == pytest.approx(
         float(out["expected_return"][0, 2])
+    )
+
+
+def test_bound_return_restricts_to_the_contract():
+    raw = torch.tensor([-1.1328, -1.0, 0.5, float("nan"), float("inf"), float("-inf")])
+
+    bounded = bound_return(raw)
+
+    max32 = float(torch.finfo(torch.float32).max)
+    assert bounded.tolist() == pytest.approx([-1.0, -1.0, 0.5, 0.0, max32, -1.0])
+
+
+def test_contract_clamps_a_legacy_return_head_below_minus_one():
+    out = contract_outputs(
+        {
+            k: torch.full((1, 3), v)
+            for k, v in (
+                ("pump_logits", -3.7),
+                ("rug_logits", 3.0),
+                ("expected_return", -1.1328),
+            )
+        }
+    )
+
+    assert out["expected_return"].tolist() == [[-1.0, -1.0, -1.0]]
+
+
+def test_a_legacy_champion_never_serves_a_return_below_minus_one():
+    model = legacy()
+    assert (model(torch.randn(2, 6, N_FEATURES))["expected_return"] < -1.0).all()
+
+    result = Predictor(model, model_version="legacy").predict([window(6, s) for s in range(4)])
+
+    returns = [p.expected_return for r in result for p in r.predictions]
+    assert returns == [-1.0] * len(returns)
+
+
+def test_a_legacy_checkpoint_loads_and_scores_through_the_clamp(tmp_path):
+    model, path = saved_checkpoint(tmp_path)
+    checkpoint = load_checkpoint(path)
+    del checkpoint["model_state"]["_extra_state"]["return_head"]  # saved before the bounded head
+
+    restored = build_model(checkpoint)
+
+    assert not restored.bounded_return
+    result = Predictor(restored, model_version="legacy").predict(window(6))
+    assert all(
+        np.isfinite(p.expected_return) and p.expected_return >= -1.0 for p in result.predictions
     )
 
 
@@ -489,6 +548,20 @@ def test_onnx_graph_runs_with_a_dynamic_batch(exported, batch):
     assert pump.shape == rug.shape == ret.shape == conf.shape == (batch, len(HORIZONS))
     assert np.all((pump >= 0) & (pump <= 1))
     assert np.all((conf >= 0) & (conf <= 100))
+
+
+def test_onnx_clamps_a_legacy_return_head_like_pytorch(tmp_path):
+    model = legacy()
+    path = tmp_path / "legacy.onnx"
+    export_onnx(model, path, model_version="legacy", verify=True)
+
+    x = np.random.default_rng(0).normal(size=(3, model.seq_len, N_FEATURES)).astype("f4")
+    session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+    ret = session.run(
+        ["expected_return"], {"features": x, "padding_mask": np.zeros((3, model.seq_len), bool)}
+    )[0]
+
+    assert np.all(ret == -1.0)
 
 
 def test_export_removes_the_file_when_parity_fails(tmp_path):

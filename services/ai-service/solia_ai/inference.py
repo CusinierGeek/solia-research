@@ -71,6 +71,17 @@ def _confidence(pump: torch.Tensor, rug: torch.Tensor) -> torch.Tensor:
 
 Scale = float | torch.Tensor
 
+# The largest finite float32: ``expected_return`` is served as float32 and must stay finite.
+_MAX_RETURN = float(torch.finfo(torch.float32).max)
+
+
+def bound_return(expected_return: torch.Tensor) -> torch.Tensor:
+    """``expected_return`` restricted to the contract: finite and ``>= -1`` (a long position
+    cannot lose more than 100 %). NaN -> 0 (no view), +/-inf and out-of-range values clamp to the
+    bounds. A no-op for a bounded return head; the guard for a legacy unbounded checkpoint."""
+    finite = torch.where(torch.isnan(expected_return), 0.0, expected_return)
+    return finite.clamp(-1.0, _MAX_RETURN)
+
 
 def _contract(
     logits: dict[str, torch.Tensor], pump_t: Scale, pump_b: Scale, rug_t: Scale, rug_b: Scale
@@ -80,7 +91,7 @@ def _contract(
     return {
         "pump_prob": pump,
         "rug_prob": rug,
-        "expected_return": logits["expected_return"],
+        "expected_return": bound_return(logits["expected_return"]),
         "confidence": _confidence(pump, rug),
     }
 

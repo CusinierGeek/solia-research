@@ -50,7 +50,8 @@ Total loss = weighted sum (per-horizon and per-task weights configurable):
 
 - **pump / rug**: BCE **+ Focal Loss** (class imbalance — pumps/rugs are rare).
   `L = α · BCE + (1-α) · Focal(γ)`
-- **expected return**: Huber (smooth L1).
+- **expected return**: Huber (smooth L1) on the head's bounded output `softplus(x) - 1` (always `> -1`, like
+  the `>= -1` target), so training, evaluation and serving share one parametrisation.
 
 Class imbalance is corrected **once**: class-balanced batches (`training.balanced_sampling`, the
 default), *or* natural batches with a BCE `loss.pos_weight` (`auto` = neg/pos per horizon on the
@@ -319,6 +320,10 @@ the per-head × horizon calibration of the logits), not a learned head; it must 
 The inference response (see [`API-CONTRACTS.md`](API-CONTRACTS.md)) returns, per requested horizon:
 `pump_prob`, `rug_prob`, `expected_return`, `confidence` — plus the `model_version`. Nothing about
 trade decisions (those are the policy layer's job).
+
+`expected_return` is always finite and `>= -1` (a long position cannot lose more than 100 %): the return
+head is bounded by construction, and the contract clamps it as well (NaN -> 0) so a checkpoint saved before
+that head — loaded with its legacy raw output — never emits a value the backend would drop.
 
 ## Policy layer (not the model)
 

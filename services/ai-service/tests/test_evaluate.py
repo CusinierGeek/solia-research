@@ -217,6 +217,18 @@ def test_scored_logits_calibrate_into_aligned_predictions_and_truth():
     assert np.all((predictions["confidence"] >= 0) & (predictions["confidence"] <= 100))
 
 
+def test_evaluation_scores_the_same_bounded_return_as_serving():
+    logits = {
+        "pump_logits": np.zeros((2, 1)),
+        "rug_logits": np.zeros((2, 1)),
+        "expected_return": np.array([[-1.1328], [0.25]]),  # a legacy head's out-of-contract value
+    }
+
+    predictions = apply_calibration(logits)
+
+    assert predictions["expected_return"].tolist() == [[-1.0], [0.25]]
+
+
 def test_evaluate_builds_a_report_over_every_horizon():
     model, val_ds = _trained_tiny()
 

@@ -15,6 +15,11 @@ representation: ``pump`` / ``rug`` (classification, returned as logits) and ``ex
   are relative to the most recent row.
 * **The horizons and feature spec travel with the weights** (module extra state): a checkpoint
   refuses to load into a model with different horizons or features.
+* **``expected_return`` is bounded by construction**: the return head emits ``softplus(x) - 1``,
+  always ``>= -1`` (a long position cannot lose more than 100 %). A checkpoint saved before that
+  head (no ``return_head`` in its extra state) loads with the legacy unbounded ``Linear`` output, so
+  its weights keep their meaning; the serving contract clamps it (see
+  :func:`solia_ai.inference.bound_return`).
 """
 
 from __future__ import annotations
@@ -26,9 +31,14 @@ from typing import Any
 import numpy as np
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 from .config import load_config, model_shape_error
 from .features import BASELINE_GROUPS, FEATURE_COLUMNS, column_mask, group_columns
+
+# The return-head parametrisation recorded in a checkpoint's extra state. A checkpoint without the
+# key predates it and carries the legacy raw ``Linear`` output.
+BOUNDED_RETURN_HEAD = "softplus_minus_one"
 
 
 def _sinusoidal_encoding(seq_len: int, d_model: int) -> torch.Tensor:
@@ -159,6 +169,8 @@ class SoliaTransformer(nn.Module):
         self.pump_head = _head(d_model, len(horizons), dropout)
         self.rug_head = _head(d_model, len(horizons), dropout)
         self.return_head = _head(d_model, len(horizons), dropout)
+        # False only for a legacy checkpoint loaded into this model (see set_extra_state).
+        self.bounded_return = True
 
     @property
     def n_horizons(self) -> int:
@@ -167,7 +179,13 @@ class SoliaTransformer(nn.Module):
     # --- checkpoint metadata (saved in state_dict via nn.Module extra state) ---
 
     def get_extra_state(self) -> dict[str, Any]:
-        return {"horizons": list(self.horizons), "feature_columns": list(self.feature_columns)}
+        state: dict[str, Any] = {
+            "horizons": list(self.horizons),
+            "feature_columns": list(self.feature_columns),
+        }
+        if self.bounded_return:
+            state["return_head"] = BOUNDED_RETURN_HEAD
+        return state
 
     def set_extra_state(self, state: dict[str, Any]) -> None:
         for key, mine in (("horizons", self.horizons), ("feature_columns", self.feature_columns)):
@@ -176,6 +194,10 @@ class SoliaTransformer(nn.Module):
                 raise IncompatibleCheckpointError(
                     f"checkpoint {key} {list(theirs)} don't match the model's {list(mine)}"
                 )
+        head = state.get("return_head")
+        if head not in (None, BOUNDED_RETURN_HEAD):
+            raise IncompatibleCheckpointError(f"unknown return head {head!r} in checkpoint")
+        self.bounded_return = head == BOUNDED_RETURN_HEAD
 
     # --- forward ---
 
@@ -230,10 +252,14 @@ class SoliaTransformer(nn.Module):
         else:
             keep = (~padding_mask).unsqueeze(-1).to(encoded.dtype)
             context = (encoded * keep).sum(dim=1) / keep.sum(dim=1)
+        expected_return = self.return_head(context)
+        if self.bounded_return:
+            # > -1 by construction; training regresses this same value on the (>= -1) target.
+            expected_return = F.softplus(expected_return) - 1.0
         return {
             "pump_logits": self.pump_head(context),
             "rug_logits": self.rug_head(context),
-            "expected_return": self.return_head(context),
+            "expected_return": expected_return,
         }
 
     @torch.no_grad()
