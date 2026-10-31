@@ -258,6 +258,14 @@ public class BotOptionsValidationTests
     }
 
     [Theory]
+    [InlineData(0)]
+    [InlineData(86_401)]
+    public void Out_of_range_max_feed_silence_is_rejected(int seconds)
+    {
+        Assert.False(IsValid(new BotOptions { MaxFeedSilenceSeconds = seconds }));
+    }
+
+    [Theory]
     [InlineData(-1)]
     [InlineData(3_601)]
     public void Out_of_range_max_event_lag_is_rejected(int seconds)

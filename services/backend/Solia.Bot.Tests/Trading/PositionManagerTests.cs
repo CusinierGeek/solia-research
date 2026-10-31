@@ -362,10 +362,10 @@ public class PositionManagerTests
     }
 
     [Fact]
-    public async Task A_signal_exit_on_a_stale_mark_fills_at_the_stop()
+    public async Task A_signal_exit_on_a_stale_mark_with_a_silent_feed_fills_at_the_stop()
     {
         await Opened();
-        await Run(Predict(100, SellSignal())); // last mark is 100 s old
+        await Run(Predict(100, SellSignal())); // last mark (of any mint) is 100 s old
 
         ClosedTrade t = Assert.Single(_store.Closed);
         Assert.Equal(ExitReason.Signal, t.Reason);
@@ -378,6 +378,44 @@ public class PositionManagerTests
     {
         await Opened();
         await Run(Tick(40, 0.00009m), Predict(100, SellSignal())); // mark 60 s old: still fresh
+
+        Assert.Equal(0.00009m, Assert.Single(_store.Closed).ExitPrice);
+    }
+
+    [Fact]
+    public async Task A_signal_exit_on_a_quiet_mint_with_a_live_feed_fills_at_its_last_mark()
+    {
+        await Opened();
+        await Run(Tick(2, 0.000101m), Tick(50, 0.5m, mint: "other"), Predict(100, SellSignal())); // own mark 98 s old
+
+        ClosedTrade t = Assert.Single(_store.Closed);
+        Assert.Equal(ExitReason.Signal, t.Reason);
+        Assert.Equal(0.000101m, t.ExitPrice);
+        Assert.Equal(0.02m, t.Pnl);
+    }
+
+    [Theory]
+    [InlineData(841, 0.0001)]  // another mint marked 60 s before the 901 s deadline: live feed, quiet mint
+    [InlineData(840, 0.00007)] // 61 s before: the feed went silent, assume the stop was hit
+    public async Task A_timeout_on_a_stale_mark_fills_at_it_only_while_the_feed_is_live(int otherTickAt, decimal exit)
+    {
+        await Opened();
+        await Run(Tick(otherTickAt, 0.5m, mint: "other"));
+        await _bot.AdvanceToAsync(T0.AddSeconds(901));
+
+        ClosedTrade t = Assert.Single(_store.Closed);
+        Assert.Equal(ExitReason.Timeout, t.Reason);
+        Assert.Equal(exit, t.ExitPrice);
+    }
+
+    [Fact]
+    public async Task A_timeout_on_a_fresh_mark_fills_at_the_mark_even_after_the_feed_went_silent()
+    {
+        BotOptions options = PolicyFixtures.Options();
+        options.MaxFeedSilenceSeconds = 10;
+        var bot = new PositionManager(options, _store);
+        await Run(bot, Tick(0, Entry), Predict(1), Tick(860, 0.00009m));
+        await bot.AdvanceToAsync(T0.AddSeconds(901)); // mark 41 s old: fresh, though the feed is 41 s silent
 
         Assert.Equal(0.00009m, Assert.Single(_store.Closed).ExitPrice);
     }
@@ -648,6 +686,19 @@ public class PositionManagerTests
         Assert.Equal(0m, t.ExitPrice);
         Assert.Equal(-t.Entry.Size, t.Pnl);
         Assert.Equal(-1.0, t.PnlPct);
+    }
+
+    [Fact]
+    public async Task A_quiet_mint_timeout_on_a_live_feed_fills_at_its_last_mark_against_its_pool()
+    {
+        (PositionManager bot, InMemoryTradeStore store) = Realistic();
+        await Run(bot, PoolTick(0, Entry, "pumpswap", 100m), Predict(1), PoolTick(880, 0.5m, "pumpswap", 100m, mint: "other"));
+        await bot.AdvanceToAsync(T0.AddSeconds(901)); // own mark 901 s old, feed marked 21 s ago
+
+        ClosedTrade t = Assert.Single(store.Closed);
+        Assert.Equal(ExitReason.Timeout, t.Reason);
+        decimal value = t.Entry.ValueAt(Entry);
+        Assert.Equal(Entry * 100m * 0.997m / (100m + value), t.ExitPrice);
     }
 
     [Fact]

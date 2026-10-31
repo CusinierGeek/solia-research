@@ -19,8 +19,9 @@ public static class ReplayFixtures
     /// The options the scenario's numbers are computed under: the defaults, with the values the scenario
     /// depends on pinned explicitly so a change of default can't silently move them.
     /// <see cref="BotOptions.MaxMarkAgeSeconds"/> must be at least 31 s: the <c>to</c> trade's deadline
-    /// (931 s) is 31 s after its last mark (900 s), and a staler mark would fill the timeout at the stop
-    /// instead of at 0.00012. Fills are idealized (at the mark, no pool): the scenario pins the engine's
+    /// (931 s) is 31 s after its last mark (900 s); a staler mark still fills at 0.00012 while the feed is live
+    /// (<see cref="BotOptions.MaxFeedSilenceSeconds"/> ≥ 31 s — the 900 s tick is also the feed's last), and at the
+    /// stop once it is silent. Fills are idealized (at the mark, no pool): the scenario pins the engine's
     /// bookkeeping, the realistic fills are covered by <c>FillsTests</c> and the engine's realistic-fill tests.
     /// </summary>
     public static BotOptions Options() => new()
@@ -30,6 +31,7 @@ public static class ReplayFixtures
         MaxPositionFraction = 0.2,
         PositionTimeoutSeconds = 900,
         MaxMarkAgeSeconds = 60,
+        MaxFeedSilenceSeconds = 60,
         MaxEventLagSeconds = 5,
     };
 

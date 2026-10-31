@@ -122,11 +122,21 @@ public sealed class BotOptions : IValidatableObject
 
     /// <summary>
     /// How old a mint's last price may be and still count as its market, in seconds, [1, 86 400]. An entry
-    /// needs a mark at most this old; a signal or timeout exit on an older mark assumes the unobserved
-    /// market hit the stop (see Trading.PositionManager), so a silent feed can't book a stale break-even.
+    /// needs a mark at most this old. A signal or timeout exit on an older mark fills at it while the feed is
+    /// live (<see cref="MaxFeedSilenceSeconds"/>), else assumes the unobserved market hit the stop (see
+    /// Trading.PositionManager).
     /// </summary>
     [Range(1, 86_400)]
     public int MaxMarkAgeSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// How long the price feed may go without marking <em>any</em> mint and still count as live, in seconds,
+    /// [1, 86 400]. A signal or timeout exit on a stale mark fills at that mark while the feed is live — a quiet
+    /// bonding curve's price is its last trade — and at <c>min(last mark, stop)</c> once the feed itself is
+    /// silent, so a dead feed can't book a stale break-even.
+    /// </summary>
+    [Range(1, 86_400)]
+    public int MaxFeedSilenceSeconds { get; set; } = 60;
 
     /// <summary>
     /// How far behind the event clock an event may arrive and still be applied (at the clock's time),

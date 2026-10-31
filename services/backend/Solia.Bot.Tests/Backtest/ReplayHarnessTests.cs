@@ -189,19 +189,23 @@ public class ReplayHarnessTests
         Assert.Equal(0.4m, result.TotalPnl);
     }
 
-    [Fact]
-    public async Task The_timeout_trade_depends_on_the_mark_still_being_fresh_at_the_deadline()
+    [Theory]
+    [InlineData(60, 0.00012)] // stale 900 s mark, live feed: the quiet mint's price is its last mark
+    [InlineData(30, 0.00007)] // stale mark and a feed silent for 31 s: the timeout assumes the stop was hit
+    public async Task The_timeout_trade_on_a_stale_mark_depends_on_the_feed_being_live_at_the_deadline(
+        int maxFeedSilenceSeconds, decimal exit)
     {
-        // Pins the fixture's MaxMarkAgeSeconds dependency: with 30 s the 900 s mark is stale at the
-        // 931 s deadline, so the timeout assumes the stop was hit.
+        // Pins the fixture's MaxMarkAgeSeconds/MaxFeedSilenceSeconds dependency: with 30 s the 900 s mark is stale
+        // at the 931 s deadline, and no other mint is marked in between.
         BotOptions options = ReplayFixtures.Options();
         options.MaxMarkAgeSeconds = 30;
+        options.MaxFeedSilenceSeconds = maxFeedSilenceSeconds;
 
         ReplayResult result = await ReplayHarness.RunAsync(options, Scenario());
 
         ClosedTrade timeout = result.Trades.Single(t => t.Entry.Mint == "to");
         Assert.Equal(ExitReason.Timeout, timeout.Reason);
-        Assert.Equal(0.00007m, timeout.ExitPrice);
+        Assert.Equal(exit, timeout.ExitPrice);
     }
 
     [Fact]

@@ -318,7 +318,7 @@ default on — off is the idealized simulator, kept for before/after comparisons
 
 Approximations, chosen pessimistic: each side is priced against the pool as observed, which never contains the
 bot's own paper trade, so a round trip pays the impact twice where on-chain it would partly unwind (bounded by
-the 2 % cap, ~2 % per side). TP/SL/stale-stop triggers still read the observed mark; the fill applies on top, so a
+the 2 % cap, ~2 % per side). TP/SL/dead-feed-stop triggers still read the observed mark; the fill applies on top, so a
 take-profit can realize less than its level. `Equity` marks open positions at the mark (no exit impact). The
 Kelly sizing doesn't price the costs in. Out of scope: latency, MEV / priority fees, order splitting.
 
@@ -337,6 +337,22 @@ trades and their pools at entry/exit: [`reports/paper-fills-165.sql`](reports/pa
 Two thirds of the trades are gated out. In AMM ≥ 10 SOL, three trades exited into a pool pulled to 0 SOL in the
 same snapshot (+0.74 → −5.77 SOL); the 28 others go from +3.68 to +1.11 SOL (impact, fees, pool-capped sizes). The
 sample is far too small to judge the model; the point is that paper P&L can no longer be faked by dust pools.
+
+### Stale marks on exit (#176)
+
+A mark is the mint's market while it is at most `Bot:MaxMarkAgeSeconds` (60) old; an entry needs one. A **signal or
+timeout exit** on an older mark fills:
+
+| feed state at the exit (event time) | fill at | why |
+|---|---|---|
+| mark fresh | the mark | — |
+| mark stale, **feed live** — some mint marked within `Bot:MaxFeedSilenceSeconds` (60) | the last mark | the mint went quiet; a bonding curve only moves on trades, so its price *is* its last trade |
+| mark stale, **feed silent** — no mint marked within it | `min(last mark, stop-loss)` | our feed died: assume the unobserved market hit the stop, never book a stale break-even |
+
+Realistic fills apply on top in every case. The previous rule used the stop for every stale mark and booked
+phantom stops on quiet mints: on the live DB (2026-10-30) 54 of 74 timeouts filled at the stop, 49 of them with a
+last price unchanged vs entry (≈ −28 SOL). The new option changes the bot-session fingerprint, so P&L before and
+after the fix sits in separate sessions (#171).
 
 ### Choosing the entry rule
 

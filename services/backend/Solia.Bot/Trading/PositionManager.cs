@@ -17,7 +17,7 @@ namespace Solia.Bot.Trading;
 /// of the mark it fills at (<see cref="Fills"/>): entry needs that pool to clear the liquidity gate, the size is
 /// capped by it, and both sides pay constant-product price impact and the venue fee — the entry price recorded is
 /// the all-in price per token, the exit proceeds never exceed what the pool holds (an empty one pays nothing). Exit
-/// triggers (TP/SL, stale-mark stop) read the observed mark; the fill applies on top. Without it, every fill is
+/// triggers (TP/SL, dead-feed stop) read the observed mark; the fill applies on top. Without it, every fill is
 /// the mark itself (the idealized simulator).</para>
 ///
 /// <para><b>Ordering.</b> The event clock never moves back. An event up to
@@ -27,8 +27,11 @@ namespace Solia.Bot.Trading;
 ///
 /// <para><b>Fresh marks.</b> A mark is the mint's market only while it is at most
 /// <see cref="BotOptions.MaxMarkAgeSeconds"/> old. Entry needs a fresh mark (else the gate declines:
-/// no market). A signal or timeout exit on a stale mark assumes the unobserved market hit the stop and
-/// fills at <c>min(last mark, stop-loss price)</c> — a silent feed must not book a break-even.</para>
+/// no market). A signal or timeout exit on a stale mark fills at that last mark while the feed is live — some
+/// mint was marked at most <see cref="BotOptions.MaxFeedSilenceSeconds"/> before the exit, by event time: the
+/// mint just stopped trading, and a bonding curve's price only moves on trades. Once the feed itself is silent
+/// it assumes the unobserved market hit the stop and fills at <c>min(last mark, stop-loss price)</c> — a dead
+/// feed must not book a break-even.</para>
 ///
 /// <para><b>Entry.</b> A prediction for a mint with no open position goes through
 /// <see cref="EntryRule"/>; on accept it fills at the mint's fresh mark (see <b>Fills</b>), locks the size from
@@ -66,6 +69,9 @@ public sealed class PositionManager
     private readonly BestEffortLogWriter _log;
     private readonly Dictionary<string, OpenPosition> _positions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Mark> _marks = new(StringComparer.Ordinal);
+
+    // Time of the newest mark on any mint: the price feed's last sign of life.
+    private DateTimeOffset? _lastFeedTs;
 
     // Earliest deadline first; entries of positions closed by another rule are skipped lazily.
     private readonly PriorityQueue<OpenPosition, (DateTimeOffset Deadline, long TradeId)> _deadlines = new();
@@ -185,6 +191,10 @@ public sealed class PositionManager
         }
 
         _marks[tick.Mint] = new Mark(tick.Price, tick.Ts, tick.Pool);
+        if (_lastFeedTs is null || tick.Ts > _lastFeedTs)
+        {
+            _lastFeedTs = tick.Ts;
+        }
 
         // A price from before the fill says nothing about the position's exit.
         if (!_positions.TryGetValue(tick.Mint, out OpenPosition? position) || tick.Ts < position.Entry.OpenedAt)
@@ -260,11 +270,18 @@ public sealed class PositionManager
     private bool IsFresh(Mark mark, DateTimeOffset at) =>
         at - mark.Ts <= TimeSpan.FromSeconds(_options.MaxMarkAgeSeconds);
 
-    /// <summary>The last mark if fresh at <paramref name="at"/>; else the worse of it and the stop.</summary>
+    private bool FeedIsLive(DateTimeOffset at) =>
+        _lastFeedTs is DateTimeOffset last && at - last <= TimeSpan.FromSeconds(_options.MaxFeedSilenceSeconds);
+
+    /// <summary>
+    /// The last mark if fresh at <paramref name="at"/> or the feed is still live; else the worse of it and the stop.
+    /// </summary>
     private decimal StaleSafeExitPrice(OpenPosition position, DateTimeOffset at)
     {
         Mark mark = _marks[position.Mint];
-        return IsFresh(mark, at) ? mark.Price : Math.Min(mark.Price, position.Entry.Levels.StopLossPrice);
+        return IsFresh(mark, at) || FeedIsLive(at)
+            ? mark.Price
+            : Math.Min(mark.Price, position.Entry.Levels.StopLossPrice);
     }
 
     /// <summary>Closes <paramref name="position"/> at the market price <paramref name="markPrice"/>, filled against the mint's last pool.</summary>
