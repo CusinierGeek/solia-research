@@ -60,9 +60,12 @@ calibration:
 
 # Feature groups the model sees (solia_ai/features.py FEATURE_GROUPS); the columns of every other
 # group are zeroed. Omitted = the baseline (BASELINE_GROUPS). A candidate group is enabled only once
-# its ablation lift clears the margin (docs/ML-MODEL.md "Ablation"), e.g.:
-# features:
-#   groups: [price, liquidity, flow, holders, context, buy_pressure, momentum, concentration, burn, venue]
+# its ablation lift clears the margin (docs/ML-MODEL.md "Ablation"). momentum + concentration did
+# (#188: pump/5m PR-AUC +0.020 ± 0.006, 3 windows x 3 seeds); buy_pressure, burn and venue did not.
+# Changing this list makes the champion's checkpoint incompatible: the next retrain starts from
+# scratch (candidate.on_incompatible).
+features:
+  groups: [price, liquidity, flow, holders, context, momentum, concentration]
 
 # Promotion gate (solia_ai/promotion.py, docs/ML-MODEL.md "Promotion gate"): candidate vs champion
 # on the same rolling held-out windows x seeds. Promote only when the primary predictive metric

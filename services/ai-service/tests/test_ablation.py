@@ -6,6 +6,7 @@ import json
 
 import numpy as np
 import pytest
+from test_search import fake_bounded_read
 from test_train import make_features_df, small_config
 
 import solia_ai.ablation as ablation
@@ -365,7 +366,7 @@ def offline_cli(monkeypatch):
     df = make_features_df()
     monkeypatch.setattr(solia_ai.config, "load_config", lambda *a, **k: small_config())
     monkeypatch.setattr(solia_ai.db, "make_engine", lambda *a, **k: object())
-    monkeypatch.setattr(solia_ai.db, "read_features", lambda *a, **k: df)
+    monkeypatch.setattr(solia_ai.db, "read_training_features", fake_bounded_read)
     return df
 
 
@@ -420,7 +421,7 @@ def test_main_rejects_bad_settings_before_reading_data(monkeypatch, argv, messag
         raise AssertionError("must fail before touching the database")
 
     monkeypatch.setattr(solia_ai.db, "make_engine", no_db)
-    monkeypatch.setattr(solia_ai.db, "read_features", no_db)
+    monkeypatch.setattr(solia_ai.db, "read_training_features", no_db)
 
     with pytest.raises(SystemExit, match=message):
         ablation.main(argv)

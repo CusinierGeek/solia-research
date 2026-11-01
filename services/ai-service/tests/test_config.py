@@ -122,6 +122,23 @@ def test_invalid_values_are_rejected_with_the_key_named(tmp_path, sections, mess
         load_config(write(tmp_path, variant(**sections)))
 
 
+def test_the_packaged_config_enables_the_groups_the_ablation_retained():
+    # #188: momentum + concentration cleared the pump/5m margin; the other candidates did not.
+    from solia_ai.features import BASELINE_GROUPS, group_columns
+
+    groups = VALID["features"]["groups"]
+    assert groups == [*BASELINE_GROUPS, "momentum", "concentration"]
+    assert not {"buy_pressure", "burn", "venue"} & set(groups)
+    assert len(group_columns(groups)) > len(group_columns(BASELINE_GROUPS))
+
+
+def test_omitting_features_falls_back_to_the_baseline_groups(tmp_path):
+    from solia_ai.features import BASELINE_GROUPS
+
+    cfg = load_config(write(tmp_path, variant(features=None)))
+    assert cfg.get("features", {}).get("groups", BASELINE_GROUPS) == BASELINE_GROUPS
+
+
 @pytest.mark.parametrize(
     ("extra", "message"),
     [

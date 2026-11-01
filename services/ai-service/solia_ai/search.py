@@ -55,7 +55,6 @@ import hashlib
 import itertools
 import json
 import math
-import os
 import sys
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -69,6 +68,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from . import runlog
 from .ablation import (
     DEFAULT_EVAL_FRACTION,
     DEFAULT_MARGIN,
@@ -509,37 +509,9 @@ def checkpoint_path(out: str | Path) -> Path:
     return out.with_name(f"{out.stem}.trials.jsonl")
 
 
-def _canonical(value: Any) -> Any:
-    """``value`` as it reads back from JSON (tuples as lists, non-finite floats as None)."""
-    return json.loads(json.dumps(json_safe(value), sort_keys=True, default=str))
-
-
 def read_checkpoint_header(path: str | Path) -> dict[str, Any] | None:
     """The fingerprint a trials file was started with; None when there is no file yet."""
-    path = Path(path)
-    if not path.is_file() or path.stat().st_size == 0:
-        return None
-    with path.open(encoding="utf-8") as fh:
-        first = fh.readline()
-    try:
-        header = json.loads(first)
-    except json.JSONDecodeError:
-        header = None
-    if not isinstance(header, dict) or header.get("kind") != "header":
-        raise ValueError(f"{path} is not a search trials file; delete it or choose another --out")
-    return header["fingerprint"]
-
-
-def _differences(a: Mapping[str, Any], b: Mapping[str, Any]) -> list[str]:
-    """The ``section.key`` entries where two fingerprints differ."""
-    out = []
-    for section in sorted(a.keys() | b.keys()):
-        x, y = a.get(section), b.get(section)
-        if isinstance(x, dict) and isinstance(y, dict):
-            out += [f"{section}.{k}" for k in sorted(x.keys() | y.keys()) if x.get(k) != y.get(k)]
-        elif x != y:
-            out.append(section)
-    return out
+    return runlog.read_header(path, "a search trials file")
 
 
 class TrialLog:
@@ -559,39 +531,19 @@ class TrialLog:
 
     @classmethod
     def open(cls, path: str | Path, fingerprint: Mapping[str, Any]) -> TrialLog:
-        path = Path(path)
-        fingerprint = _canonical(fingerprint)
-        stored = read_checkpoint_header(path)
-        if stored is None:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            log = cls(path, {}, [])
-            log._append({"kind": "header", "fingerprint": fingerprint}, mode="w")
-            return log
-        if stored != fingerprint:
-            raise ValueError(
-                f"{path} holds the trials of another search (differs in: "
-                f"{', '.join(_differences(fingerprint, stored))}); rerun with the same settings, "
-                "or delete it (--restart) to start over"
-            )
+        records = runlog.open_log(
+            path, fingerprint, what="a search trials file", other="another search"
+        )
         finished: dict[str, Trial | FailedTrial] = {}
         windows: list[dict[str, Any]] = []
-        lines = path.read_text(encoding="utf-8").splitlines()[1:]
-        for i, line in enumerate(lines):
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                if i == len(lines) - 1:
-                    break  # torn last write: that trial runs again
-                raise ValueError(
-                    f"{path}: line {i + 2} is corrupt; delete it to start over"
-                ) from None
+        for record in records:
             kind = record.pop("kind")
             if kind == "failed":
                 finished[record["name"]] = FailedTrial(**record)
             else:
                 windows = record.pop("windows", None) or windows
                 finished[record["name"]] = Trial.from_dict(record)
-        return cls(path, finished, windows)
+        return cls(Path(path), finished, windows)
 
     def record(
         self, trial: Trial | FailedTrial, windows: list[dict[str, Any]] | None = None
@@ -600,13 +552,7 @@ class TrialLog:
         if windows is not None:
             record["windows"] = windows
         self.finished[trial.name] = trial
-        self._append(json_safe(record))
-
-    def _append(self, record: Mapping[str, Any], mode: str = "a") -> None:
-        with self.path.open(mode, encoding="utf-8") as fh:
-            fh.write(json.dumps(record, default=str) + "\n")
-            fh.flush()
-            os.fsync(fh.fileno())
+        runlog.append(self.path, json_safe(record))
 
 
 # --------------------------------------------------------------------------- orchestration
@@ -763,7 +709,7 @@ def run_search(
         done = None if log is None else log.finished.get(name)
         if done is None:
             return None
-        if _canonical(done.params) != _canonical(params):
+        if runlog.canonical(done.params) != runlog.canonical(params):
             raise ValueError(
                 f"{log.path}: {name} ran with {done.params}, this search would run {dict(params)}; "
                 "delete it (--restart) to start over"

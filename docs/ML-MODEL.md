@@ -714,10 +714,11 @@ and seeds.
 - **Feature groups** are declared once in `features.py` (`FEATURE_GROUPS`: group → columns of
   `FEATURE_COLUMNS`; every column in exactly one group). `BASELINE_GROUPS` = the original 19 columns. An
   enrichment task adds its columns *and* a new group, outside the baseline.
-- **Candidate groups stay disabled by default.** The model only sees the groups listed in the config's
-  `features.groups` (default: `BASELINE_GROUPS`); the other columns are zeroed by a mask stored in the
+- **Candidate groups stay disabled until they earn it.** The model only sees the groups listed in the config's
+  `features.groups` (omitted: `BASELINE_GROUPS`); the other columns are zeroed by a mask stored in the
   model (`feature_mask`, same in training, inference and the ONNX graph, and saved with the checkpoint).
-  A group is enabled there only once its ablation lift clears the margin.
+  A group is enabled there only once its ablation lift clears the margin. The packaged config enables
+  `momentum` and `concentration` (see the results below).
 - **Candidates so far:** `buy_pressure` (FE-T2, #111) — `net_sol_flow`, `buy_volume_ratio`,
   `avg_buy_sol`, `max_buy_sol`, `large_buy_count`; `momentum` (FE-T3, #112) — `return_short`,
   `return_medium`, `return_long`, `price_acceleration`, `ema_slope`, `volume_acceleration`,
@@ -758,13 +759,58 @@ and seeds.
   policy `total_pnl` / `avg_pnl`). Verdict: **better** if `mean − std > margin`, **worse** if
   `mean + std < −margin`, else **not significant**; **n/a** when the metric is undefined in every
   run (e.g. a single-class horizon).
-- Ablation never saves a checkpoint, registers a model or touches `is_champion`.
+- **Combinations** (`--combine a b`, repeatable): several candidate groups added together as one
+  variant `+a+b`. Lifts of correlated groups don't add up, so the set that would ship is measured
+  as a whole, against the same baseline.
+- **Bounded read** (#188): the CLI reads exactly what a retrain trains on —
+  `read_training_features` over `data.lookback_days` / `data.max_rows` (whole tokens, see
+  [Bounded training read](#bounded-training-read)), overridable with `--lookback-days` /
+  `--max-rows` — never the whole table. `data.window_stride_seconds` comes from the config, so
+  run it with the defaults the variants will ship with (`SOLIA_AI_CONFIG` for a config under test).
+- **Resume** (#188): with `--out x.json`, every finished (variant, window, seed) run is appended to
+  `x.runs.jsonl` (fsynced, `solia_ai/runlog.py`, the same format as the search's trials file). A
+  rerun with the same settings, config, variants and data window skips the runs already there and
+  re-reads the window the run started on, so a reboot loses at most the run in progress;
+  different settings are refused rather than mixed; `--restart` discards the file.
+- Ablation never saves a model checkpoint, registers a model or touches `is_champion`.
+
+#### Results: `momentum` + `concentration` enabled (#188, 2026-11-01)
+
+Both runs use the bounded read (8 M rows of ~77 k tokens out of a 2-day window, stride 60 s) and
+compare against the 19-column baseline. Reports: `docs/reports/ablation-188-run1.*` and
+`docs/reports/ablation-188-confirm.*`.
+
+- **Run 1**: 2 windows × 2 seeds, every candidate on its own, plus all five together.
+  - `momentum` was the only clear gain: pump/1m PR-AUC +0.023 ± 0.007, pump/5m +0.015 ± 0.010.
+  - `concentration` came next: pump/5m +0.011 ± 0.017.
+  - `buy_pressure`, `burn` and `venue` were ≈ 0 on every head.
+  - The five together did no better than `momentum` alone.
+- **Confirmation**: 3 windows × 3 seeds; baseline vs `+momentum` vs `+momentum+concentration`.
+
+| Variant | pump/5m PR-AUC (primary) | pump/1m | pump/30s | rug/5m | pump/5m ECE |
+|---|---|---|---|---|---|
+| +momentum | +0.018 ± 0.014 (not significant) | +0.027 ± 0.011 better | +0.030 ± 0.007 better | +0.005 ± 0.018 | −0.0005 ± 0.0009 |
+| **+momentum+concentration** | **+0.020 ± 0.006 better** | +0.031 ± 0.007 better | +0.033 ± 0.006 better | +0.009 ± 0.006 | −0.0012 ± 0.0012 |
+
+- **The pair is the only variant that clears the margin on the primary metric** (mean − std = 0.013 > 0.01).
+  - Its lift is also steadier than `momentum` alone: std 0.006 vs 0.014.
+  - No rug head regresses: every rug PR-AUC lift is ≥ 0, and rug/30s and rug/1m are +0.012.
+  - The raw ECE moves by ≤ 0.0012, not significant. Calibration (Platt) then improves ECE by a further 0.009–0.04.
+- **Reference-policy P&L**: +6.8 ± 13.7 against the baseline. That is positive but not significant, as expected for a secondary metric.
+- **Decision**:
+  - `config.yaml` now enables `features.groups: [price, liquidity, flow, holders, context, momentum, concentration]`.
+  - `buy_pressure`, `burn` and `venue` stay computed but masked.
+  - The change makes the champion's checkpoint incompatible (its feature mask differs), so the next retrain starts from scratch (`candidate.on_incompatible: scratch`).
+  - That retrain then goes through the promotion gate like any challenger.
 
 ```bash
 # from services/ai-service, database from SOLIA_DB_CONNECTION / POSTGRES_* (a replayed history)
 python -m solia_ai.ablation                                   # baseline vs dropping each group
 python -m solia_ai.ablation --groups flow holders --windows 4 --seeds 0 1 2 3 \
     --margin 0.01 --pnl-margin 0 --out reports/ablation.json  # JSON report + readable summary
+# unattended, in the GPU container (resumable: rerun the same command after a reboot)
+python -u -m solia_ai.ablation --groups momentum concentration --combine momentum concentration \
+    --windows 3 --seeds 0 1 2 --out /app/models/reports/ablation.json
 ```
 
 ### Hyperparameter & labeling-threshold search

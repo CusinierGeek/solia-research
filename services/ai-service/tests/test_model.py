@@ -60,12 +60,23 @@ def test_from_config_builds_from_the_packaged_config(monkeypatch):
 BUY_PRESSURE = [FEATURE_COLUMNS.index(c) for c in FEATURE_GROUPS["buy_pressure"]]
 
 
-def test_from_config_disables_candidate_groups_by_default(monkeypatch):
+def test_from_config_without_features_enables_only_the_baseline(monkeypatch):
     monkeypatch.delenv(CONFIG_ENV, raising=False)
-    model = SoliaTransformer.from_config(load_config()).eval()
+    cfg = {k: v for k, v in load_config().items() if k != "features"}
+    model = SoliaTransformer.from_config(cfg).eval()
 
     enabled = [c for c, on in zip(FEATURE_COLUMNS, model.feature_mask.tolist(), strict=True) if on]
     assert enabled == group_columns(BASELINE_GROUPS)
+
+
+def test_the_packaged_config_masks_the_groups_the_ablation_rejected(monkeypatch):
+    monkeypatch.delenv(CONFIG_ENV, raising=False)
+    cfg = load_config()
+    model = SoliaTransformer.from_config(cfg).eval()
+
+    enabled = [c for c, on in zip(FEATURE_COLUMNS, model.feature_mask.tolist(), strict=True) if on]
+    assert enabled == group_columns(cfg["features"]["groups"])
+    assert "buy_pressure" not in cfg["features"]["groups"]
     x = torch.randn(2, 8, N_FEATURES)
     noisy = x.clone()
     noisy[..., BUY_PRESSURE] = 1e6  # a disabled group carries no signal at all

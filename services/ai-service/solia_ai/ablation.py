@@ -47,6 +47,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from . import runlog
 from .calibration import settings as calibration_settings
 from .config import DEFAULT_EVAL_FRACTION
 from .dataset import SequenceDataset, config_samples, embargo_seconds, temporal_split
@@ -117,6 +118,31 @@ def plan_variants(
         else:
             variants.append(Variant(f"+{group}", (*baseline, group), group, "add"))
     return variants
+
+
+def combined_variant(
+    groups: Iterable[str], *, baseline: Sequence[str] = BASELINE_GROUPS
+) -> Variant:
+    """Several candidate groups added to the baseline together (``+a+b``), measured as one: lifts
+    of correlated groups don't add up, so the set that would ship is measured as a whole.
+
+    Raises on fewer than two groups, an unknown group, or a group already in the baseline.
+    """
+    baseline = tuple(dict.fromkeys(baseline))
+    groups = list(dict.fromkeys(groups))
+    if len(groups) < 2:
+        raise ValueError(f"a combination needs at least two groups, got {groups}")
+    unknown = [g for g in groups if g not in FEATURE_GROUPS]
+    if unknown:
+        raise ValueError(
+            f"unknown feature group(s): {', '.join(unknown)} "
+            f"(known: {', '.join(FEATURE_GROUPS)})"
+        )
+    inside = [g for g in groups if g in baseline]
+    if inside:
+        raise ValueError(f"cannot combine baseline group(s) {', '.join(inside)}: already enabled")
+    name = "+".join(groups)
+    return Variant(f"+{name}", (*baseline, *groups), name, "add")
 
 
 def check_variants(variants: Sequence[Variant]) -> None:
@@ -304,6 +330,7 @@ class AblationReport:
     lifts: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
     # Per predictive metric: calibrated - raw over every run (positive = better, ECE negated).
     calibration: dict[str, dict[str, Any]] = field(default_factory=dict)
+    resumed: int = 0  # runs taken from the checkpoint instead of trained by this process
 
     def as_dict(self) -> dict[str, Any]:
         return json_safe(asdict(self))
@@ -327,6 +354,8 @@ class AblationReport:
             "positive = better (ECE negated)",
             f"generated {self.generated_at}",
         ]
+        if self.resumed:
+            lines.append(f"  resumed from the checkpoint: {self.resumed} run(s) not retrained")
         for w in self.windows:
             lines.append(
                 f"  window {w['index']}: eval {w['eval_start']} -> {w['eval_end']} "
@@ -392,12 +421,18 @@ def run_ablation(
     policy: ReferencePolicy | None = None,
     device: Any = None,
     progress: Callable[[str], None] | None = None,
+    checkpoint: str | Path | None = None,
+    data: Mapping[str, Any] | None = None,
 ) -> AblationReport:
     """Train and score every variant on every (window, seed); see the module doc.
 
+    With ``checkpoint`` (a JSON-lines file, :mod:`solia_ai.runlog`), each finished run is appended
+    as it ends and a rerun with the same settings, config, variants and ``data`` (the read's
+    bounds) skips the runs already there: a reboot loses at most the run in progress.
+
     Raises ``ValueError`` on an unusable setup (bad settings, no seed, unknown group, duplicate
-    variant name, empty window, a policy horizon the config doesn't label) before any training
-    starts.
+    variant name, empty window, a policy horizon the config doesn't label, a checkpoint of another
+    ablation) before any training starts.
     """
     seeds = check_settings(
         n_windows=n_windows,
@@ -424,7 +459,38 @@ def run_ablation(
         embargo=embargo_seconds(horizons),
     )
 
+    settings = {
+        "n_windows": n_windows,
+        "seeds": seeds,
+        "eval_fraction": eval_fraction,
+        "val_fraction": val_fraction,
+        "margin": margin,
+        "pnl_margin": pnl_margin,
+        "policy": {
+            "horizon": policy.horizon,
+            "pump_threshold": policy.pump_threshold,
+            "rug_threshold": policy.rug_threshold,
+        },
+        "embargo_seconds": embargo_seconds(horizons),
+        "calibration": calibration_settings(config),
+    }
+    finished: dict[tuple[str, int, int], RunResult] = {}
+    if checkpoint is not None:
+        fingerprint = {
+            "settings": settings,
+            "config": config,
+            "variants": [asdict(v) for v in variants],
+            "data": data,
+        }
+        for record in runlog.open_log(
+            checkpoint, fingerprint, what="an ablation runs file", other="another ablation"
+        ):
+            record.pop("kind", None)
+            run = RunResult(**record)
+            finished[(run.variant, run.window, run.seed)] = run
+
     runs: list[RunResult] = []
+    resumed = 0
     total = len(windows) * len(seeds) * len(variants)
     for variant in variants:
         for window in windows:
@@ -432,17 +498,25 @@ def run_ablation(
             val_ds = SequenceDataset(samples, window.val_idx)
             eval_ds = SequenceDataset(samples, window.eval_idx)
             for seed in seeds:
+                step = f"[{len(runs) + 1}/{total}] {variant.name} window {window.index} seed {seed}"
+                done = finished.get((variant.name, window.index, seed))
+                if done is not None:
+                    runs.append(done)
+                    resumed += 1
+                    if progress:
+                        progress(f"{step}: already finished, taken from {checkpoint}")
+                    continue
                 if progress:
-                    progress(
-                        f"[{len(runs) + 1}/{total}] {variant.name} window {window.index} "
-                        f"seed {seed}"
-                    )
+                    progress(step)
                 cfg = copy.deepcopy(dict(config))
                 cfg["features"] = {"groups": list(variant.groups)}  # the model masks the rest
                 best_epoch, metrics = train_and_score(
                     train_ds, val_ds, eval_ds, cfg, seed=seed, policy=policy, device=device
                 )
-                runs.append(RunResult(variant.name, window.index, seed, best_epoch, metrics))
+                run = RunResult(variant.name, window.index, seed, best_epoch, metrics)
+                runs.append(run)
+                if checkpoint is not None:
+                    runlog.append(checkpoint, json_safe({"kind": "run", **asdict(run)}))
 
     keys = metric_keys(horizons)
     by_variant = {v.name: _ordered(runs, v.name, windows, seeds) for v in variants}
@@ -476,21 +550,7 @@ def run_ablation(
 
     return AblationReport(
         generated_at=datetime.now(UTC).isoformat(),
-        settings={
-            "n_windows": n_windows,
-            "seeds": seeds,
-            "eval_fraction": eval_fraction,
-            "val_fraction": val_fraction,
-            "margin": margin,
-            "pnl_margin": pnl_margin,
-            "policy": {
-                "horizon": policy.horizon,
-                "pump_threshold": policy.pump_threshold,
-                "rug_threshold": policy.rug_threshold,
-            },
-            "embargo_seconds": embargo_seconds(horizons),
-            "calibration": calibration_settings(config),
-        },
+        settings=settings,
         horizons=horizons,
         windows=[w.describe() for w in windows],
         variants=[asdict(v) for v in variants],
@@ -498,7 +558,14 @@ def run_ablation(
         summary=summary,
         lifts=lifts,
         calibration=calibration_effect,
+        resumed=resumed,
     )
+
+
+def checkpoint_path(out: str | Path) -> Path:
+    """The runs file of an ablation reported to ``out``: ``x.json`` -> ``x.runs.jsonl``."""
+    out = Path(out)
+    return out.with_name(f"{out.stem}.runs.jsonl")
 
 
 def train_and_score(
@@ -584,6 +651,8 @@ def _ordered(
 
 
 def main(argv: list[str] | None = None) -> None:
+    from .db import add_data_bounds_arguments
+
     parser = argparse.ArgumentParser(
         description="Measure per-feature-group lift over walk-forward windows and seeds. "
         "Never saves or registers a model."
@@ -616,19 +685,35 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--pump-threshold", type=float, default=ReferencePolicy.pump_threshold)
     parser.add_argument("--rug-threshold", type=float, default=ReferencePolicy.rug_threshold)
-    parser.add_argument("--limit", type=int, help="cap the number of feature rows read")
+    parser.add_argument(
+        "--combine",
+        nargs="+",
+        action="append",
+        default=[],
+        metavar="GROUP",
+        help="also measure these candidate groups added together as one variant (+a+b); "
+        "repeatable",
+    )
     parser.add_argument("--out", help="write the JSON report to this path")
+    parser.add_argument(
+        "--restart",
+        action="store_true",
+        help="discard <out>.runs.jsonl and start over (default: resume the runs it holds)",
+    )
     parser.add_argument("--device", help="torch device (default: cuda if available, else cpu)")
+    add_data_bounds_arguments(parser)
     args = parser.parse_args(argv)
 
     import torch
 
     from .config import load_config
-    from .db import make_engine, read_features
+    from .db import DataSettings, make_engine, read_training_features
 
     config = load_config()
     try:
         variants = plan_variants(args.groups)
+        variants += [combined_variant(groups) for groups in args.combine]
+        check_variants(variants)
         policy = ReferencePolicy(
             horizon=args.policy_horizon or default_policy_horizon(config["horizons"]),
             pump_threshold=args.pump_threshold,
@@ -643,10 +728,29 @@ def main(argv: list[str] | None = None) -> None:
             margin=args.margin,
             pnl_margin=args.pnl_margin,
         )
+        data = DataSettings.from_config(
+            config, lookback_days=args.lookback_days, max_rows=args.max_rows
+        )
+        checkpoint, end = None, None
+        if args.out:
+            checkpoint = checkpoint_path(args.out)
+            if args.restart:
+                checkpoint.unlink(missing_ok=True)
+            header = runlog.read_header(checkpoint, "an ablation runs file")
+            if header is not None and isinstance(header.get("data"), dict):
+                # Resume on the window the run started on, not today's: live rows keep arriving.
+                end = datetime.fromisoformat(header["data"]["window_end"])
+                print(f"resuming {checkpoint} (window ending {end.isoformat()})", file=sys.stderr)
     except ValueError as exc:
         raise SystemExit(str(exc)) from None
-
-    df = read_features(make_engine(), limit=args.limit)
+    # The bounded training read (lookback window, whole tokens, row cap): the same rows a retrain
+    # trains on, never the whole table.
+    config = {**config, "data": {**config.get("data", {}), "max_rows": data.max_rows}}
+    try:
+        df, bounds = read_training_features(make_engine(), data, end=end)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+    print(bounds.describe(), file=sys.stderr)
     try:
         report = run_ablation(
             df,
@@ -660,7 +764,9 @@ def main(argv: list[str] | None = None) -> None:
             pnl_margin=args.pnl_margin,
             policy=policy,
             device=args.device or ("cuda" if torch.cuda.is_available() else "cpu"),
-            progress=lambda msg: print(msg, file=sys.stderr),
+            progress=lambda msg: print(msg, file=sys.stderr, flush=True),
+            checkpoint=checkpoint,
+            data=bounds.as_dict(),
         )
     except ValueError as exc:
         raise SystemExit(str(exc)) from None
