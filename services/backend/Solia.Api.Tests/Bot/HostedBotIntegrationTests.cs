@@ -61,12 +61,16 @@ public sealed class HostedBotIntegrationTests : PostgresFixture, IAsyncLifetime
                 ("Bot:TimeoutSweepSeconds", "0"),
                 // The fixed "now" is minutes after the price path: keep its rows fresh.
                 ("Bot:MaxMarkAgeSeconds", "3600"),
+                // The stub scores 1m only: trade that horizon, not the production default (15m since #162).
+                ("Bot:Horizon", "1m"),
                 // Instant, free fills (#175 off): the assertions below are exact.
                 ("Bot:EntryLatencyMs", "0"),
                 ("Bot:ExitLatencyMs", "0"),
                 ("Bot:NetworkFeeSol", "0"),
                 ("Bot:AccountRentSol", "0"),
                 ("Bot:MaxSlippagePct", "0"),
+                // No pool on the seeded rows: the liquidity gate (#168) would decline every entry.
+                ("Bot:RealisticFills", "false"),
             ],
             builder => builder.ConfigureTestServices(services =>
             {
@@ -82,8 +86,7 @@ public sealed class HostedBotIntegrationTests : PostgresFixture, IAsyncLifetime
         await DisposeAsync();
     }
 
-    // Flaky in CI (times out waiting for the trade row, also seen on main): skipped until fixed.
-    [Fact(Skip = "Flaky in CI: times out waiting for the trade row; re-enable once fixed")]
+    [Fact]
     public async Task The_hosted_bot_trades_the_live_feed_and_records_every_trade()
     {
         // "a" (and the untracked "c", and "d" the champion can't score yet) at 1.0: "a" opens.

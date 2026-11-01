@@ -49,6 +49,8 @@ public sealed class DbBotEventSourceIntegrationTests : PostgresFixture, IAsyncLi
                 ("Bot:PollInterval", "00:00:00.1"),
                 ("Bot:ReorderWindow", "00:00:00"),
                 ("Bot:MaxMarkAgeSeconds", "3600"),
+                // The stub scores 1m only: trade that horizon, not the production default (15m since #162).
+                ("Bot:Horizon", "1m"),
             ],
             builder => builder.ConfigureTestServices(services =>
             {

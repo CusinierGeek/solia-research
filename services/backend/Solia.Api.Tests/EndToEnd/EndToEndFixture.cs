@@ -82,6 +82,16 @@ public sealed class EndToEndFixture : PostgresFixture, IAsyncLifetime
                 ("Bot:PollInterval", "00:00:00.1"),
                 ("Bot:TimeoutSweepSeconds", "0"),
                 ("Bot:MaxMarkAgeSeconds", "3600"),
+                // The stub scores 1m only: trade that horizon, not the production default (15m since #162).
+                ("Bot:Horizon", "1m"),
+                // Instant, free fills (#182 off): the bot test asserts the exact entry and exit prices.
+                ("Bot:EntryLatencyMs", "0"),
+                ("Bot:ExitLatencyMs", "0"),
+                ("Bot:NetworkFeeSol", "0"),
+                ("Bot:AccountRentSol", "0"),
+                ("Bot:MaxSlippagePct", "0"),
+                // No pool on the seeded rows: the liquidity gate (#168) would decline every entry.
+                ("Bot:RealisticFills", "false"),
                 ("Logging:LogLevel:Default", "Debug"),
             ],
             builder => builder.ConfigureTestServices(services =>
