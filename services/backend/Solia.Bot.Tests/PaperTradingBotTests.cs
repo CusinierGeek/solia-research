@@ -35,7 +35,7 @@ public class PaperTradingBotTests
         IBotEventSource source, ITradeStore store, IBotLogSink sink, out PositionManager engine,
         BotOptions? options = null, TimeProvider? time = null)
     {
-        options ??= PolicyFixtures.WithoutExecution(new BotOptions { RealisticFills = false });
+        options ??= PolicyFixtures.WithoutExecution(new BotOptions { RealisticFills = false, Sizing = PositionSizing.Kelly });
         engine = new PositionManager(options, store, sink);
         return new PaperTradingBot(
             NullLogger<PaperTradingBot>.Instance, sink, engine, source, Options.Create(options), time);

@@ -9,7 +9,7 @@ public class PositionSizerTests
     private static readonly BotOptions Opts = PolicyFixtures.Options(); // RiskFraction 0.5, cap 0.2, dust 0.001, TP 0.5, SL 0.3
 
     /// <summary>The defaults with the hard cap lifted, so the Kelly fraction itself is observable.</summary>
-    private static readonly BotOptions Uncapped = new() { MaxPositionFraction = 1.0, RealisticFills = false };
+    private static readonly BotOptions Uncapped = new() { Sizing = PositionSizing.Kelly, MaxPositionFraction = 1.0, RealisticFills = false };
 
     private static PortfolioState WithBalance(decimal balance) => new(
         Balance: balance,
@@ -32,7 +32,7 @@ public class PositionSizerTests
     [Fact]
     public void Risk_fraction_of_one_at_full_confidence_is_exactly_full_kelly()
     {
-        var fullKelly = new BotOptions { MaxPositionFraction = 1.0, RiskFraction = 1.0, RealisticFills = false };
+        var fullKelly = new BotOptions { Sizing = PositionSizing.Kelly, MaxPositionFraction = 1.0, RiskFraction = 1.0, RealisticFills = false };
         ModelPrediction sure = Modest() with { Confidence = 100 };
 
         // f* = p/L − q/b = 0.8/0.3 − 0.2/0.1 = 2/3
@@ -80,7 +80,7 @@ public class PositionSizerTests
     [Fact]
     public void A_zero_take_profit_floor_still_requires_a_positive_gain()
     {
-        var noFloor = new BotOptions { MinTakeProfitPct = 0 };
+        var noFloor = new BotOptions { Sizing = PositionSizing.Kelly, MinTakeProfitPct = 0 };
         Assert.Equal(0.0, PositionSizer.Gain(PolicyFixtures.Buyable() with { ExpectedReturn = 0.0 }, noFloor));
         Assert.Equal(0.0005, PositionSizer.Gain(PolicyFixtures.Buyable() with { ExpectedReturn = 0.0005 }, noFloor), 12);
     }
@@ -122,8 +122,8 @@ public class PositionSizerTests
     [Fact]
     public void Size_decreases_with_a_wider_stop_loss()
     {
-        double tight = PositionSizer.Fraction(Modest(), new BotOptions { MaxPositionFraction = 1.0, StopLossPct = 0.25 });
-        double wide = PositionSizer.Fraction(Modest(), new BotOptions { MaxPositionFraction = 1.0, StopLossPct = 0.3 });
+        double tight = PositionSizer.Fraction(Modest(), new BotOptions { Sizing = PositionSizing.Kelly, MaxPositionFraction = 1.0, StopLossPct = 0.25 });
+        double wide = PositionSizer.Fraction(Modest(), new BotOptions { Sizing = PositionSizing.Kelly, MaxPositionFraction = 1.0, StopLossPct = 0.3 });
         Assert.True(tight > wide);
     }
 
@@ -201,9 +201,70 @@ public class PositionSizerTests
     [Fact]
     public void Size_never_exceeds_the_balance()
     {
-        var allIn = new BotOptions { MaxPositionFraction = 1.0, RiskFraction = 1.0, RealisticFills = false };
+        var allIn = new BotOptions { Sizing = PositionSizing.Kelly, MaxPositionFraction = 1.0, RiskFraction = 1.0, RealisticFills = false };
         ModelPrediction greedy = PolicyFixtures.Buyable() with { ExpectedReturn = 100.0, Confidence = 100 };
         Assert.True(PositionSizer.Size(greedy, WithBalance(10m), allIn) <= 10m);
+    }
+
+    // ---- fixed sizing (#219, the production default) ----
+
+    private static BotOptions Fixed(double fraction = 0.1, double cap = 0.2) => PolicyFixtures.WithoutExecution(new BotOptions
+    {
+        Sizing = PositionSizing.Fixed,
+        FixedPositionFraction = fraction,
+        MaxPositionFraction = cap,
+        RealisticFills = false,
+    });
+
+    [Fact]
+    public void Fixed_sizing_is_the_default()
+    {
+        var options = new BotOptions();
+        Assert.Equal(PositionSizing.Fixed, options.Sizing);
+        Assert.Equal(0.1, options.FixedPositionFraction);
+    }
+
+    [Theory]
+    [InlineData(0.0, 100.0)]
+    [InlineData(0.6, 30.0)]
+    [InlineData(0.9, 0.0)]   // Kelly: negative edge and zero confidence → no trade
+    public void Fixed_sizing_ignores_rug_probability_and_confidence(double rug, double confidence)
+    {
+        ModelPrediction prediction = Modest() with { RugProb = rug, Confidence = confidence };
+
+        Assert.Equal(0.1, PositionSizer.Fraction(prediction, Fixed()));
+        Assert.Equal(1m, PositionSizer.Size(prediction, WithBalance(10m), Fixed()));
+    }
+
+    [Fact]
+    public void The_same_high_rug_prediction_gets_nothing_under_kelly()
+    {
+        ModelPrediction risky = Modest() with { RugProb = 0.6, Confidence = 30 };
+        Assert.Equal(0.0, PositionSizer.Fraction(risky, Uncapped));
+    }
+
+    [Fact]
+    public void Fixed_sizing_is_capped_by_the_max_position_fraction()
+    {
+        Assert.Equal(0.2, PositionSizer.Fraction(Modest(), Fixed(fraction: 0.5, cap: 0.2)));
+    }
+
+    [Fact]
+    public void Fixed_sizing_still_needs_upside()
+    {
+        // expected_return below MinTakeProfitPct (0.05): no take-profit distance, no trade.
+        Assert.Equal(0.0, PositionSizer.Fraction(Modest() with { ExpectedReturn = 0.01 }, Fixed()));
+        Assert.Equal(0m, PositionSizer.Size(Modest() with { ExpectedReturn = 0.01 }, WithBalance(10m), Fixed()));
+    }
+
+    [Fact]
+    public void Fixed_sizing_still_respects_the_pool_cap_and_the_dust_floor()
+    {
+        BotOptions realistic = Fixed();
+        realistic.RealisticFills = true;
+
+        Assert.Equal(0m, PositionSizer.Size(Modest(), InPool(10m, "raydium", 0.04m), realistic)); // 2 % of 0.04 < dust
+        Assert.Equal(0m, PositionSizer.Size(Modest(), InPool(10m, "raydium", null), realistic));  // unknown pool
     }
 
     [Fact]

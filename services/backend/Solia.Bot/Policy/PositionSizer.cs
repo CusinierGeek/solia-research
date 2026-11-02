@@ -5,7 +5,8 @@ using Solia.Bot.Trading;
 namespace Solia.Bot.Policy;
 
 /// <summary>
-/// Model-driven position sizing (docs/ML-MODEL.md "Policy layer"): fractional Kelly on a two-outcome
+/// Position sizing (docs/ML-MODEL.md "Policy layer"). <see cref="PositionSizing.Fixed"/> (the default) commits a fixed
+/// fraction of the balance to every entry with upside. <see cref="PositionSizing.Kelly"/> is fractional Kelly on a two-outcome
 /// bet whose payoffs come from the bot's own exit rules, scaled by confidence, capped at a max fraction
 /// of balance, and floored to skip dust. Pure and deterministic — no I/O, no clock.
 ///
@@ -46,7 +47,9 @@ public static class PositionSizer
 
     /// <summary>
     /// The fraction of balance to commit, in [0, <see cref="BotOptions.MaxPositionFraction"/>]. Zero
-    /// means the bet has no positive edge (or the prediction is malformed) — no trade.
+    /// means no upside (<see cref="Gain"/> is 0), a malformed prediction or, under
+    /// <see cref="PositionSizing.Kelly"/>, no positive edge — no trade. Under <see cref="PositionSizing.Fixed"/> any
+    /// prediction with upside gets <see cref="BotOptions.FixedPositionFraction"/>: rug and confidence don't size it.
     /// </summary>
     public static double Fraction(ModelPrediction prediction, BotOptions options)
     {
@@ -62,6 +65,11 @@ public static class PositionSizer
         if (gain <= 0.0)
         {
             return 0.0;
+        }
+
+        if (options.Sizing == PositionSizing.Fixed)
+        {
+            return Math.Min(options.FixedPositionFraction, options.MaxPositionFraction);
         }
 
         double loss = options.StopLossPct;

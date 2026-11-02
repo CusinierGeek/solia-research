@@ -92,6 +92,7 @@ public sealed class PositionManager
     private readonly BotOptions _options;
     private readonly ITradeStore _store;
     private readonly BestEffortLogWriter _log;
+    private readonly ILogger? _logger;
     private readonly Dictionary<string, OpenPosition> _positions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Mark> _marks = new(StringComparer.Ordinal);
     private readonly Dictionary<string, PendingEntry> _pendingEntries = new(StringComparer.Ordinal);
@@ -117,6 +118,7 @@ public sealed class PositionManager
         _options = options;
         _store = store;
         _log = new BestEffortLogWriter(logSink ?? NullBotLogSink.Instance, logger);
+        _logger = logger;
         Balance = options.StartingBalance;
     }
 
@@ -333,6 +335,7 @@ public sealed class PositionManager
         EntryDecision decision = EntryRule.Evaluate(prediction, portfolio, _options);
         if (!decision.Enter)
         {
+            LogDeclinedEntry(prediction, decision.Reason);
             return;
         }
 
@@ -349,6 +352,22 @@ public sealed class PositionManager
 
         Balance -= pending.Size;
         _pendingEntries.Add(prediction.Mint, pending);
+    }
+
+    /// <summary>
+    /// Logs why a prediction that cleared the signal gate was not entered (#219). The many non-buy predictions are not
+    /// logged: only the signals the bot lost after the model said buy.
+    /// </summary>
+    private void LogDeclinedEntry(ModelPrediction prediction, EntryRejectReason reason)
+    {
+        if (reason is EntryRejectReason.NotABuySignal or EntryRejectReason.None || _logger is null)
+        {
+            return;
+        }
+
+        _logger.LogInformation(
+            "entry declined: {Reason} for {Mint} (pump {PumpProb:0.###}, rug {RugProb:0.###}, confidence {Confidence:0.#}, expected return {ExpectedReturn:0.###})",
+            reason, prediction.Mint, prediction.PumpProb, prediction.RugProb, prediction.Confidence, prediction.ExpectedReturn);
     }
 
     /// <summary>

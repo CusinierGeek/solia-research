@@ -78,6 +78,23 @@ public sealed class BotOptions : IValidatableObject
     public double RiskFraction { get; set; } = 0.5;
 
     /// <summary>
+    /// How an accepted entry is sized (see Policy.PositionSizer). <see cref="PositionSizing.Fixed"/> (the default) commits
+    /// <see cref="FixedPositionFraction"/> of the available balance to every entry that passes the gates, whatever its
+    /// rug probability or confidence. The 2026-11-02 entry rule has no rug gate because high-rug entries proved good
+    /// (#217), so a size driven by rug and confidence would undo it (#219). <see cref="PositionSizing.Kelly"/> is the
+    /// fractional-Kelly bet on rug probability, expected return and confidence (<see cref="RiskFraction"/>).
+    /// </summary>
+    [EnumDataType(typeof(PositionSizing))]
+    public PositionSizing Sizing { get; set; } = PositionSizing.Fixed;
+
+    /// <summary>
+    /// Fraction of the available balance committed per entry under <see cref="PositionSizing.Fixed"/>, (0, 1], capped by
+    /// <see cref="MaxPositionFraction"/>. Default 0.1: five concurrent positions commit at most half the balance.
+    /// </summary>
+    [Range(0.0, 1.0, MinimumIsExclusive = true)]
+    public double FixedPositionFraction { get; set; } = 0.1;
+
+    /// <summary>
     /// Dust floor: a computed position smaller than this is skipped (size 0) rather than opened, and the
     /// entry gate also requires the balance to be at least this much, [0, 1 000 000]. Zero disables the
     /// floor. Avoids economically meaningless positions. Must not exceed the largest position the bot could
@@ -371,4 +388,14 @@ public sealed class BotOptions : IValidatableObject
             }
         }
     }
+}
+
+/// <summary>How the bot sizes an accepted entry (<see cref="BotOptions.Sizing"/>).</summary>
+public enum PositionSizing
+{
+    /// <summary>A fixed fraction of the available balance (<see cref="BotOptions.FixedPositionFraction"/>).</summary>
+    Fixed = 0,
+
+    /// <summary>Fractional Kelly on rug probability, expected return and confidence.</summary>
+    Kelly = 1,
 }

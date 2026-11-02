@@ -332,7 +332,12 @@ are **rules**, not model outputs — implemented in the paper-trading bot (Sprin
 configurable without retraining. They consume the model's predictions, for example:
 
 - enter when `pump_prob ≥ P` **and** `rug_prob ≤ R` (and liquidity/age gates pass);
-- size = fractional Kelly on `expected_return` (capped at TP) vs `rug_prob` (loss capped at SL), scaled by confidence, capped;
+- size (`Bot:Sizing`, #219):
+  - **`Fixed` (default):** `FixedPositionFraction` (0.1) of the available balance for every entry with upside (`expected_return ≥ MinTakeProfitPct`), capped by `MaxPositionFraction`, the pool cap and the dust floor.
+    The 2026-11-02 rule has no rug gate because high-`rug_prob` entries proved good (win rate 0.71). Kelly would read `rug_prob` as the chance of losing the trade and scale by confidence, which sits near 0 on exactly those entries.
+    It would therefore refuse or shrink most of them: in session #3's first 40 min, 1 trade out of 10 entry signals, at confidence 8.9.
+  - **`Kelly`:** fractional Kelly on `expected_return` (capped at TP) vs `rug_prob` (loss capped at SL), scaled by confidence, capped.
+  - A declined entry of a buy signal is logged with its reason (`entry declined: <reason> for <mint> (pump, rug, confidence, expected return)`);
 - TP/SL from `expected_return` and recent volatility.
 
 Keeping decisions out of the model lets risk appetite change instantly and keeps the model purely

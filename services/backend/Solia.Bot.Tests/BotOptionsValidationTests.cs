@@ -40,6 +40,22 @@ public class BotOptionsValidationTests
     }
 
     [Theory]
+    [InlineData(0.0)]
+    [InlineData(-0.1)]
+    [InlineData(1.5)]
+    public void Out_of_range_fixed_position_fraction_is_rejected(double fraction)
+    {
+        Assert.False(IsValid(new BotOptions { FixedPositionFraction = fraction }));
+    }
+
+    [Fact]
+    public void An_undefined_sizing_mode_is_rejected()
+    {
+        Assert.False(IsValid(new BotOptions { Sizing = (PositionSizing)7 }));
+        Assert.True(IsValid(new BotOptions { Sizing = PositionSizing.Kelly }));
+    }
+
+    [Theory]
     [InlineData(-0.1)]
     [InlineData(100.1)]
     public void Out_of_range_confidence_is_rejected(double confidence)

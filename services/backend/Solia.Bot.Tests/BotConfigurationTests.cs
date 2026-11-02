@@ -141,6 +141,21 @@ public class BotConfigurationTests
         Assert.Equal(0.35, bot.MaxRugProb);
     }
 
+    [Fact]
+    public void Add_bot_options_binds_the_sizing_mode_and_fixed_fraction()
+    {
+        BotOptions bot = Resolve(("Bot:Sizing", "Kelly"), ("Bot:FixedPositionFraction", "0.05"));
+
+        Assert.Equal(PositionSizing.Kelly, bot.Sizing);
+        Assert.Equal(0.05, bot.FixedPositionFraction);
+    }
+
+    [Fact]
+    public void Add_bot_options_defaults_to_fixed_sizing()
+    {
+        Assert.Equal(PositionSizing.Fixed, Resolve().Sizing);
+    }
+
     private static IHost BuildHost(params (string Key, string Value)[] values)
     {
         HostApplicationBuilder builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings());
