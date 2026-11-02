@@ -21,8 +21,13 @@ public sealed class MetadataFetcher : BackgroundService, IMetadataFetchQueue
 {
     internal const int SummaryEvery = 1_000;
 
+    /// <summary>Redirects followed per fetch (a gateway's path → subdomain redirect is one).</summary>
+    internal const int MaxRedirects = 3;
+
     private readonly Channel<Request> _queue;
     private readonly ConcurrentDictionary<string, byte> _pending = new(StringComparer.Ordinal);
+    // Failure reason (HTTP status, timeout, exception type...) → count, for the periodic summary. A small, bounded set.
+    private readonly ConcurrentDictionary<string, long> _failureReasons = new(StringComparer.Ordinal);
     private readonly HttpClient _http;
     private readonly MetadataCache _cache;
     private readonly IMetadataStore _store;
@@ -176,23 +181,44 @@ public sealed class MetadataFetcher : BackgroundService, IMetadataFetchQueue
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(_options.TimeoutSeconds));
-        string? failure;
+        string? failure = null;
         MetadataLinks? links = null;
         try
         {
-            using HttpResponseMessage response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
-            if (!response.IsSuccessStatusCode)
+            // Redirects are followed here, not by the handler, so every hop gets the same URI checks (HTTPS, default
+            // port, no user info, no private IP literal); a hostname hop still connects through PublicAddress.
+            Uri current = url;
+            for (int hop = 0; failure is null && links is null; hop++)
             {
-                failure = $"HTTP {(int)response.StatusCode}";
-            }
-            else if (await ReadBoundedAsync(response.Content, _options.MaxResponseBytes, timeout.Token) is not { } body)
-            {
-                failure = "response too large";
-            }
-            else
-            {
-                links = MetadataLinks.Parse(body);
-                failure = links is null ? "malformed JSON" : null;
+                using HttpResponseMessage response = await _http.GetAsync(current, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+                if (MetadataUri.IsRedirect(response.StatusCode))
+                {
+                    if (hop == MaxRedirects)
+                    {
+                        failure = "too many redirects";
+                    }
+                    else if (MetadataUri.ResolveRedirect(current, response.Headers.Location) is { } next)
+                    {
+                        current = next;
+                    }
+                    else
+                    {
+                        failure = "redirect refused";
+                    }
+                }
+                else if (!response.IsSuccessStatusCode)
+                {
+                    failure = $"HTTP {(int)response.StatusCode}";
+                }
+                else if (await ReadBoundedAsync(response.Content, _options.MaxResponseBytes, timeout.Token) is not { } body)
+                {
+                    failure = "response too large";
+                }
+                else
+                {
+                    links = MetadataLinks.Parse(body);
+                    failure = links is null ? "malformed JSON" : null;
+                }
             }
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -210,6 +236,8 @@ public sealed class MetadataFetcher : BackgroundService, IMetadataFetchQueue
             return new TokenMetadataRecord(mint, fetchedAt, MetadataFetchStatus.Ok, l.HasWebsite, l.HasTwitter, l.HasTelegram);
         }
 
+        failure ??= "unknown";
+        _failureReasons.AddOrUpdate(failure, 1, static (_, n) => n + 1);
         _logger.LogDebug("metadata fetch failed for {Mint}: {Failure}", mint, failure);
         return new TokenMetadataRecord(mint, fetchedAt, MetadataFetchStatus.Failed);
     }
@@ -261,9 +289,19 @@ public sealed class MetadataFetcher : BackgroundService, IMetadataFetchQueue
         {
             _logger.LogInformation(
                 "metadata fetch: {Ok} ok, {Failed} failed, {Unsupported} unsupported, {Dropped} skipped (queue full), " +
-                "{SaveFailures} not stored; {Cached} cached",
-                Fetched, Failed, Unsupported, Dropped, Interlocked.Read(ref _saveFailures), _cache.Count);
+                "{SaveFailures} not stored; {Cached} cached; failures by reason: {FailureReasons}",
+                Fetched, Failed, Unsupported, Dropped, Interlocked.Read(ref _saveFailures), _cache.Count, FailureSummary());
         }
+    }
+
+    /// <summary>"HTTP 404 ×12, timeout ×3", most frequent first; "none" when nothing failed.</summary>
+    internal string FailureSummary()
+    {
+        KeyValuePair<string, long>[] reasons = _failureReasons.ToArray();
+        return reasons.Length == 0
+            ? "none"
+            : string.Join(", ", reasons.OrderByDescending(r => r.Value).ThenBy(r => r.Key, StringComparer.Ordinal)
+                .Select(r => $"{r.Key} ×{r.Value}"));
     }
 
     public override void Dispose()

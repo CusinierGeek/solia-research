@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace Solia.DataPipeline.Metadata;
 
 /// <summary>
@@ -34,7 +36,7 @@ public static class MetadataUri
 
     /// <summary>
     /// The URL to fetch for <paramref name="uri"/>, or null when it must not be fetched (not HTTPS after rewriting,
-    /// a non-default port, user info, or unparseable). Never follows anything but the URI itself.
+    /// a non-default port, user info, or unparseable). Redirects are vetted hop by hop with <see cref="ResolveRedirect"/>.
     /// </summary>
     public static Uri? ResolveFetchUrl(string? uri, MetadataOptions options)
     {
@@ -64,6 +66,34 @@ public static class MetadataUri
                && url.IsDefaultPort
                && string.IsNullOrEmpty(url.UserInfo)
             ? url
+            : null;
+    }
+
+    /// <summary>301, 302, 303, 307 or 308: a redirect the fetcher may follow (see <see cref="ResolveRedirect"/>).</summary>
+    public static bool IsRedirect(HttpStatusCode status) =>
+        status is HttpStatusCode.MovedPermanently or HttpStatusCode.Found or HttpStatusCode.SeeOther
+            or HttpStatusCode.TemporaryRedirect or HttpStatusCode.PermanentRedirect;
+
+    /// <summary>
+    /// The URL a redirect from <paramref name="from"/> to <paramref name="location"/> (absolute or relative) leads to,
+    /// or null when it must not be followed: no location, not HTTPS, a non-default port, user info, or an IP literal
+    /// that isn't public. A hostname is resolved at connect time by <see cref="PublicAddress.ConnectAsync"/>, which
+    /// applies the same public-address check to every hop.
+    /// </summary>
+    public static Uri? ResolveRedirect(Uri from, Uri? location)
+    {
+        if (location is null || !Uri.TryCreate(from, location, out Uri? next))
+        {
+            return null;
+        }
+
+        bool ipLiteral = next.HostNameType is UriHostNameType.IPv4 or UriHostNameType.IPv6;
+        return next.Scheme == Uri.UriSchemeHttps
+               && next.IsDefaultPort
+               && string.IsNullOrEmpty(next.UserInfo)
+               && !string.IsNullOrEmpty(next.Host)
+               && (!ipLiteral || (IPAddress.TryParse(next.DnsSafeHost, out IPAddress? address) && PublicAddress.IsPublic(address)))
+            ? next
             : null;
     }
 

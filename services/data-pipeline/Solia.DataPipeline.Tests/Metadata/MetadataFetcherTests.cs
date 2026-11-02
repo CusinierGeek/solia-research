@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Text;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Solia.DataPipeline.Metadata;
@@ -79,6 +80,117 @@ public class MetadataFetcherTests
         Assert.Equal(T0, record.FetchedAt);
         Assert.Single(_store.Saved);
         Assert.Null(_cache.Lookup("M", T0.AddHours(1)));
+    }
+
+    // #208: 4everland answers the path gateway with a 301 to its subdomain gateway.
+    private static FakeHandler Redirecting(Func<System.Uri, string?> next, string body = """{"twitter":"https://x.com/n"}""") =>
+        new((request, _) =>
+        {
+            string? location = next(request.RequestUri!);
+            var response = location is null
+                ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") }
+                : new HttpResponseMessage(HttpStatusCode.MovedPermanently) { Headers = { Location = new System.Uri(location, UriKind.RelativeOrAbsolute) } };
+            return Task.FromResult(response);
+        });
+
+    [Fact]
+    public async Task A_gateway_redirect_to_its_subdomain_is_followed()
+    {
+        FakeHandler handler = Redirecting(u => u.Host == "4everland.io" ? "https://bafycid.ipfs.4everland.io/" : null);
+
+        TokenMetadataRecord record = (await Fetcher(handler).FetchAsync("M", "ipfs://QmCid", default))!;
+
+        Assert.Equal(new TokenMetadataRecord("M", T0, MetadataFetchStatus.Ok, false, true, false), record);
+        Assert.Equal(["https://4everland.io/ipfs/QmCid", "https://bafycid.ipfs.4everland.io/"], handler.Requests.Select(u => u.AbsoluteUri));
+    }
+
+    [Theory]
+    [InlineData(301)]
+    [InlineData(302)]
+    [InlineData(303)]
+    [InlineData(307)]
+    [InlineData(308)]
+    public async Task Every_redirect_status_is_followed_including_relative_locations(int status)
+    {
+        var handler = new FakeHandler((request, _) => Task.FromResult(request.RequestUri!.AbsolutePath == "/m/1.json"
+            ? new HttpResponseMessage((HttpStatusCode)status) { Headers = { Location = new System.Uri("/m/2.json", UriKind.Relative) } }
+            : new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") }));
+
+        TokenMetadataRecord record = (await Fetcher(handler).FetchAsync("M", Uri, default))!;
+
+        Assert.Equal(MetadataFetchStatus.Ok, record.Status);
+        Assert.Equal("https://meta.example.com/m/2.json", handler.Requests.Last().AbsoluteUri);
+    }
+
+    [Fact]
+    public async Task Up_to_three_redirects_are_followed_and_a_fourth_is_refused()
+    {
+        FakeHandler Chain(int redirects) => Redirecting(u =>
+        {
+            int n = u.Host == "meta.example.com" ? 0 : int.Parse(u.Host.Split('.')[0][1..]);
+            return n < redirects ? $"https://h{n + 1}.example.com/" : null;
+        });
+
+        FakeHandler three = Chain(3);
+        Assert.Equal(MetadataFetchStatus.Ok, (await Fetcher(three).FetchAsync("A", Uri, default))!.Status);
+        Assert.Equal(4, three.Requests.Count);
+
+        FakeHandler four = Chain(4);
+        Assert.Equal(MetadataFetchStatus.Failed, (await Fetcher(four).FetchAsync("B", Uri, default))!.Status);
+        Assert.Equal(4, four.Requests.Count); // the fourth redirect is never requested
+    }
+
+    [Theory]
+    [InlineData("https://10.0.0.1/meta.json")]
+    [InlineData("https://127.0.0.1/")]
+    [InlineData("https://169.254.169.254/latest/meta-data/")]
+    [InlineData("https://192.168.1.10/")]
+    [InlineData("https://[::1]/")]
+    [InlineData("https://[fd00::1]/")]
+    [InlineData("https://[::ffff:10.0.0.1]/")]
+    [InlineData("http://bafycid.ipfs.4everland.io/")]
+    [InlineData("https://bafycid.ipfs.4everland.io:8443/")]
+    [InlineData("https://user:pw@bafycid.ipfs.4everland.io/")]
+    [InlineData("file:///etc/passwd")]
+    [InlineData(null)]
+    public async Task An_unsafe_redirect_is_refused_without_a_request(string? location)
+    {
+        var handler = new FakeHandler((_, _) =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.MovedPermanently);
+            if (location is not null)
+            {
+                response.Headers.Location = new System.Uri(location);
+            }
+
+            return Task.FromResult(response);
+        });
+        MetadataFetcher fetcher = Fetcher(handler);
+
+        TokenMetadataRecord record = (await fetcher.FetchAsync("M", Uri, default))!;
+
+        Assert.Equal(MetadataFetchStatus.Failed, record.Status);
+        Assert.Single(handler.Requests);
+        Assert.Equal("redirect refused ×1", fetcher.FailureSummary());
+    }
+
+    [Fact]
+    public async Task The_periodic_summary_names_the_failure_reasons()
+    {
+        var logger = new CapturingLogger();
+        var handler = new FakeHandler((request, _) => Task.FromResult(new HttpResponseMessage(
+            request.RequestUri!.AbsolutePath.EndsWith("/0", StringComparison.Ordinal) ? HttpStatusCode.TooManyRequests : HttpStatusCode.NotFound)));
+        var fetcher = new MetadataFetcher(handler, _cache, _store, new MetadataOptions(), logger, _time, (_, _) => Task.CompletedTask);
+
+        Assert.Equal("none", fetcher.FailureSummary());
+        for (int i = 0; i < MetadataFetcher.SummaryEvery; i++)
+        {
+            await fetcher.FetchAsync($"M{i}", $"https://meta.example.com/{i % 4}", default);
+        }
+
+        string summary = Assert.Single(logger.Entries, e => e.Level == LogLevel.Information).Message;
+        Assert.Contains("1000 failed", summary, StringComparison.Ordinal);
+        Assert.Contains("failures by reason: HTTP 404 ×750, HTTP 429 ×250", summary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -188,6 +300,19 @@ public class MetadataFetcherTests
         }
 
         Assert.True(condition());
+    }
+
+    private sealed class CapturingLogger : ILogger<MetadataFetcher>
+    {
+        public ConcurrentQueue<(LogLevel Level, string Message)> Entries { get; } = new();
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+            Entries.Enqueue((logLevel, formatter(state, exception)));
     }
 
     public sealed class FakeHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond) : HttpMessageHandler

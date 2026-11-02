@@ -75,8 +75,8 @@ public static class PublicAddress
     }
 
     /// <summary>
-    /// The handler of the metadata client: public addresses only, no redirect (its target would skip the URI
-    /// checks), no proxy (it would connect for us, past the address check), no cookies.
+    /// The handler of the metadata client: public addresses only, no automatic redirect (the fetcher follows them
+    /// itself, so each hop gets the URI checks — <see cref="MetadataUri.ResolveRedirect"/>), no proxy (it would connect for us, past the address check), no cookies.
     /// </summary>
     public static SocketsHttpHandler CreateHandler() => new()
     {
