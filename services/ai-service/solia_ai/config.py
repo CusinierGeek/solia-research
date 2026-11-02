@@ -342,6 +342,10 @@ def _validate(config: Any, source: str) -> None:
         fail(f"'training.pin_memory' must be a boolean or 'auto', got {pin_memory!r}")
     if "prefetch_factor" in section("training"):
         number("training", "prefetch_factor", positive=True, integer=True)
+    if "recency_half_life_hours" in section("training"):
+        half_life = number("training", "recency_half_life_hours", positive=True)
+        if not math.isfinite(half_life):
+            fail(f"'training.recency_half_life_hours' must be finite, got {half_life!r}")
 
     if not 0 <= number("loss", "alpha") <= 1:
         fail("'loss.alpha' must be in [0, 1] (L = alpha*BCE + (1-alpha)*Focal)")

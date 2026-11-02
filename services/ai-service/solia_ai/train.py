@@ -366,8 +366,11 @@ def fit(
 
     balanced = bool(training.get("balanced_sampling", True))
     loader = LoaderSettings.from_config(cfg, device)
+    # Recency weighting (training.recency_half_life_hours): the training loss only; validation,
+    # calibration and evaluation stay unweighted.
+    weighted_ds = train_ds.with_recency(training.get("recency_half_life_hours"))
     train_loader, val_loader = make_loaders(
-        train_ds,
+        weighted_ds,
         val_ds,
         batch_size=int(training["batch_size"]),
         balanced=balanced,

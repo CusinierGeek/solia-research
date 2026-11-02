@@ -1,0 +1,7 @@
+# #203 — recency-weighted training loss: a sample's loss weighs 0.5 ** (age / half-life), age from its
+# end to the end of the training window (weights normalized to mean 1; validation / evaluation unweighted).
+# python -m solia_ai.search --space recency --strategy grid --objective pr_auc
+# The baseline (trial "baseline") is the shipped config: no recency weighting. Run it on the longest window #202
+# retained (e.g. --lookback-days 3.5), so older data is there to be down-weighted.
+recency_half_life_hours:
+  choices: [12, 24, 48]

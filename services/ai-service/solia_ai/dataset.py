@@ -54,6 +54,7 @@ it to ``seq_len`` with a padding mask the model uses to ignore the padding.
 
 from __future__ import annotations
 
+import math
 import multiprocessing
 import os
 from collections.abc import Mapping, Sequence
@@ -515,14 +516,66 @@ def temporal_split(
     return train_idx, val_idx
 
 
+def recency_weights(
+    end_ts: np.ndarray, half_life_hours: float, *, reference_ts: float | None = None
+) -> np.ndarray:
+    """``[N]`` float32 loss weights ``0.5 ** (age / half_life)``, ``age`` being each sample's
+    distance from ``reference_ts`` (default: the newest ``end_ts``, the end of the training
+    window), normalized to mean 1 so the effective learning rate doesn't move with the half-life.
+
+    Raises:
+        ValueError: a non-positive or non-finite half-life, or a sample after ``reference_ts``.
+    """
+    if (
+        isinstance(half_life_hours, bool)
+        or not isinstance(half_life_hours, int | float)
+        or not math.isfinite(half_life_hours)
+        or half_life_hours <= 0
+    ):
+        raise ValueError(f"half_life_hours must be a finite number > 0, got {half_life_hours!r}")
+    end_ts = np.asarray(end_ts, np.float64)
+    if len(end_ts) == 0:
+        return np.empty(0, np.float32)
+    reference = end_ts.max() if reference_ts is None else float(reference_ts)
+    age = reference - end_ts
+    if (age < 0).any():
+        raise ValueError("a sample ends after the recency reference time")
+    weights = np.exp2(-age / (half_life_hours * 3600.0))
+    return (weights / weights.mean()).astype(np.float32)
+
+
 class SequenceDataset(Dataset):
     """Torch view over :class:`Samples`. Yields ``(x[seq_len, F], padding_mask[seq_len], targets)``:
     ``x`` is left-padded, ``padding_mask`` is ``True`` on padding, and targets holds ``pump`` /
-    ``rug`` / ``expected_return`` / ``mask`` as ``[H]`` float32 tensors."""
+    ``rug`` / ``expected_return`` / ``mask`` as ``[H]`` float32 tensors — plus ``weight`` (a
+    scalar per item, :class:`solia_ai.loss.SoliaLoss` multiplies each sample's loss by it) when
+    ``sample_weight`` (``[len(indices)]``, aligned with ``indices``) is given."""
 
-    def __init__(self, samples: Samples, indices: np.ndarray | None = None) -> None:
+    def __init__(
+        self,
+        samples: Samples,
+        indices: np.ndarray | None = None,
+        sample_weight: np.ndarray | None = None,
+    ) -> None:
         self.samples = samples
         self.indices = np.arange(len(samples)) if indices is None else np.asarray(indices, np.int64)
+        if sample_weight is not None:
+            sample_weight = np.asarray(sample_weight, np.float32)
+            if sample_weight.shape != self.indices.shape:
+                raise ValueError(
+                    f"sample_weight has shape {sample_weight.shape}, expected {self.indices.shape}"
+                )
+            if not np.isfinite(sample_weight).all() or (sample_weight < 0).any():
+                raise ValueError("sample_weight must be finite and >= 0")
+        self.sample_weight = sample_weight
+
+    def with_recency(self, half_life_hours: float | None) -> SequenceDataset:
+        """This dataset with :func:`recency_weights` over its samples' end times (``self`` when
+        ``half_life_hours`` is ``None``: off)."""
+        if half_life_hours is None:
+            return self
+        weights = recency_weights(self.samples.end_ts[self.indices], half_life_hours)
+        return SequenceDataset(self.samples, self.indices, weights)
 
     def __len__(self) -> int:
         return len(self.indices)
@@ -536,6 +589,8 @@ class SequenceDataset(Dataset):
             "expected_return": torch.from_numpy(s.expected_return[i]),
             "mask": torch.from_numpy(s.mask[i]),
         }
+        if self.sample_weight is not None:
+            targets["weight"] = torch.tensor(self.sample_weight[k])
         x, padding_mask = s.padded(i)
         return torch.from_numpy(x), torch.from_numpy(padding_mask), targets
 
@@ -544,13 +599,16 @@ class SequenceDataset(Dataset):
     ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
         """Items ``ks`` already collated — exactly what the default collation of
         ``[self[k] for k in ks]`` gives (``[B, ...]`` tensors), in a few vectorized gathers."""
-        i = self.indices[np.asarray(ks, np.int64)]
+        ks = np.asarray(ks, np.int64)
+        i = self.indices[ks]
         s = self.samples
         x, padding_mask = s.padded_batch(i)
         targets = {
             name: torch.from_numpy(getattr(s, name)[i])
             for name in ("pump", "rug", "expected_return", "mask")
         }
+        if self.sample_weight is not None:
+            targets["weight"] = torch.from_numpy(self.sample_weight[ks])
         return torch.from_numpy(x), torch.from_numpy(padding_mask), targets
 
 

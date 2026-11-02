@@ -6,9 +6,10 @@ spread, never a single lucky run — as a *proposed* ``config.yaml`` diff. Nothi
 saved, registered or promoted.
 
 * **Search space** — ``seq_len``, ``d_model``, ``n_layers``, ``dropout``, ``learning_rate``,
-  ``weight_decay``, the training-window stride (``window_stride_seconds``, ``data``) and the
-  labeling thresholds, as one multiplicative scale per head over every horizon
-  (``pump_threshold_scale`` / ``rug_threshold_scale``: the term structure across horizons is kept).
+  ``weight_decay``, the recency half-life (``recency_half_life_hours``, ``training``), the
+  training-window stride (``window_stride_seconds``, ``data``) and the labeling thresholds, as
+  one multiplicative scale per head over every horizon (``pump_threshold_scale`` /
+  ``rug_threshold_scale``: the term structure across horizons is kept).
   Each parameter is either ``{choices: [...]}`` or a ``{low, high[, log]}`` range; parameters left
   out keep the base config's value. ``ff_dim`` follows ``d_model`` at the base ratio, and
   ``min_seq_len`` stays the base one, so every trial scores the same windows.
@@ -104,6 +105,7 @@ FLOAT_PARAMS = (
     "dropout",
     "learning_rate",
     "weight_decay",
+    "recency_half_life_hours",
     "window_stride_seconds",
     "lookback_days",
     "pump_threshold_scale",
@@ -153,7 +155,8 @@ def _value_error(name: str, value: Any, base: Mapping[str, Any]) -> str | None:
         return f"must be >= 1, got {value}"
     if name == "dropout" and not 0 <= value < 1:
         return f"must be in [0, 1), got {value}"
-    if name in ("learning_rate", "pump_threshold_scale", "rug_threshold_scale") and value <= 0:
+    positive = ("learning_rate", "recency_half_life_hours", "pump_threshold_scale")
+    if name in (*positive, "rug_threshold_scale") and value <= 0:
         return f"must be > 0, got {value}"
     if name in ("weight_decay", "window_stride_seconds") and value < 0:
         return f"must be >= 0, got {value}"
@@ -285,7 +288,7 @@ def apply_params(base: Mapping[str, Any], params: Mapping[str, Any]) -> dict[str
     if "d_model" in params and "ff_dim" in base["model"]:
         ratio = base["model"]["ff_dim"] / base["model"]["d_model"]
         model["ff_dim"] = max(1, round(ratio * params["d_model"]))
-    for name in ("learning_rate", "weight_decay"):
+    for name in ("learning_rate", "weight_decay", "recency_half_life_hours"):
         if name in params:
             training[name] = params[name]
     for name in ("window_stride_seconds", "max_rows", "lookback_days"):

@@ -1167,6 +1167,29 @@ run after the official post-#172 retrain, with the retrain scheduler and the bot
 peak RSS per variant, the paired table (`mean − std > margin`, primary pump/5m PR-AUC), the decision and its cost,
 with the report under `docs/reports/`. `config.yaml` `data.*` changes only if a variant clears the margin.
 
+### Overfitting: recency-weighted loss (#203)
+
+The market drifts between periods (#172 stage 2: no regularization setting moves the gap or the score, and the
+held-out slices differ more from each other than the trials do). A longer training period (#202) adds regimes the
+model should know about, but also older data that may describe today's market less well. Recency weighting keeps
+the history while trusting yesterday more than four days ago.
+
+- `training.recency_half_life_hours` (optional; omitted = off = today's training, the shipped default). Each
+  training sample's loss weighs `0.5 ** (age / half_life)`, where `age` runs from the sample's end to the end of
+  the training window (the newest training sample). The weights are normalized to mean 1 over the training set,
+  so the effective learning rate doesn't move with the half-life (`solia_ai.dataset.recency_weights`).
+- The weight is a per-sample factor in `SoliaLoss.label_weight`. Every head and the return use it, and it
+  multiplies the label mask, the horizon weights, `pos_weight` and the focal term: they compose, none replaces
+  another. Balanced sampling (if on) still picks the batches; the weights then scale their losses.
+- **Training loss only.** Early-stopping validation, calibration and evaluation datasets carry no weight and stay
+  unweighted. The reported `train_loss` (and so the fit `gap`) is the weighted mean.
+- Validation rejects a non-numeric, non-positive or non-finite value, naming the key. The value is searchable
+  (`recency_half_life_hours`, shipped grid `solia_ai/sweeps/recency.yaml`: 12 / 24 / 48 h).
+
+**Results & decision.** *Pending.* A paired comparison (`mean − std > margin`, primary pump/5m PR-AUC) on the
+longest window #202 retains needs the GPU. It runs after #202's measurements, with the retrain scheduler and the
+bot off. Record the table and the decision here. `config.yaml` changes only if a half-life clears the margin.
+
 ## Files (ai-service, built in Sprints 2 & 7)
 
 | File | Role |

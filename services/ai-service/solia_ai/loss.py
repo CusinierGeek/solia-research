@@ -137,8 +137,13 @@ class SoliaLoss(nn.Module):
 
     def label_weight(self, targets: Mapping[str, torch.Tensor]) -> torch.Tensor:
         """``[B, H]`` weight of each entry in the masked means: the label mask times the
-        per-horizon weights. Its sum is the denominator every component shares."""
-        return targets["mask"] * self.horizon_weights
+        per-horizon weights, times the per-sample ``weight`` (``[B]``, e.g. recency) when the
+        targets carry one. Its sum is the denominator every component shares. The weights multiply
+        whatever ``pos_weight`` / focal weighting each element's loss already holds."""
+        weight = targets["mask"] * self.horizon_weights
+        if "weight" in targets:
+            weight = weight * targets["weight"].reshape(-1, 1)
+        return weight
 
     def forward(
         self, outputs: Mapping[str, torch.Tensor], targets: Mapping[str, torch.Tensor]
