@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Solia.DataPipeline.Features;
+using Solia.DataPipeline.Metadata;
 using Solia.DataPipeline.Options;
 using Solia.DataPipeline.Pipeline;
 
@@ -68,16 +69,21 @@ public sealed class ReplayRunner
         Func<long> featureRowsWritten,
         PipelineOptions options,
         CancellationToken cancellationToken,
-        TimeSpan warmup = default)
+        TimeSpan warmup = default,
+        IMetadataStore? metadataStore = null)
     {
         ReplayWindow sourceWindow = new(window.StartUtc - warmup, window.EndUtc);
         ITokenSink target = warmup > TimeSpan.Zero ? new WarmupSink(sink, window.StartUtc) : sink;
         var source = new PumpApiReplaySource(sourceWindow, archive.OpenAsync, _loggerFactory.CreateLogger<PumpApiReplaySource>(),
             PumpApiReplaySource.DefaultMaxAttemptsPerHour, _delay);
-        var engine = new PipelineEngine(source, new TokenWindowStore(options), target,
-            Microsoft.Extensions.Options.Options.Create(options), _loggerFactory.CreateLogger<PipelineEngine>())
+        // Never a fetch queue: a replay only reads the metadata results stored by live ingestion (FE-T12).
+        var store = new TokenWindowStore(options);
+        var engine = new PipelineEngine(source, store, target,
+            Microsoft.Extensions.Options.Options.Create(options), _loggerFactory.CreateLogger<PipelineEngine>(),
+            metadataStore: metadataStore)
         {
             ReleaseTrackedOnStop = true,
+            MetadataRange = (sourceWindow.StartUtc - store.Metadata.Horizon, sourceWindow.EndUtc),
         };
 
         await engine.RunAsync(cancellationToken);

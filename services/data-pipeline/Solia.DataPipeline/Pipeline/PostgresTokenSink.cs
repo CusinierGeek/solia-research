@@ -68,6 +68,8 @@ public sealed class PostgresTokenSink : ITokenSink
         "rep_creator_settled_launches, rep_creator_rug_share, rep_creator_pump_share, rep_early_buyers, rep_early_known_share, " +
         "rep_early_win_rate, rep_early_pnl_sol, rep_smart_buy_share, rep_smart_net_flow_sol, rep_smart_traders, " +
         "rep_bundle_create_block_share, rep_bundle_top_block_share, " +
+        "meta_coverage_sec, meta_uri_content_addressed, meta_has_website, meta_has_twitter, meta_has_telegram, " +
+        "meta_name_matches_1h, meta_narrative_grads_3h, " +
         "onchain_signals, behavioral_signals";
 
     private const string FeaturesInsertSql =
@@ -84,6 +86,7 @@ public sealed class PostgresTokenSink : ITokenSink
         "@rep_launches, @rep_rug, @rep_pump, @rep_early, @rep_early_known, " +
         "@rep_early_win, @rep_early_pnl, @rep_smart_buy, @rep_smart_flow, @rep_smart_traders, " +
         "@rep_bundle_create, @rep_bundle_top, " +
+        "@meta_cov, @meta_ca, @meta_web, @meta_x, @meta_tg, @meta_matches, @meta_grads, " +
         "@onchain, @behavioral) ";
 
     internal const string FeaturesInsertOnlySql = FeaturesInsertSql + "ON CONFLICT (mint, ts) DO NOTHING";
@@ -309,9 +312,19 @@ public sealed class PostgresTokenSink : ITokenSink
             Array("rep_smart_traders", NpgsqlDbType.Integer, Column(s, x => x.Reputation?.SmartTraders)),
             Array("rep_bundle_create", NpgsqlDbType.Double, Column(s, x => x.Reputation?.BundleCreateBlockShare)),
             Array("rep_bundle_top", NpgsqlDbType.Double, Column(s, x => x.Reputation?.BundleTopBlockShare)),
+            Array("meta_cov", NpgsqlDbType.Integer, Column(s, x => x.Metadata?.CoverageSec)),
+            Array("meta_ca", NpgsqlDbType.Smallint, Column(s, x => Flag(x.Metadata?.UriContentAddressed))),
+            Array("meta_web", NpgsqlDbType.Smallint, Column(s, x => Flag(x.Metadata?.HasWebsite))),
+            Array("meta_x", NpgsqlDbType.Smallint, Column(s, x => Flag(x.Metadata?.HasTwitter))),
+            Array("meta_tg", NpgsqlDbType.Smallint, Column(s, x => Flag(x.Metadata?.HasTelegram))),
+            Array("meta_matches", NpgsqlDbType.Integer, Column(s, x => x.Metadata?.NameMatches1h)),
+            Array("meta_grads", NpgsqlDbType.Integer, Column(s, x => x.Metadata?.NarrativeGraduations)),
             Array("onchain", NpgsqlDbType.Jsonb, Column(s, x => JsonSerializer.Serialize(x.OnchainSignals))),
             Array("behavioral", NpgsqlDbType.Jsonb, Column(s, x => JsonSerializer.Serialize(x.BehavioralSignals))));
     }
+
+    /// <summary>Flags are SMALLINT 0/1 (not BOOLEAN), so the model reader can cast every feature column to float8.</summary>
+    private static short? Flag(bool? value) => value is { } v ? (short)(v ? 1 : 0) : null;
 
     private static T[] Column<T>(IReadOnlyList<FeatureSnapshot> snapshots, Func<FeatureSnapshot, T> select)
     {

@@ -179,6 +179,13 @@ public static class PredictEndpoints
                 f.RepSmartTraders,
                 f.RepBundleCreateBlockShare,
                 f.RepBundleTopBlockShare,
+                f.MetaCoverageSec,
+                f.MetaUriContentAddressed,
+                f.MetaHasWebsite,
+                f.MetaHasTwitter,
+                f.MetaHasTelegram,
+                f.MetaNameMatches1h,
+                f.MetaNarrativeGrads3h,
                 f.Venue,
                 f.IsMigrated,
             })
@@ -256,6 +263,13 @@ public static class PredictEndpoints
             ["rep_smart_traders"] = f.RepSmartTraders,
             ["rep_bundle_create_block_share"] = f.RepBundleCreateBlockShare,
             ["rep_bundle_top_block_share"] = f.RepBundleTopBlockShare,
+            ["meta_coverage_sec"] = f.MetaCoverageSec,
+            ["meta_uri_content_addressed"] = f.MetaUriContentAddressed,
+            ["meta_has_website"] = f.MetaHasWebsite,
+            ["meta_has_twitter"] = f.MetaHasTwitter,
+            ["meta_has_telegram"] = f.MetaHasTelegram,
+            ["meta_name_matches_1h"] = f.MetaNameMatches1h,
+            ["meta_narrative_grads_3h"] = f.MetaNarrativeGrads3h,
             ["is_migrated"] = f.IsMigrated ? 1 : 0,
         }, f.Venue)).ToList();
     }

@@ -13,6 +13,7 @@ from solia_ai.features import (
     FEATURE_COLUMNS,
     FEATURE_GROUPS,
     MARKET_COLUMNS,
+    METADATA_COLUMNS,
     NON_FEATURE_COLUMNS,
     REPUTATION_COLUMNS,
     VENUE_COLUMNS,
@@ -465,6 +466,7 @@ def test_burn_and_venue_are_candidate_groups_outside_the_baseline():
         *MARKET_COLUMNS,
         *WALLET_COLUMNS,
         *REPUTATION_COLUMNS,
+        *METADATA_COLUMNS,
         *VENUE_COLUMNS,
     ]
 
@@ -733,5 +735,45 @@ def test_wallet_reputation_nulls_are_told_apart_from_real_zeros():
             assert matrix[:, j].tolist() == [0.0, 20.0]
         elif col in signed:
             assert matrix[0, j] == 0.0 and matrix[1, j] == 0.0, col  # signed: 0 is neutral
+        else:
+            assert matrix[0, j] == -1.0 and matrix[1, j] == 0.0, col
+
+
+# --- FE-T12 (#196): token metadata ---
+
+
+def test_metadata_is_a_candidate_group_outside_the_defaults():
+    # Disabled by default; its ablation is measured in the combined run #198.
+    assert "metadata" not in BASELINE_GROUPS
+    assert FEATURE_GROUPS["metadata"] == METADATA_COLUMNS
+    assert len(METADATA_COLUMNS) == 7 and all(c.startswith("meta_") for c in METADATA_COLUMNS)
+    assert group_columns(["metadata"]) == list(METADATA_COLUMNS)
+
+
+def test_rows_predating_the_metadata_group_are_refused_when_it_is_enabled():
+    df = pd.concat(
+        [_frame(meta_coverage_sec=60.0), _frame(meta_coverage_sec=None)], ignore_index=True
+    )
+
+    with pytest.raises(ValueError, match="1 of 2 feature rows predate the 'metadata' group"):
+        check_group_coverage(df, [*BASELINE_GROUPS, "metadata"])
+    check_group_coverage(df, BASELINE_GROUPS)  # disabled: no error
+
+
+def test_unknown_metadata_is_told_apart_from_a_real_no():
+    # Links not fetched by ts / narrative warm-up: NULL. No link, no namesake: real zeros.
+    unknown = {col: None for col in METADATA_COLUMNS if col != "meta_coverage_sec"}
+    zeros = {col: 0.0 for col in METADATA_COLUMNS if col != "meta_coverage_sec"}
+    df = pd.concat(
+        [_frame(meta_coverage_sec=120.0, **unknown), _frame(meta_coverage_sec=21600.0, **zeros)],
+        ignore_index=True,
+    )
+
+    check_group_coverage(df, ["metadata"])  # unknown rows are computed rows, not stale ones
+    matrix = build_feature_matrix(df)
+    for col in METADATA_COLUMNS:
+        j = FEATURE_COLUMNS.index(col)
+        if col == "meta_coverage_sec":
+            assert matrix[:, j].tolist() == [120.0, 21600.0]
         else:
             assert matrix[0, j] == -1.0 and matrix[1, j] == 0.0, col

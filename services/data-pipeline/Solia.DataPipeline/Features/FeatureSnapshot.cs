@@ -130,6 +130,12 @@ public sealed record FeatureSnapshot
     /// </summary>
     public ReputationFeatures? Reputation { get; init; }
 
+    /// <summary>
+    /// Token metadata features (FE-T12): metadata host kind, social links known by ts, narrative heat. Null only for
+    /// snapshots taken outside <see cref="TokenWindowStore.SnapshotActive"/>.
+    /// </summary>
+    public MetadataFeatures? Metadata { get; init; }
+
     public IReadOnlyDictionary<string, object?> OnchainSignals { get; init; } =
         new Dictionary<string, object?>();
 

@@ -307,6 +307,36 @@ public sealed class PostgresTokenSinkTests(PostgresFixture db) : IClassFixture<P
     }
 
     [Fact]
+    public async Task Metadata_columns_are_persisted_as_0_1_flags_and_null_when_unknown()
+    {
+        var metadata = new MetadataFeatures
+        {
+            CoverageSec = 21_600,
+            UriContentAddressed = true,
+            HasWebsite = false,
+            HasTwitter = true,
+            HasTelegram = false,
+            NameMatches1h = 4,
+            NarrativeGraduations = 1,
+        };
+        FeatureSnapshot snap = Snap("META1", T0, 1m) with { Metadata = metadata };
+        FeatureSnapshot unknown = Snap("META2", T0, 1m) with { Metadata = new MetadataFeatures { CoverageSec = 90 } };
+        await Sink.WriteAsync(Batch(T0, [snap, unknown]), default);
+
+        Assert.Equal(21_600, await Feature<int>("meta_coverage_sec", "META1"));
+        Assert.Equal((short)1, await Feature<short>("meta_uri_content_addressed", "META1"));
+        Assert.Equal((short)0, await Feature<short>("meta_has_website", "META1"));
+        Assert.Equal((short)1, await Feature<short>("meta_has_twitter", "META1"));
+        Assert.Equal((short)0, await Feature<short>("meta_has_telegram", "META1"));
+        Assert.Equal(4, await Feature<int>("meta_name_matches_1h", "META1"));
+        Assert.Equal(1, await Feature<int>("meta_narrative_grads_3h", "META1"));
+        Assert.Equal(1L, await db.ScalarAsync<long>(
+            "SELECT count(*) FROM features WHERE mint = 'META2' AND meta_coverage_sec = 90 " +
+            "AND meta_uri_content_addressed IS NULL AND meta_has_twitter IS NULL AND meta_name_matches_1h IS NULL " +
+            "AND meta_narrative_grads_3h IS NULL"));
+    }
+
+    [Fact]
     public async Task Burned_liquidity_is_persisted_and_null_when_unknown()
     {
         FeatureSnapshot snap = Snap("BURN1", T0, 1m) with { BurnedLiquidity = 57.5 };

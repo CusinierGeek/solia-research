@@ -207,6 +207,29 @@ public sealed class Feature
     /// <summary>Share of the first buys landing in the busiest single block.</summary>
     public double? RepBundleTopBlockShare { get; set; }
 
+    // Token metadata (FE-T12, #196): metadata host kind, social links known by ts, narrative heat. Flags are 0/1.
+
+    /// <summary>Seconds of stream history behind the narrative counts, capped at 21600 (always written since 0016).</summary>
+    public int? MetaCoverageSec { get; set; }
+
+    /// <summary>1 = IPFS / Arweave metadata URI, 0 = a launch tool's own host; null without a create / URI.</summary>
+    public short? MetaUriContentAddressed { get; set; }
+
+    /// <summary>Metadata lists a website; null when not known by ts.</summary>
+    public short? MetaHasWebsite { get; set; }
+
+    /// <summary>Metadata lists an X / Twitter link; null when not known by ts.</summary>
+    public short? MetaHasTwitter { get; set; }
+
+    /// <summary>Metadata lists a Telegram link; null when not known by ts.</summary>
+    public short? MetaHasTelegram { get; set; }
+
+    /// <summary>Other launches in the last hour sharing a normalized name / ticker.</summary>
+    public int? MetaNameMatches1h { get; set; }
+
+    /// <summary>Other tokens sharing a normalized name / ticker that graduated in the last 3 h.</summary>
+    public int? MetaNarrativeGrads3h { get; set; }
+
     /// <summary>Pump.fun-specific signals (JSONB).</summary>
     public string? OnchainSignals { get; set; }
 

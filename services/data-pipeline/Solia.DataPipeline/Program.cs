@@ -6,12 +6,14 @@ using Solia.DataPipeline.Hosting;
 using Solia.DataPipeline.Ingestion;
 using Solia.DataPipeline.Ingestion.PumpApi;
 using Solia.DataPipeline.Ingestion.Replay;
+using Solia.DataPipeline.Metadata;
 using Solia.Shared.Logging;
 using Solia.DataPipeline.Options;
 using Solia.DataPipeline.Pipeline;
 using Solia.DataPipeline.Retention;
 using Solia.Shared.Data;
 using Solia.Shared.Hosting;
+using Microsoft.Extensions.Options;
 
 // --- Container healthcheck: `--healthcheck` probes /health and exits without starting the host ---
 if (HealthProbe.IsRequested(args))
@@ -54,6 +56,13 @@ builder.Services.AddSingleton<IDataSource>(sp => sp.GetRequiredService<PumpApiSt
 builder.Services.AddSingleton<TokenWindowStore>();
 builder.Services.AddSingleton<ITokenSink, PostgresTokenSink>();
 builder.Services.AddSingleton<IWalletStateStore, PostgresWalletStateStore>(); // live only: replays never persist wallets
+
+// --- Token metadata (FE-T12): one background fetch per new token, results cached in token_metadata ---
+builder.Services.AddSingleton(sp => new MetadataCache(sp.GetRequiredService<IOptions<MetadataOptions>>().Value.LinkHorizon));
+builder.Services.AddSingleton<IMetadataStore, PostgresMetadataStore>();
+builder.Services.AddSingleton<MetadataFetcher>();
+builder.Services.AddSingleton<IMetadataFetchQueue>(sp => sp.GetRequiredService<MetadataFetcher>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<MetadataFetcher>());
 builder.Services.AddSingleton<PipelineEngine>();
 
 // --- Health (bounded so probes don't hang on an unreachable database) ---

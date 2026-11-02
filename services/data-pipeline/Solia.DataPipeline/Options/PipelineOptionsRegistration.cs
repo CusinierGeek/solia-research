@@ -1,3 +1,4 @@
+using Solia.DataPipeline.Metadata;
 using Solia.DataPipeline.Retention;
 
 namespace Solia.DataPipeline.Options;
@@ -28,6 +29,11 @@ public static class PipelineOptionsRegistration
             .Validate(o => o.HasValidUrls(),
                 "PumpApi:WsUrl must be an absolute ws(s):// URL and PumpApi:ReplayBaseUrl an absolute http(s):// URL.")
             .Validate(o => o.HasConsistentBackoff(), "PumpApi:ReconnectMaxDelaySeconds must be >= ReconnectBaseDelaySeconds.")
+            .ValidateOnStart();
+        services.AddOptions<MetadataOptions>()
+            .Bind(configuration.GetSection(MetadataOptions.Section))
+            .ValidateDataAnnotations()
+            .Validate(o => o.HasValidGateways(), "Metadata:IpfsGateway and Metadata:ArweaveGateway must be absolute https:// URLs.")
             .ValidateOnStart();
         services.AddOptions<RetentionOptions>()
             .Bind(configuration.GetSection(RetentionOptions.Section))

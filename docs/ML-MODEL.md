@@ -739,7 +739,12 @@ and seeds.
   of rated wallets, mean win rate and P&L per round trip, the smart wallets' share of the window's SOL buys, net
   flow and count, and the launch's bundling (first buys in the creation block / one block); `rep_early_buyers`
   is always written (see docs/DATA-PIPELINE.md "Wallet reputation"). Disabled by default; measured in the
-  combined ablation #198, which must also report the distinct creators / wallets behind its top-1 % entries.
+  combined ablation #198, which must also report the distinct creators / wallets behind its top-1 % entries;
+  `metadata` (FE-T12, #196) — `METADATA_COLUMNS`: whether the metadata URI is IPFS / Arweave or a launch tool's
+  host, website / X / Telegram flags from the token's single live metadata fetch (visible from its completion
+  time; NULL in any replay of a window before the fetcher's deployment), and the narrative heat of its normalized
+  name / ticker (launches sharing it in the last hour, namesakes graduated in the last 3 h); `meta_coverage_sec`
+  is always written (see docs/DATA-PIPELINE.md "Token metadata"). Unknown values are imputed to -1.
 - **Venue one-hot is encoded at load time, not stored.** `features.py` derives `venue_<name>` from the
   raw `venue` column (training reads it from the DB, `/predict` rows carry it as a string), over a
   fixed category list (`VENUES`: `pumpfun`, `pumpswap`, `raydium-launchpad`, `raydium`,
@@ -856,6 +861,20 @@ ablation #198 measures it. Protocol specifics:
 - **Overfitting check**: report the number of distinct creators and wallets behind the top-1 % entry selection
   (pump heads). A lift carried by a handful of very active wallets is memorization, not a gain.
 - **Decision rule**: same margin as the other groups. `wallet_reputation` is enabled only if it clears it.
+
+#### Results: `metadata` (#196) — pending, measured in #198
+
+Not measured yet. The `metadata` group is computed by the pipeline but **disabled** until the combined ablation
+#198 measures it. Protocol specifics:
+
+- **Data**: migration 0016 applied, then the combined re-replay with `--warmup-hours 24` (the narrative counts
+  need 6 h). Rows predating 0016 are refused for the group (`meta_coverage_sec` NULL).
+- **Link flags are live-only.** A replay never fetches: it reads `token_metadata`, which only holds tokens seen
+  by live ingestion since the fetcher was deployed. Over a window before that, the three link flags are NULL on
+  every row, so #198 measures the stream part (URI kind + narrative heat) on the whole window, and the links only
+  on a window fully ingested live after deployment (report both, and the share of rows with a known link).
+- **Variants**: the current defaults vs the same **+metadata**.
+- **Decision rule**: same margin as the other groups. `metadata` is enabled only if it clears it.
 
 ```bash
 # from services/ai-service, database from SOLIA_DB_CONNECTION / POSTGRES_* (a replayed history)

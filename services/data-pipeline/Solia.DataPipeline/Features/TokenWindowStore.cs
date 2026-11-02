@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Options;
 using Solia.DataPipeline.Ingestion;
+using Solia.DataPipeline.Metadata;
 using Solia.DataPipeline.Options;
 
 namespace Solia.DataPipeline.Features;
@@ -33,9 +34,14 @@ public sealed class TokenWindowStore
     private readonly HashSet<string> _removed = new(StringComparer.Ordinal);
     private readonly MarketContext _market = new();
     private readonly WalletStore _wallets;
+    private readonly NarrativeTracker _narrative = new();
+    private readonly MetadataCache _metadata;
+    private readonly IMetadataFetchQueue? _fetchQueue;
+    private DateTimeOffset? _lastMetadataPrune;
 
-    public TokenWindowStore(IOptions<PipelineOptions> options)
-        : this(options.Value, trackWalletChanges: true)
+    /// <summary>Live ingestion: wallet changes are persisted, new tokens are handed to the metadata fetcher.</summary>
+    public TokenWindowStore(IOptions<PipelineOptions> options, MetadataCache metadata, IMetadataFetchQueue fetchQueue)
+        : this(options.Value, trackWalletChanges: true, metadata, fetchQueue)
     {
     }
 
@@ -44,10 +50,18 @@ public sealed class TokenWindowStore
     /// Collect wallet changes for persistence (live ingestion, see <see cref="WalletStore"/>); a replay keeps its
     /// wallet state in memory only.
     /// </param>
-    internal TokenWindowStore(PipelineOptions options, bool trackWalletChanges = false)
+    /// <param name="metadata">The metadata fetch results (FE-T12); a fresh empty cache when null.</param>
+    /// <param name="fetchQueue">Live ingestion only: where new tokens go to be fetched. A replay never fetches.</param>
+    internal TokenWindowStore(
+        PipelineOptions options,
+        bool trackWalletChanges = false,
+        MetadataCache? metadata = null,
+        IMetadataFetchQueue? fetchQueue = null)
     {
         _options = options;
         _wallets = new WalletStore(options, trackWalletChanges);
+        _metadata = metadata ?? new MetadataCache();
+        _fetchQueue = fetchQueue;
     }
 
     public int TrackedCount => _tokens.Count;
@@ -72,10 +86,22 @@ public sealed class TokenWindowStore
     /// <summary>Cross-token wallet memory (fed every event, tracked token or not).</summary>
     public WalletStore Wallets => _wallets;
 
+    /// <summary>The per-token metadata fetch results the snapshots read (FE-T12).</summary>
+    public MetadataCache Metadata => _metadata;
+
+    /// <summary>Narrative heat over normalized names / tickers (fed every event, tracked token or not).</summary>
+    internal NarrativeTracker Narrative => _narrative;
+
     public void Apply(RawEvent e)
     {
         _market.Apply(e);
         _wallets.Apply(e);
+        _narrative.Apply(e);
+        if (e.Kind == EventKind.Create)
+        {
+            _fetchQueue?.TryEnqueue(e.Mint, e.MetadataUri); // non-blocking; the fetch runs off the loop
+        }
+
         if (_tokens.TryGetValue(e.Mint, out LinkedListNode<TokenState>? node))
         {
             node.Value.Apply(e);
@@ -106,17 +132,47 @@ public sealed class TokenWindowStore
         Prune(now);
         MarketAggregates market = _market.Aggregate(now);
         _wallets.Advance(now);
+        _narrative.Prune(now);
+        PruneMetadata(now);
 
         var snapshots = new List<FeatureSnapshot>();
         foreach (TokenState state in _byRecency)
         {
             if (state.HasActivityInWindow(now))
             {
-                snapshots.Add(state.Snapshot(now, _wallets) with { Market = market });
+                snapshots.Add(state.Snapshot(now, _wallets) with { Market = market, Metadata = MetadataOf(state, now) });
             }
         }
 
         return snapshots;
+    }
+
+    private MetadataFeatures MetadataOf(TokenState state, DateTimeOffset now)
+    {
+        (int coverage, int? matches, int? graduations) = _narrative.Count(state.NameKeys, state.Mint, now);
+        MetadataLinks? links = _metadata.Lookup(state.Mint, now);
+        return new MetadataFeatures
+        {
+            CoverageSec = coverage,
+            UriContentAddressed = state.UriContentAddressed,
+            HasWebsite = links?.HasWebsite,
+            HasTwitter = links?.HasTwitter,
+            HasTelegram = links?.HasTelegram,
+            NameMatches1h = matches,
+            NarrativeGraduations = graduations,
+        };
+    }
+
+    /// <summary>Forgets fetch results past their horizon, at most hourly (no snapshot can see them any more).</summary>
+    private void PruneMetadata(DateTimeOffset now)
+    {
+        if (_lastMetadataPrune is { } last && now - last < TimeSpan.FromHours(1))
+        {
+            return;
+        }
+
+        _lastMetadataPrune = now;
+        _metadata.Prune(now);
     }
 
     /// <summary>Removes tokens with no activity within the window, or whose activity is implausibly far in the future.</summary>

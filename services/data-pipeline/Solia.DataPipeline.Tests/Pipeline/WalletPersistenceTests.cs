@@ -93,7 +93,8 @@ public class WalletPersistenceTests
     [Fact]
     public void Live_ingestion_tracks_wallet_changes_and_replay_does_not()
     {
-        Assert.True(new TokenWindowStore(Microsoft.Extensions.Options.Options.Create(Options)).Wallets.TracksChanges);
+        Assert.True(new TokenWindowStore(Microsoft.Extensions.Options.Options.Create(Options), new Solia.DataPipeline.Metadata.MetadataCache(),
+            new Solia.DataPipeline.Tests.Metadata.MetadataFetcherTests.NoQueue()).Wallets.TracksChanges);
         Assert.False(new TokenWindowStore(Options).Wallets.TracksChanges);
     }
 

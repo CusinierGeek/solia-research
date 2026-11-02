@@ -75,6 +75,12 @@ public sealed record RawEvent
     public string? Symbol { get; init; }
     public decimal? Supply { get; init; }
 
+    /// <summary>
+    /// For a <see cref="EventKind.Create"/>: the token's off-chain metadata URI (pumpapi <c>uri</c>; IPFS, Arweave or a
+    /// launch tool's host). Only used to derive metadata features (FE-T12); never stored.
+    /// </summary>
+    public string? MetadataUri { get; init; }
+
     /// <summary>Burned-liquidity percentage (pumpapi <c>burnedLiquidity</c> "100%" → 100). Rug-risk signal.</summary>
     public double? BurnedLiquidityPercent { get; init; }
 

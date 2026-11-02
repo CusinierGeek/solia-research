@@ -130,6 +130,12 @@ internal sealed class TokenState
 
     public string Mint { get; }
 
+    /// <summary>Normalized name / ticker keys from the create event (FE-T12 narrative heat); empty without one.</summary>
+    internal string[] NameKeys { get; private set; } = [];
+
+    /// <summary>Whether the create's metadata URI is content-addressed (FE-T12); null without a create or a URI.</summary>
+    internal bool? UriContentAddressed { get; private set; }
+
     /// <summary>Timestamp of the newest event received (applied or still queued).</summary>
     public DateTimeOffset LastActivity { get; private set; }
 
@@ -182,6 +188,8 @@ internal sealed class TokenState
             _hasCreate = true;
             _createdAt = e.Timestamp;
             _createBlock = e.Block ?? _createBlock;
+            NameKeys = NarrativeKeys.Of(e.Name, e.Symbol);
+            UriContentAddressed = Metadata.MetadataUri.IsContentAddressed(e.MetadataUri);
             ApplyCreator(e);
         }
         else if (e.Kind is EventKind.Buy or EventKind.Sell && _creator is not null && e.Trader == _creator)

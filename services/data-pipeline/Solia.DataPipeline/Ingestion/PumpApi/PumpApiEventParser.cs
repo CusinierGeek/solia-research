@@ -156,6 +156,7 @@ public static class PumpApiEventParser
             Name = GetString(root, "name"),
             Symbol = GetString(root, "symbol"),
             Supply = GetDecimal(root, "supply"),
+            MetadataUri = kind == EventKind.Create ? GetString(root, "uri") : null,
             BurnedLiquidityPercent = ParsePercent(GetString(root, "burnedLiquidity")),
             Block = GetLong(root, "block"),
         };

@@ -83,6 +83,21 @@ public class PumpApiEventParserTests
     }
 
     [Fact]
+    public void A_creates_metadata_uri_is_kept_and_nothing_else_carries_one()
+    {
+        const string json = """
+        {"txType":"create","mint":"MINT1","pool":"pump","name":"Super Agent","symbol":"SA",
+         "uri":"https://ipfs.io/ipfs/QmRpvaErvBrkNSX4rVFtmFnQcs8af9PWNrKrvypXhNvtjx","timestamp":1700000000000}
+        """;
+
+        RawEvent evt = PumpApiEventParser.Parse(json)!;
+
+        Assert.Equal("https://ipfs.io/ipfs/QmRpvaErvBrkNSX4rVFtmFnQcs8af9PWNrKrvypXhNvtjx", evt.MetadataUri);
+        Assert.Null(PumpApiEventParser.Parse(json.Replace("\"create\"", "\"buy\""))!.MetadataUri);
+        Assert.Null(PumpApiEventParser.Parse(json.Replace("\"uri\"", "\"url\""))!.MetadataUri); // absent
+    }
+
+    [Fact]
     public void Parses_a_create_with_metadata_and_scientific_price()
     {
         const string json = """

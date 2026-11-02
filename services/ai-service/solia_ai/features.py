@@ -94,6 +94,24 @@ REPUTATION_COLUMNS: tuple[str, ...] = (
     "rep_bundle_top_block_share",
 )
 
+# FE-T12 (#196): token metadata — what the token says about itself at launch. Stream-derived (free,
+# live = replay): whether its metadata URI is content-addressed (IPFS / Arweave, the pump.fun UI
+# default) or a launch tool's own host, and the narrative heat of its normalized name / ticker
+# (other launches sharing it in the last hour; tokens sharing it that graduated in the last 3 h,
+# NULL until 1 h / 6 h of history). Fetched once per token by live ingestion only: whether the
+# metadata lists a website / X / Telegram link, NULL unless the fetch completed by the row's ts — so
+# every replay of a window before the fetcher's deployment has them NULL. Flags are 0/1;
+# meta_coverage_sec, always written, marks the rows computed since migration 0016.
+METADATA_COLUMNS: tuple[str, ...] = (
+    "meta_coverage_sec",
+    "meta_uri_content_addressed",
+    "meta_has_website",
+    "meta_has_twitter",
+    "meta_has_telegram",
+    "meta_name_matches_1h",
+    "meta_narrative_grads_3h",
+)
+
 # Ordered model inputs: the numeric features plus the migrated flag, then the venue one-hot. Keep
 # the stored ones (DB_FEATURE_COLUMNS) and the `features` table (services/db/migrations) in
 # lockstep — see tests/test_features.py.
@@ -138,6 +156,7 @@ FEATURE_COLUMNS: list[str] = [
     *MARKET_COLUMNS,
     *WALLET_COLUMNS,
     *REPUTATION_COLUMNS,
+    *METADATA_COLUMNS,
     *VENUE_COLUMNS,
 ]
 
@@ -195,6 +214,8 @@ FEATURE_GROUPS: dict[str, tuple[str, ...]] = {
     "wallet": WALLET_COLUMNS,
     # FE-T10 (#190): creator track record, early-buyer quality, smart-money flow, launch bundling.
     "wallet_reputation": REPUTATION_COLUMNS,
+    # FE-T12 (#196): metadata host kind, social links (fetched, point-in-time), narrative heat.
+    "metadata": METADATA_COLUMNS,
     # FE-T5 (#114): trading venue (Pump.fun curve vs launchpads vs AMMs), one-hot.
     "venue": VENUE_COLUMNS,
 }
@@ -279,6 +300,9 @@ NULL_FILL: dict[str, float] = {
         for col in REPUTATION_COLUMNS
         if col not in ("rep_early_buyers", "rep_early_pnl_sol", "rep_smart_net_flow_sol")
     },
+    # Metadata columns are NULL when unknown (no create seen, links not fetched by ts, narrative
+    # warm-up): -1, so it can't pass for a real 0 (no link, no copycat, no graduated namesake).
+    **{col: -1.0 for col in METADATA_COLUMNS if col != "meta_coverage_sec"},
 }
 
 # Per group, the columns the pipeline always writes since the group's migration: a NULL there
@@ -293,6 +317,7 @@ ALWAYS_WRITTEN: dict[str, tuple[str, ...]] = {
     "wallet_reputation": (
         "rep_early_buyers",
     ),  # migration 0015 (history-dependent ones NULL in warm-up)
+    "metadata": ("meta_coverage_sec",),  # migration 0016 (links / counts NULL when unknown)
     # `burn` has none: burned_liquidity is legitimately NULL (unknown), and the database keeps it
     # equal to onchain_signals.burnedLiquidityPercent (0008's insert trigger covers writers that
     # omit it, 0009 backfills earlier rows), so a NULL there is never a stale row. `venue` reads a

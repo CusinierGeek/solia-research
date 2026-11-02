@@ -134,6 +134,11 @@ Time-series feature snapshots per token. The model's input unit.
 | rep_smart_buy_share | DOUBLE PRECISION | share of the window's SOL buy volume from smart wallets (rated, win rate > `Pipeline:ReputationSmartWinRate`, 0.6), [0, 1]; NULL without a SOL buy or before the age cap is covered |
 | rep_smart_net_flow_sol, rep_smart_traders | DOUBLE PRECISION, INT | smart wallets' net SOL flow (buys − sells) over the window, and how many traded in it; NULL before the age cap is covered |
 | rep_bundle_create_block_share, rep_bundle_top_block_share | DOUBLE PRECISION | share of the first buys (those reporting a block) landing in the creation block / in the busiest single block, [0, 1]; NULL without such a buy (the first also without a creation block) |
+| meta_coverage_sec | INT | token metadata (FE-T12, 0016): seconds of stream history behind the narrative counts, capped at 21600; always written (NULL = row predates 0016) |
+| meta_uri_content_addressed | SMALLINT | 1 = the create's metadata URI is IPFS / Arweave, 0 = a launch tool's own host; NULL without a create / URI |
+| meta_has_website, meta_has_twitter, meta_has_telegram | SMALLINT | 0/1: the metadata JSON lists the link; NULL unless a successful fetch completed by `ts` (`token_metadata.fetched_at`) |
+| meta_name_matches_1h | INT | other launches in the last hour sharing a normalized name / ticker; NULL before 1 h of history or without a usable name |
+| meta_narrative_grads_3h | INT | other tokens sharing a normalized name / ticker that graduated in the last 3 h; NULL before 6 h of history or without a usable name |
 | onchain_signals | JSONB | Pump.fun-specific signals |
 | behavioral_signals | JSONB | pump/rug pattern flags |
 | raw | JSONB | nullable debug payload |
@@ -149,6 +154,23 @@ events strictly before its `ts`; the history-dependent ones stay NULL until `Pip
 history has been observed (replay warm-up, see docs/DATA-PIPELINE.md "Cross-token wallet memory"). The
 `rep_*` columns come from the same memory (see docs/DATA-PIPELINE.md "Wallet reputation"); a launch outcome is
 visible only once its first hour plus the label embargo is over.
+
+The `meta_*` columns (see docs/DATA-PIPELINE.md "Token metadata"): the narrative counts use only whole seconds
+strictly before the second of `ts`; the link flags come from the token's single metadata fetch and are visible
+only from its completion time.
+
+### `token_metadata`
+The single metadata fetch of each token (FE-T12, 0016), written by live ingestion only (one row per token, raw
+SQL, `ON CONFLICT DO NOTHING`); replays only read it. Nothing else from the metadata is stored. No EF mapping.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| mint | TEXT PK | token |
+| fetched_at | TIMESTAMPTZ | when the fetch completed: a `features` row sees the flags only from then |
+| status | SMALLINT | 1 = ok, 2 = failed (unreachable, timeout, non-2xx, too large, malformed), 3 = unsupported URI |
+| has_website, has_twitter, has_telegram | BOOLEAN | links listed (FALSE unless status = 1) |
+
+Index: `fetched_at` (startup loads a fetch-time range).
 
 ### `wallet_state`, `wallet_state_meta`
 The live pipeline's cross-token wallet memory (FE-T9, 0014), so a restart doesn't reset every wallet to fresh.

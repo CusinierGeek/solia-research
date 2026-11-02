@@ -11,6 +11,16 @@ Streaming (push) is free or cheap; per-token REST *fetches* are where cost accru
 - Pay for a REST fetch (e.g. `Get Token Info`) only for **rare, immutable** enrichment (metadata), **on-demand, rate-limited, and cached permanently**.
 - **Never** fetch per event / in a hot loop — that is the only way costs explode.
 
+### Token metadata (FE-T12, #196)
+
+pumpapi's `create` event carries the token's `name`, `symbol` and metadata `uri` for free (verified 2026-11-01:
+every create of the archive hour). The social links (website / X / Telegram) are only in the JSON behind that
+URI, so live ingestion fetches it **once per token**, in the background, rate-limited, from free public hosts (no
+pumpapi call, no SOL): ~70 % `ipfs.io` CIDs, rewritten to another IPFS gateway because `ipfs.io` now refuses
+scripted reads (429), the rest ~30 launch-tool hosts (j7tracker, uxento, rapidlaunch, ...). Only three booleans
+and the fetch time are kept (`token_metadata`). Replays never fetch. Details: docs/DATA-PIPELINE.md "Token
+metadata".
+
 ## Provider comparison (verified 2026-10-21)
 
 | Provider | Trade stream | New-token / migration | Historical backfill | Post-bonding (AMM) | Notes |

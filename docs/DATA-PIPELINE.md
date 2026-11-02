@@ -208,6 +208,53 @@ bundling from its own buys:
   memorize them. The combined ablation (#198) reports, for the `wallet_reputation` group, the number of distinct
   creators and wallets behind the top-1 % entry selection before the group may be enabled.
 
+### Token metadata (FE-T12, #196)
+
+At launch a token's only information is its metadata. The `metadata` group reads it two ways:
+
+| Column | Source | Meaning |
+|---|---|---|
+| `meta_coverage_sec` | stream | seconds of stream history behind the narrative counts, capped at 6 h (always written) |
+| `meta_uri_content_addressed` | stream | 1 when the create's `uri` is content-addressed (IPFS CID behind any gateway, `ipfs://`, Arweave — the pump.fun UI default), 0 for a launch tool's own host (j7tracker, uxento, rapidlaunch...); NULL without a create / URI |
+| `meta_name_matches_1h` | stream | other launches in the last hour sharing a normalized name or ticker (NULL before 1 h of history) |
+| `meta_narrative_grads_3h` | stream | other tokens sharing one that graduated (`Migrate`) in the last 3 h, counted only when created at most 3 h before graduating (NULL before 6 h of history) |
+| `meta_has_website` / `_twitter` / `_telegram` | fetched | the metadata JSON lists a non-blank link (top level, or Metaplex `extensions`); NULL unless known by the row's ts |
+
+- **Stream part (free, live = replay).** pumpapi's `create` carries `name`, `symbol` and `uri` (verified on the
+  2026-11-01 archives: every create of the hour). Names and tickers are normalized (`NarrativeKeys`: NFKD,
+  diacritics / punctuation / spaces / emoji dropped, lower-cased, at least 2 chars: `$PEPE`, `Pépé`, `pepe 🐸` →
+  `pepe`); a launch matches when any of its keys equals any of the token's, and the token itself never counts.
+  `NarrativeTracker` counts only whole seconds strictly before the row's second, and bounds a graduation's
+  creation look-back on timestamps, so any 6 h of history (a replay's `--warmup-hours 24` included) gives the live
+  values exactly. The counts are dynamic: copycats launched after the token count once they happened.
+- **Fetched part (live only, once per token).** On a `create`, live ingestion hands the token to
+  `MetadataFetcher` with a non-blocking enqueue (a full queue of `Metadata:QueueCapacity` = 10 000 skips the
+  token; ingestion never waits). The fetcher works in the background, at most `Metadata:MaxRequestsPerSecond` (4)
+  starts and `MaxConcurrency` (4) in flight, each request bounded by `TimeoutSeconds` (8, body included) and
+  `MaxResponseBytes` (64 KiB). Every outcome — `ok`, `failed` (unreachable, timeout, non-2xx, too large,
+  malformed JSON, blocked address) or `unsupported` (no HTTPS URL) — is recorded **once, never retried**, with its
+  completion time, in memory (`MetadataCache`) and in `token_metadata` (0016). Only the three flags are kept:
+  never the URI, the links, the description or the image; failures are logged with the mint and a category only.
+- **Gateways.** About 70 % of URIs point at `ipfs.io`, which now answers scripted reads with 429 ("switching to a
+  service worker gateway"): any `/ipfs/<cid>` URI (and `ipfs://`) is rewritten to `Metadata:IpfsGateway`
+  (`https://4everland.io/ipfs/`, ~0.8 s), Arweave ids to `ArweaveGateway`. Other hosts are fetched as given,
+  HTTPS on the default port only.
+- **SSRF guard.** The URI is chosen by whoever launched the token. The client (`PublicAddress.CreateHandler`)
+  resolves the host itself and connects only to a public address (no loopback, private, link-local / cloud
+  metadata, CGNAT, multicast, or IPv6 forms embedding one), never follows a redirect, never uses a proxy.
+- **Point-in-time.** A row sees the flags only from `fetched_at` (the fetch's completion; wall clock, close to
+  event time live) and for `Metadata:LinkHorizonHours` (48 h) after it. Live loads the last 48 h of results at
+  startup; a replay **never fetches**: it loads the results whose `fetched_at` falls in its span (from 48 h before
+  it) and so reproduces what live ingestion saw. **Consequence:** every window replayed from before the fetcher's
+  deployment has the three link flags NULL; the link features are only measurable on windows ingested live after
+  it (see docs/ML-MODEL.md, `metadata` results).
+- **Cost.** About 1 650 creates / h, so ~40 k fetches / day on free public hosts (no pumpapi call, no SOL);
+  `token_metadata` grows ~40 k small rows / day and is not in the retention purge yet (a few MB / day).
+- **Config.** `Metadata:FetchEnabled` (default true; off: link flags stay NULL), `IpfsGateway`, `ArweaveGateway`,
+  `MaxRequestsPerSecond`, `MaxConcurrency`, `TimeoutSeconds`, `MaxResponseBytes`, `QueueCapacity`,
+  `LinkHorizonHours` (env `Metadata__FetchEnabled=false`, ...). A summary is logged every 1 000 fetches (ok /
+  failed / unsupported / skipped / not stored).
+
 ### Granularity: aggregated snapshots, not raw trades
 
 The pipeline persists **one aggregated `FeatureSnapshot` per token per cadence** — it does **not** store individual trade events. `TokenState.Apply` streams every `RawEvent` into an in-memory rolling window (carrying `Ts`, `Kind`, `QuoteAmount` in SOL, `QuoteMint`, and the `Trader`/txSigner), and `Snapshot` reduces that window to the feature row. The `features.raw` JSONB column exists but is currently **unused**.

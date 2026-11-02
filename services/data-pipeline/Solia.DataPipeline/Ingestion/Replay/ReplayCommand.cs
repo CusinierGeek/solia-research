@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Solia.DataPipeline.Config;
+using Solia.DataPipeline.Metadata;
 using Solia.DataPipeline.Options;
 using Solia.DataPipeline.Pipeline;
 using Solia.DataPipeline.Retention;
@@ -185,7 +186,8 @@ public static class ReplayCommand
         var sink = new PostgresTokenSink(services.GetRequiredService<NpgsqlDataSource>(), command.Rebuild,
             loggerFactory.CreateLogger<PostgresTokenSink>());
         ReplaySummary summary = await runner.ReplayAsync(command.Window, mirror ?? (IReplayArchive)download,
-            sink, () => sink.FeatureRowsWritten, pipeline, cancellationToken, command.Warmup);
+            sink, () => sink.FeatureRowsWritten, pipeline, cancellationToken, command.Warmup,
+            new PostgresMetadataStore(services.GetRequiredService<NpgsqlDataSource>()));
         if (sink.OutOfRangeValues > 0)
         {
             logger.LogWarning("replay: {Count} out-of-range NUMERIC values were written as NULL " +

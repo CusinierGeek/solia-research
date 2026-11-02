@@ -179,6 +179,13 @@ public sealed class SoliaDbContext(DbContextOptions<SoliaDbContext> options) : D
             e.Property(x => x.RepSmartTraders).HasColumnName("rep_smart_traders");
             e.Property(x => x.RepBundleCreateBlockShare).HasColumnName("rep_bundle_create_block_share");
             e.Property(x => x.RepBundleTopBlockShare).HasColumnName("rep_bundle_top_block_share");
+            e.Property(x => x.MetaCoverageSec).HasColumnName("meta_coverage_sec");
+            e.Property(x => x.MetaUriContentAddressed).HasColumnName("meta_uri_content_addressed");
+            e.Property(x => x.MetaHasWebsite).HasColumnName("meta_has_website");
+            e.Property(x => x.MetaHasTwitter).HasColumnName("meta_has_twitter");
+            e.Property(x => x.MetaHasTelegram).HasColumnName("meta_has_telegram");
+            e.Property(x => x.MetaNameMatches1h).HasColumnName("meta_name_matches_1h");
+            e.Property(x => x.MetaNarrativeGrads3h).HasColumnName("meta_narrative_grads_3h");
             e.Property(x => x.OnchainSignals).HasColumnName("onchain_signals").HasColumnType("jsonb");
             e.Property(x => x.BehavioralSignals).HasColumnName("behavioral_signals").HasColumnType("jsonb");
             e.Property(x => x.Raw).HasColumnName("raw").HasColumnType("jsonb");

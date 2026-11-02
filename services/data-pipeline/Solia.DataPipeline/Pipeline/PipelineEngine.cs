@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Solia.DataPipeline.Features;
 using Solia.DataPipeline.Ingestion;
+using Solia.DataPipeline.Metadata;
 using Solia.DataPipeline.Options;
 
 namespace Solia.DataPipeline.Pipeline;
@@ -30,6 +31,11 @@ namespace Solia.DataPipeline.Pipeline;
 /// at shutdown, in batches — never per trade. Both are best-effort like a write: a failed load starts from an empty
 /// memory, a failed save is retried at the next one.
 /// </para>
+/// <para>
+/// With an <see cref="IMetadataStore"/>, the stored metadata fetch results (FE-T12) are loaded into the store's
+/// <see cref="MetadataCache"/> before the first event: the last <see cref="MetadataCache.Horizon"/> for live ingestion,
+/// or <see cref="MetadataRange"/> for a replay. Best-effort too: a failed load leaves the link features NULL.
+/// </para>
 /// </summary>
 public sealed class PipelineEngine
 {
@@ -46,6 +52,7 @@ public sealed class PipelineEngine
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
     private readonly TimeSpan _finalFlushTimeout;
     private readonly IWalletStateStore? _walletState;
+    private readonly IMetadataStore? _metadataStore;
 
     private FlushBatch? _pending; // snapshotted but not yet persisted
 
@@ -55,8 +62,10 @@ public sealed class PipelineEngine
         ITokenSink sink,
         IOptions<PipelineOptions> options,
         ILogger<PipelineEngine> logger,
-        IWalletStateStore? walletState = null)
-        : this(source, store, sink, options.Value, logger, static (d, ct) => Task.Delay(d, ct), DefaultFinalFlushTimeout, walletState)
+        IWalletStateStore? walletState = null,
+        IMetadataStore? metadataStore = null)
+        : this(source, store, sink, options.Value, logger, static (d, ct) => Task.Delay(d, ct), DefaultFinalFlushTimeout,
+            walletState, metadataStore)
     {
     }
 
@@ -69,7 +78,8 @@ public sealed class PipelineEngine
         ILogger<PipelineEngine> logger,
         Func<TimeSpan, CancellationToken, Task> delay,
         TimeSpan finalFlushTimeout,
-        IWalletStateStore? walletState = null)
+        IWalletStateStore? walletState = null,
+        IMetadataStore? metadataStore = null)
     {
         _source = source;
         _store = store;
@@ -79,7 +89,14 @@ public sealed class PipelineEngine
         _delay = delay;
         _finalFlushTimeout = finalFlushTimeout;
         _walletState = walletState is not null && store.Wallets.TracksChanges ? walletState : null;
+        _metadataStore = metadataStore;
     }
+
+    /// <summary>
+    /// Replay: the fetch times whose metadata results are loaded (the replayed span, from one horizon before it). Null
+    /// for live ingestion, which loads the last <see cref="MetadataCache.Horizon"/>.
+    /// </summary>
+    public (DateTimeOffset Since, DateTimeOffset Until)? MetadataRange { get; init; }
 
     /// <summary>Batches dropped after exhausting write retries (or a timed-out final flush).</summary>
     public long FailedBatches { get; private set; }
@@ -106,6 +123,7 @@ public sealed class PipelineEngine
         try
         {
             await LoadWalletsAsync(cancellationToken);
+            await LoadMetadataAsync(cancellationToken);
 
             await foreach (RawEvent e in _source.StreamAsync(cancellationToken))
             {
@@ -201,6 +219,28 @@ public sealed class PipelineEngine
             _store.Wallets.Load(saved);
             _logger.LogInformation("loaded {Count} wallets (history since {Start:O}, last event {Last:O})",
                 saved.Wallets.Count, saved.HistoryStart, saved.LastEvent);
+        }
+    }
+
+    /// <summary>Loads the stored metadata fetch results; on failure the link features stay NULL (only costs coverage).</summary>
+    private async Task LoadMetadataAsync(CancellationToken cancellationToken)
+    {
+        if (_metadataStore is null)
+        {
+            return;
+        }
+
+        DateTimeOffset since = MetadataRange?.Since ?? DateTimeOffset.UtcNow - _store.Metadata.Horizon;
+        DateTimeOffset? until = MetadataRange?.Until;
+        IReadOnlyList<TokenMetadataRecord> records = [];
+        if (await WithRetriesAsync(async ct => records = await _metadataStore.LoadAsync(since, until, ct), "metadata load", cancellationToken))
+        {
+            _store.Metadata.Load(records);
+            _logger.LogInformation("loaded {Count} token metadata results fetched since {Since:O}", records.Count, since);
+        }
+        else
+        {
+            _logger.LogWarning("could not load the token metadata results; link features stay NULL for those tokens");
         }
     }
 
