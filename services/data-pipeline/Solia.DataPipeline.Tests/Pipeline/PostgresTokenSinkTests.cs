@@ -307,6 +307,33 @@ public sealed class PostgresTokenSinkTests(PostgresFixture db) : IClassFixture<P
     }
 
     [Fact]
+    public async Task Holder_supply_columns_are_persisted_with_a_0_1_flag_and_null_when_nothing_circulates()
+    {
+        var holders = new HolderSupplyFeatures
+        {
+            Holders = 12,
+            Top1Share = 0.4,
+            Top10Share = 0.9,
+            Top10NetFlow = -0.05,
+            LargeHolders = 3,
+            Incomplete = true,
+        };
+        FeatureSnapshot snap = Snap("HS1", T0, 1m) with { HolderSupply = holders };
+        FeatureSnapshot empty = Snap("HS2", T0, 1m) with { HolderSupply = new HolderSupplyFeatures() };
+        await Sink.WriteAsync(Batch(T0, [snap, empty]), default);
+
+        Assert.Equal(12, await Feature<int>("hs_holders", "HS1"));
+        Assert.Equal(0.4, await Feature<double>("hs_top1_share", "HS1"));
+        Assert.Equal(0.9, await Feature<double>("hs_top10_share", "HS1"));
+        Assert.Equal(-0.05, await Feature<double>("hs_top10_net_flow", "HS1"));
+        Assert.Equal(3, await Feature<int>("hs_large_holders", "HS1"));
+        Assert.Equal((short)1, await Feature<short>("hs_incomplete", "HS1"));
+        Assert.Equal(1L, await db.ScalarAsync<long>(
+            "SELECT count(*) FROM features WHERE mint = 'HS2' AND hs_holders = 0 AND hs_incomplete = 0 " +
+            "AND hs_top1_share IS NULL AND hs_top10_share IS NULL AND hs_top10_net_flow IS NULL AND hs_large_holders IS NULL"));
+    }
+
+    [Fact]
     public async Task Metadata_columns_are_persisted_as_0_1_flags_and_null_when_unknown()
     {
         var metadata = new MetadataFeatures

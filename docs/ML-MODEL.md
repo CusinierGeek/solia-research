@@ -744,7 +744,12 @@ and seeds.
   host, website / X / Telegram flags from the token's single live metadata fetch (visible from its completion
   time; NULL in any replay of a window before the fetcher's deployment), and the narrative heat of its normalized
   name / ticker (launches sharing it in the last hour, namesakes graduated in the last 3 h); `meta_coverage_sec`
-  is always written (see docs/DATA-PIPELINE.md "Token metadata"). Unknown values are imputed to -1.
+  is always written (see docs/DATA-PIPELINE.md "Token metadata"). Unknown values are imputed to -1;
+  `holders_supply` (FE-T13, #197) — `HOLDERS_SUPPLY_COLUMNS`: holder-side concentration from stream-derived
+  positions (top-1 / top-10 share of the circulating supply, the top 10's net flow over the window, wallets above
+  2 % of the supply, holder count, and the incomplete-history flag); `hs_holders` and `hs_incomplete` are always
+  written (see docs/DATA-PIPELINE.md "Holder supply"). Undefined shares / counts are imputed to -1, the net flow
+  to 0.
 - **Venue one-hot is encoded at load time, not stored.** `features.py` derives `venue_<name>` from the
   raw `venue` column (training reads it from the DB, `/predict` rows carry it as a string), over a
   fixed category list (`VENUES`: `pumpfun`, `pumpswap`, `raydium-launchpad`, `raydium`,
@@ -885,6 +890,19 @@ python -m solia_ai.ablation --groups flow holders --windows 4 --seeds 0 1 2 3 \
 python -u -m solia_ai.ablation --groups momentum concentration --combine momentum concentration \
     --windows 3 --seeds 0 1 2 --out /app/models/reports/ablation.json
 ```
+
+#### Results: `holders_supply` (#197) — pending, measured in #198
+
+Not measured yet. The `holders_supply` group is computed by the pipeline but **disabled** until the combined
+ablation #198 measures it. Protocol specifics:
+
+- **Data**: migration 0017 applied, then the combined re-replay with `--warmup-hours 24`, so tokens created in the
+  warm-up have complete positions. Rows predating 0017 are refused for the group (`hs_holders` NULL).
+- **Incomplete history**: report the share of training rows with `hs_incomplete = 1`, and the lift on complete
+  tokens only (`hs_incomplete = 0`); a lift that only shows on incomplete tokens is suspicious.
+- **Variants**: the current defaults vs the same **+holders_supply** (and **+holders_supply −concentration**, to see
+  whether the two concentration views overlap).
+- **Decision rule**: same margin as the other groups. `holders_supply` is enabled only if it clears it.
 
 ### Hyperparameter & labeling-threshold search
 

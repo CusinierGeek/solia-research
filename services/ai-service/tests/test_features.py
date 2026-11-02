@@ -12,6 +12,7 @@ from solia_ai.features import (
     DB_FEATURE_COLUMNS,
     FEATURE_COLUMNS,
     FEATURE_GROUPS,
+    HOLDERS_SUPPLY_COLUMNS,
     MARKET_COLUMNS,
     METADATA_COLUMNS,
     NON_FEATURE_COLUMNS,
@@ -467,6 +468,7 @@ def test_burn_and_venue_are_candidate_groups_outside_the_baseline():
         *WALLET_COLUMNS,
         *REPUTATION_COLUMNS,
         *METADATA_COLUMNS,
+        *HOLDERS_SUPPLY_COLUMNS,
         *VENUE_COLUMNS,
     ]
 
@@ -777,3 +779,59 @@ def test_unknown_metadata_is_told_apart_from_a_real_no():
             assert matrix[:, j].tolist() == [120.0, 21600.0]
         else:
             assert matrix[0, j] == -1.0 and matrix[1, j] == 0.0, col
+
+
+# --- FE-T13 (#197): holder-side supply concentration ---
+
+
+def test_holders_supply_is_a_candidate_group_outside_the_defaults():
+    # Disabled by default; its ablation is measured in the combined run #198.
+    assert "holders_supply" not in BASELINE_GROUPS
+    assert FEATURE_GROUPS["holders_supply"] == HOLDERS_SUPPLY_COLUMNS
+    assert len(HOLDERS_SUPPLY_COLUMNS) == 6
+    assert all(c.startswith("hs_") for c in HOLDERS_SUPPLY_COLUMNS)
+    assert group_columns(["holders_supply"]) == list(HOLDERS_SUPPLY_COLUMNS)
+
+
+def test_rows_predating_the_holders_supply_group_are_refused_when_it_is_enabled():
+    df = pd.concat(
+        [_frame(hs_holders=3.0, hs_incomplete=0.0), _frame(hs_holders=None, hs_incomplete=None)],
+        ignore_index=True,
+    )
+
+    with pytest.raises(ValueError, match="1 of 2 feature rows predate the 'holders_supply' group"):
+        check_group_coverage(df, [*BASELINE_GROUPS, "holders_supply"])
+    check_group_coverage(df, BASELINE_GROUPS)  # disabled: no error
+
+
+def test_unknown_holder_shares_are_told_apart_from_a_real_zero():
+    # Nothing circulating / unknown supply: NULL -> -1; the signed net flow keeps 0.
+    unknown = {
+        "hs_holders": 0.0,
+        "hs_top1_share": None,
+        "hs_top10_share": None,
+        "hs_top10_net_flow": None,
+        "hs_large_holders": None,
+        "hs_incomplete": 1.0,
+    }
+    known = {
+        "hs_holders": 12.0,
+        "hs_top1_share": 0.4,
+        "hs_top10_share": 0.9,
+        "hs_top10_net_flow": -0.05,
+        "hs_large_holders": 0.0,
+        "hs_incomplete": 0.0,
+    }
+    df = pd.concat([_frame(**unknown), _frame(**known)], ignore_index=True)
+
+    check_group_coverage(df, ["holders_supply"])
+    matrix = build_feature_matrix(df)
+    col = FEATURE_COLUMNS.index
+    assert matrix[0, col("hs_top1_share")] == -1.0
+    assert matrix[0, col("hs_top10_share")] == -1.0
+    assert matrix[0, col("hs_large_holders")] == -1.0
+    assert matrix[0, col("hs_top10_net_flow")] == 0.0
+    assert matrix[0, col("hs_incomplete")] == 1.0
+    assert matrix[1, col("hs_top1_share")] == pytest.approx(0.4)
+    assert matrix[1, col("hs_top10_net_flow")] == pytest.approx(-0.05)
+    assert matrix[1, col("hs_large_holders")] == 0.0

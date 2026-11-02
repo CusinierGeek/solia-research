@@ -159,7 +159,44 @@ public static class PumpApiEventParser
             MetadataUri = kind == EventKind.Create ? GetString(root, "uri") : null,
             BurnedLiquidityPercent = ParsePercent(GetString(root, "burnedLiquidity")),
             Block = GetLong(root, "block"),
+            TokenTransfers = kind == EventKind.Transfer ? ExtractTransfers(root, mint) : null,
         };
+    }
+
+    /// <summary>
+    /// The legs of a transfer moving <paramref name="mint"/> with a sender, a recipient and a positive amount (FE-T13
+    /// holder ledger); null when there is none.
+    /// </summary>
+    private static TransferLegs? ExtractTransfers(JsonElement root, string mint)
+    {
+        if (!root.TryGetProperty("transfers", out JsonElement transfers) ||
+            transfers.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        List<TokenTransfer>? legs = null;
+        foreach (JsonElement transfer in transfers.EnumerateArray())
+        {
+            if (transfer.ValueKind != JsonValueKind.Object ||
+                (transfer.TryGetProperty("isSolana", out JsonElement isSolana) && isSolana.ValueKind == JsonValueKind.True) ||
+                GetString(transfer, "mint") != mint)
+            {
+                continue;
+            }
+
+            string? from = GetString(transfer, "from");
+            string? to = GetString(transfer, "to");
+            if (string.IsNullOrWhiteSpace(from) || string.IsNullOrWhiteSpace(to) || from == to ||
+                GetDecimal(transfer, "amount") is not { } amount || amount <= 0)
+            {
+                continue;
+            }
+
+            (legs ??= []).Add(new TokenTransfer(from, to, amount));
+        }
+
+        return legs is null ? null : new TransferLegs(legs);
     }
 
     /// <summary>

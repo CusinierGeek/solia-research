@@ -112,6 +112,22 @@ METADATA_COLUMNS: tuple[str, ...] = (
     "meta_narrative_grads_3h",
 )
 
+# FE-T13 (#197): holder-side supply concentration, from each wallet's net token position on the
+# token as the stream shows it (create dev buy, buys - sells, liquidity, token transfers; pools
+# excluded). Shares are of the circulating supply (sum of the positive positions), NULL while
+# nothing circulates; the top-10 net flow is over the pipeline window (negative = distributing);
+# large holders hold > Pipeline:HolderLargeShare (2 %) of the total supply. hs_incomplete = 1 when
+# the token's create wasn't seen (positions miss its earlier history: replay start, eviction).
+# hs_holders and hs_incomplete, always written, mark the rows computed since migration 0017.
+HOLDERS_SUPPLY_COLUMNS: tuple[str, ...] = (
+    "hs_holders",
+    "hs_top1_share",
+    "hs_top10_share",
+    "hs_top10_net_flow",
+    "hs_large_holders",
+    "hs_incomplete",
+)
+
 # Ordered model inputs: the numeric features plus the migrated flag, then the venue one-hot. Keep
 # the stored ones (DB_FEATURE_COLUMNS) and the `features` table (services/db/migrations) in
 # lockstep — see tests/test_features.py.
@@ -157,6 +173,7 @@ FEATURE_COLUMNS: list[str] = [
     *WALLET_COLUMNS,
     *REPUTATION_COLUMNS,
     *METADATA_COLUMNS,
+    *HOLDERS_SUPPLY_COLUMNS,
     *VENUE_COLUMNS,
 ]
 
@@ -216,6 +233,8 @@ FEATURE_GROUPS: dict[str, tuple[str, ...]] = {
     "wallet_reputation": REPUTATION_COLUMNS,
     # FE-T12 (#196): metadata host kind, social links (fetched, point-in-time), narrative heat.
     "metadata": METADATA_COLUMNS,
+    # FE-T13 (#197): holder-side supply concentration from stream-derived positions.
+    "holders_supply": HOLDERS_SUPPLY_COLUMNS,
     # FE-T5 (#114): trading venue (Pump.fun curve vs launchpads vs AMMs), one-hot.
     "venue": VENUE_COLUMNS,
 }
@@ -303,6 +322,11 @@ NULL_FILL: dict[str, float] = {
     # Metadata columns are NULL when unknown (no create seen, links not fetched by ts, narrative
     # warm-up): -1, so it can't pass for a real 0 (no link, no copycat, no graduated namesake).
     **{col: -1.0 for col in METADATA_COLUMNS if col != "meta_coverage_sec"},
+    # Holder-supply shares / large-holder count are NULL while nothing circulates or the supply is
+    # unknown: -1, so it can't pass for a real 0. The signed net flow keeps 0 (nothing moved).
+    "hs_top1_share": -1.0,
+    "hs_top10_share": -1.0,
+    "hs_large_holders": -1.0,
 }
 
 # Per group, the columns the pipeline always writes since the group's migration: a NULL there
@@ -318,6 +342,7 @@ ALWAYS_WRITTEN: dict[str, tuple[str, ...]] = {
         "rep_early_buyers",
     ),  # migration 0015 (history-dependent ones NULL in warm-up)
     "metadata": ("meta_coverage_sec",),  # migration 0016 (links / counts NULL when unknown)
+    "holders_supply": ("hs_holders", "hs_incomplete"),  # migration 0017
     # `burn` has none: burned_liquidity is legitimately NULL (unknown), and the database keeps it
     # equal to onchain_signals.burnedLiquidityPercent (0008's insert trigger covers writers that
     # omit it, 0009 backfills earlier rows), so a NULL there is never a stale row. `venue` reads a

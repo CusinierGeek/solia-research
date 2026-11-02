@@ -59,9 +59,10 @@ public sealed class AiProxyFixture : PostgresFixture, IAsyncLifetime
                 "INSERT INTO features (mint, ts, price, holders, buy_sell_ratio, net_sol_flow, large_buy_count, " +
                 "return_short, volume_burst_ratio, unique_traders, top_trader_share, burned_liquidity, venue, is_migrated, " +
                 "mkt_coverage_sec, mkt_launch_rate_5m, mkt_active_tokens_1h, wal_coverage_sec, wal_fresh_1h_share, wal_creator_prev_launches, " +
-                "rep_early_buyers, rep_smart_buy_share, meta_coverage_sec, meta_has_twitter, meta_name_matches_1h) " +
+                "rep_early_buyers, rep_smart_buy_share, meta_coverage_sec, meta_has_twitter, meta_name_matches_1h, " +
+                "hs_holders, hs_top1_share, hs_incomplete) " +
                 "VALUES ('a', @ts, @p, @h, 1.5, -0.25, 2, 0.125, 3.5, 6, 0.4, @burn, @venue, @mig, 3600, 12.5, 840, 86400, 0.375, 3, " +
-                "20, 0.625, 21600, 1, 4)",
+                "20, 0.625, 21600, 1, 4, 12, 0.4, 1)",
                 ("ts", T0.AddMinutes(i)), ("p", 0.001m * (i + 1)), ("h", i == 2 ? DBNull.Value : 10 * (i + 1)),
                 ("burn", i == 3 ? 100.0 : DBNull.Value), ("venue", i == 3 ? "pumpswap" : "pumpfun"), ("mig", i == 3));
         }
@@ -183,7 +184,11 @@ public class AiProxyIntegrationTests(AiProxyFixture api) : IClassFixture<AiProxy
         Assert.Equal(1.0, window[0]["meta_has_twitter"]);
         Assert.Equal(4.0, window[0]["meta_name_matches_1h"]);
         Assert.Null(window[0]["meta_has_website"]);
-        Assert.Equal(77, window[0].Count); // the ai-service's DB_FEATURE_COLUMNS (+ venue)
+        Assert.Equal(12.0, window[0]["hs_holders"]);
+        Assert.Equal(0.4, window[0]["hs_top1_share"]);
+        Assert.Equal(1.0, window[0]["hs_incomplete"]);
+        Assert.Null(window[0]["hs_top10_net_flow"]);
+        Assert.Equal(83, window[0].Count); // the ai-service's DB_FEATURE_COLUMNS (+ venue)
     }
 
     [Fact]

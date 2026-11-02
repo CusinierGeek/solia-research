@@ -70,6 +70,7 @@ public sealed class PostgresTokenSink : ITokenSink
         "rep_bundle_create_block_share, rep_bundle_top_block_share, " +
         "meta_coverage_sec, meta_uri_content_addressed, meta_has_website, meta_has_twitter, meta_has_telegram, " +
         "meta_name_matches_1h, meta_narrative_grads_3h, " +
+        "hs_holders, hs_top1_share, hs_top10_share, hs_top10_net_flow, hs_large_holders, hs_incomplete, " +
         "onchain_signals, behavioral_signals";
 
     private const string FeaturesInsertSql =
@@ -87,6 +88,7 @@ public sealed class PostgresTokenSink : ITokenSink
         "@rep_early_win, @rep_early_pnl, @rep_smart_buy, @rep_smart_flow, @rep_smart_traders, " +
         "@rep_bundle_create, @rep_bundle_top, " +
         "@meta_cov, @meta_ca, @meta_web, @meta_x, @meta_tg, @meta_matches, @meta_grads, " +
+        "@hs_holders, @hs_top1, @hs_top10, @hs_flow, @hs_large, @hs_incomplete, " +
         "@onchain, @behavioral) ";
 
     internal const string FeaturesInsertOnlySql = FeaturesInsertSql + "ON CONFLICT (mint, ts) DO NOTHING";
@@ -319,6 +321,12 @@ public sealed class PostgresTokenSink : ITokenSink
             Array("meta_tg", NpgsqlDbType.Smallint, Column(s, x => Flag(x.Metadata?.HasTelegram))),
             Array("meta_matches", NpgsqlDbType.Integer, Column(s, x => x.Metadata?.NameMatches1h)),
             Array("meta_grads", NpgsqlDbType.Integer, Column(s, x => x.Metadata?.NarrativeGraduations)),
+            Array("hs_holders", NpgsqlDbType.Integer, Column(s, x => x.HolderSupply?.Holders)),
+            Array("hs_top1", NpgsqlDbType.Double, Column(s, x => x.HolderSupply?.Top1Share)),
+            Array("hs_top10", NpgsqlDbType.Double, Column(s, x => x.HolderSupply?.Top10Share)),
+            Array("hs_flow", NpgsqlDbType.Double, Column(s, x => x.HolderSupply?.Top10NetFlow)),
+            Array("hs_large", NpgsqlDbType.Integer, Column(s, x => x.HolderSupply?.LargeHolders)),
+            Array("hs_incomplete", NpgsqlDbType.Smallint, Column(s, x => Flag(x.HolderSupply?.Incomplete))),
             Array("onchain", NpgsqlDbType.Jsonb, Column(s, x => JsonSerializer.Serialize(x.OnchainSignals))),
             Array("behavioral", NpgsqlDbType.Jsonb, Column(s, x => JsonSerializer.Serialize(x.BehavioralSignals))));
     }

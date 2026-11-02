@@ -106,6 +106,10 @@ internal sealed class TokenState
     private readonly Dictionary<string, bool> _smartCache = new(StringComparer.Ordinal);
     private long? _createBlock;
 
+    // Holder-supply ledger (FE-T13): every wallet's net token position on this token, for its lifetime.
+    private readonly HolderLedger _ledger;
+    private readonly double _holderLargeShare;
+
     private DateTimeOffset? _prevSnapshotTs;
     private decimal _prevVolume;
     private int _prevHolders;
@@ -113,8 +117,11 @@ internal sealed class TokenState
     private double? _prevEma;
 
     public TokenState(string mint, int windowSeconds, int emaSpan, int rsiPeriod, DateTimeOffset firstSeen,
-        decimal largeBuySol = PipelineOptions.DefaultLargeBuySol, MomentumWindows? momentum = null, int earlyBuyers = 20)
+        decimal largeBuySol = PipelineOptions.DefaultLargeBuySol, MomentumWindows? momentum = null, int earlyBuyers = 20,
+        double holderLargeShare = PipelineOptions.DefaultHolderLargeShare, int holderMaxWallets = HolderLedger.DefaultMaxWallets)
     {
+        _holderLargeShare = holderLargeShare;
+        _ledger = new HolderLedger(holderMaxWallets);
         _earlyCount = earlyBuyers;
         Mint = mint;
         _windowSeconds = windowSeconds;
@@ -201,6 +208,8 @@ internal sealed class TokenState
         {
             _isMigrated = true;
         }
+
+        ApplyPositions(e);
 
         if (e.Trader is not null)
         {
@@ -480,6 +489,7 @@ internal sealed class TokenState
             BurnedLiquidity = _burned,
             Wallet = wallets is null ? null : WalletFeatures(now, wallets),
             Reputation = wallets is null ? null : ReputationFeatures(now, wallets),
+            HolderSupply = _ledger.Snapshot(_supply ?? _createSupply, _holderLargeShare, incomplete: !_hasCreate),
             OnchainSignals = new Dictionary<string, object?>
             {
                 ["burnedLiquidityPercent"] = _burned,
@@ -500,6 +510,44 @@ internal sealed class TokenState
         _prevPrice = _price;
         _prevEma = emaNow;
         return snapshot;
+    }
+
+    /// <summary>
+    /// Moves the event's tokens in the holder ledger (FE-T13): the create's dev buy and buys to the signer, sells and
+    /// liquidity added out of it, liquidity removed back in, transfer legs between wallets. Pool accounts are excluded
+    /// first, so a transfer into a pool never reads as a holder.
+    /// </summary>
+    private void ApplyPositions(RawEvent e)
+    {
+        _ledger.Exclude(Mint);
+        if (e.PoolId is { } pool)
+        {
+            _ledger.Exclude(pool);
+        }
+
+        if (e.Kind == EventKind.Transfer)
+        {
+            foreach (TokenTransfer leg in (IEnumerable<TokenTransfer>?)e.TokenTransfers ?? [])
+            {
+                _ledger.Add(leg.From, -leg.Amount, e.Timestamp);
+                _ledger.Add(leg.To, leg.Amount, e.Timestamp);
+            }
+
+            return;
+        }
+
+        if (e.Trader is not { } trader || e.TokenAmount is not { } tokens || tokens <= 0)
+        {
+            return;
+        }
+
+        decimal delta = e.Kind switch
+        {
+            EventKind.Create or EventKind.Buy or EventKind.RemoveLiquidity => tokens,
+            EventKind.Sell or EventKind.AddLiquidity => -tokens,
+            _ => 0,
+        };
+        _ledger.Add(trader, delta, e.Timestamp);
     }
 
     private void ApplyCreator(RawEvent e)
@@ -784,6 +832,7 @@ internal sealed class TokenState
         }
 
         _window.RemoveRange(0, stale);
+        _ledger.Prune(cutoff);
 
         while (_prices.Count > 0 && _prices.Peek().Ts < cutoff)
         {

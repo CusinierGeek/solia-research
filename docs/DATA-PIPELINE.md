@@ -255,6 +255,42 @@ At launch a token's only information is its metadata. The `metadata` group reads
   `LinkHorizonHours` (env `Metadata__FetchEnabled=false`, ...). A summary is logged every 1 000 fetches (ok /
   failed / unsupported / skipped / not stored).
 
+### Holder supply (FE-T13, #197)
+
+The `concentration` group says who *traded* in the window; this one approximates who *holds* the supply, free,
+from the stream ("derive, don't fetch": no RPC, no DAS). Each `TokenState` keeps a `HolderLedger`: every wallet's
+net token position on that token, for the token's lifetime.
+
+- **Accounting.** Create → the signer gets the dev buy (`initialBuy`); buy → `+tokenAmount` to the signer
+  (`txSigner`); sell → `−tokenAmount`; add liquidity → `−`, remove liquidity → `+`; `transfer` events → each leg of
+  the token (`transfers[]`, SOL / wSOL and other mints dropped) moves `amount` from `from` to `to`. Every pool id the
+  token reported, and the mint itself, are excluded: a position they got through a transfer is dropped and later
+  movements to / from them are ignored, so the bonding curve / AMM pool never counts as a holder.
+- **Circulating supply** = the sum of the positive positions (the tokens the stream saw leave the pool). A
+  negative position (a wallet selling or sending tokens it got before the history started) counts as 0.
+- **Features** (`hs_*`, `HolderSupplyFeatures`): `hs_holders` (wallets with a positive position, always written),
+  `hs_top1_share` / `hs_top10_share` (share of circulating held by the 1 / 10 largest, NULL while nothing
+  circulates), `hs_top10_net_flow` (net token flow of the *current* 10 largest over the pipeline window, as a share
+  of circulating: negative = the top holders are distributing), `hs_large_holders` (wallets holding more than
+  `Pipeline:HolderLargeShare`, default 2 %, of the *total* supply; NULL when the supply is unknown) and
+  `hs_incomplete` (1 = the token's create wasn't seen).
+- **Point-in-time, live = replay.** Positions move in `TokenState.ApplyNow`, i.e. only for events dated at or
+  before the snapshot's ts, and they are sums, so arrival order doesn't matter; ties in the top-k are broken by
+  wallet address. Window flows are pruned with the rest of the window.
+- **Memory.** At most `Pipeline:HolderMaxWallets` (default 4 096) positions per token: past it, empty / negative
+  positions are dropped first, then the smallest holders (their tokens stay in the circulating total). The
+  ledger is dropped with the token's state on eviction.
+- **Limits of the approximation** (why it's a candidate, not truth):
+  - positions are complete only if the token's **create is in the ingested range**: a token created before the
+    replay start (or before a live restart, or evicted when idle then seen again) misses its earlier history —
+    `hs_incomplete = 1` marks it. Use `--warmup-hours 24` (as #198 does) so most training tokens are complete;
+  - only transfers pumpapi emits are seen (no wallet-to-wallet moves outside them, no burns, no CEX deposits);
+  - a trade is credited to its signer: a router / bot signing for another wallet, or a buyer receiving to another
+    account, shifts the position to the signer;
+  - wallets evicted past the memory bound restart from their later movements if they come back;
+  - an exact on-chain holder distribution (paid RPC / DAS) stays out of scope (epic #34).
+- **Disabled by default** (`holders_supply` group); measured in the combined ablation #198.
+
 ### Granularity: aggregated snapshots, not raw trades
 
 The pipeline persists **one aggregated `FeatureSnapshot` per token per cadence** — it does **not** store individual trade events. `TokenState.Apply` streams every `RawEvent` into an in-memory rolling window (carrying `Ts`, `Kind`, `QuoteAmount` in SOL, `QuoteMint`, and the `Trader`/txSigner), and `Snapshot` reduces that window to the feature row. The `features.raw` JSONB column exists but is currently **unused**.

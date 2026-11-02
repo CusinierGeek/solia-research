@@ -78,6 +78,9 @@ public class SoliaDbContextModelTests
         Assert.Equal("meta_coverage_sec", Column<Feature>(ctx, nameof(Feature.MetaCoverageSec)));
         Assert.Equal("meta_has_twitter", Column<Feature>(ctx, nameof(Feature.MetaHasTwitter)));
         Assert.Equal("meta_narrative_grads_3h", Column<Feature>(ctx, nameof(Feature.MetaNarrativeGrads3h)));
+        Assert.Equal("hs_holders", Column<Feature>(ctx, nameof(Feature.HsHolders)));
+        Assert.Equal("hs_top10_net_flow", Column<Feature>(ctx, nameof(Feature.HsTop10NetFlow)));
+        Assert.Equal("hs_incomplete", Column<Feature>(ctx, nameof(Feature.HsIncomplete)));
         Assert.Equal("pump_prob", Column<Prediction>(ctx, nameof(Prediction.PumpProb)));
         Assert.Equal("features_snapshot", Column<Trade>(ctx, nameof(Trade.FeaturesSnapshot)));
         Assert.Equal("candidate_model_id", Column<TrainingEvent>(ctx, nameof(TrainingEvent.CandidateModelId)));

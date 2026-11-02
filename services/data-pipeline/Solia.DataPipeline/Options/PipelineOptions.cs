@@ -123,6 +123,16 @@ public sealed class PipelineOptions
         ReputationPositionMaxHours < WalletAgeCapHours
         && ReputationOutcomeHorizonSeconds + ReputationOutcomeEmbargoSeconds < WalletAgeCapHours * 3600L;
 
+    /// <summary>A wallet holding more than this share of the total supply counts as a large holder (FE-T13 holder supply).</summary>
+    [Range(0.0001, 1.0)]
+    public double HolderLargeShare { get; set; } = DefaultHolderLargeShare;
+
+    public const double DefaultHolderLargeShare = 0.02;
+
+    /// <summary>Most wallet positions kept per token by the holder ledger (FE-T13); past it the smallest holders are evicted.</summary>
+    [Range(16, 1_000_000)]
+    public int HolderMaxWallets { get; set; } = 4_096;
+
     /// <summary>
     /// When false (default), holders are approximated from unique traders seen in the
     /// stream (free). When true, a paid Get Token Info enrichment may be used.

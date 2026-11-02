@@ -186,6 +186,12 @@ public sealed class SoliaDbContext(DbContextOptions<SoliaDbContext> options) : D
             e.Property(x => x.MetaHasTelegram).HasColumnName("meta_has_telegram");
             e.Property(x => x.MetaNameMatches1h).HasColumnName("meta_name_matches_1h");
             e.Property(x => x.MetaNarrativeGrads3h).HasColumnName("meta_narrative_grads_3h");
+            e.Property(x => x.HsHolders).HasColumnName("hs_holders");
+            e.Property(x => x.HsTop1Share).HasColumnName("hs_top1_share");
+            e.Property(x => x.HsTop10Share).HasColumnName("hs_top10_share");
+            e.Property(x => x.HsTop10NetFlow).HasColumnName("hs_top10_net_flow");
+            e.Property(x => x.HsLargeHolders).HasColumnName("hs_large_holders");
+            e.Property(x => x.HsIncomplete).HasColumnName("hs_incomplete");
             e.Property(x => x.OnchainSignals).HasColumnName("onchain_signals").HasColumnType("jsonb");
             e.Property(x => x.BehavioralSignals).HasColumnName("behavioral_signals").HasColumnType("jsonb");
             e.Property(x => x.Raw).HasColumnName("raw").HasColumnType("jsonb");

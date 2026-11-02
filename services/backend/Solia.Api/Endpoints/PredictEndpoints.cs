@@ -186,6 +186,12 @@ public static class PredictEndpoints
                 f.MetaHasTelegram,
                 f.MetaNameMatches1h,
                 f.MetaNarrativeGrads3h,
+                f.HsHolders,
+                f.HsTop1Share,
+                f.HsTop10Share,
+                f.HsTop10NetFlow,
+                f.HsLargeHolders,
+                f.HsIncomplete,
                 f.Venue,
                 f.IsMigrated,
             })
@@ -270,6 +276,12 @@ public static class PredictEndpoints
             ["meta_has_telegram"] = f.MetaHasTelegram,
             ["meta_name_matches_1h"] = f.MetaNameMatches1h,
             ["meta_narrative_grads_3h"] = f.MetaNarrativeGrads3h,
+            ["hs_holders"] = f.HsHolders,
+            ["hs_top1_share"] = f.HsTop1Share,
+            ["hs_top10_share"] = f.HsTop10Share,
+            ["hs_top10_net_flow"] = f.HsTop10NetFlow,
+            ["hs_large_holders"] = f.HsLargeHolders,
+            ["hs_incomplete"] = f.HsIncomplete,
             ["is_migrated"] = f.IsMigrated ? 1 : 0,
         }, f.Venue)).ToList();
     }

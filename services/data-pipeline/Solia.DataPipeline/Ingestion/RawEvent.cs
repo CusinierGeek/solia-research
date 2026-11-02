@@ -85,4 +85,44 @@ public sealed record RawEvent
     public double? BurnedLiquidityPercent { get; init; }
 
     public long? Block { get; init; }
+
+    /// <summary>
+    /// For a <see cref="EventKind.Transfer"/>: its legs moving this event's <see cref="Mint"/> (SOL / wSOL legs and
+    /// other mints dropped), in the frame's order. Only used for the holder-supply ledger (FE-T13); null otherwise.
+    /// </summary>
+    public TransferLegs? TokenTransfers { get; init; }
 }
+
+/// <summary>A transfer's token legs, compared by value so <see cref="RawEvent"/> keeps its record equality.</summary>
+public sealed class TransferLegs(IReadOnlyList<TokenTransfer> legs) : IReadOnlyList<TokenTransfer>, IEquatable<TransferLegs>
+{
+    private readonly TokenTransfer[] _legs = [.. legs];
+
+    public int Count => _legs.Length;
+
+    public TokenTransfer this[int index] => _legs[index];
+
+    public IEnumerator<TokenTransfer> GetEnumerator() => ((IEnumerable<TokenTransfer>)_legs).GetEnumerator();
+
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+
+    public bool Equals(TransferLegs? other) => other is not null && _legs.AsSpan().SequenceEqual(other._legs);
+
+    public override bool Equals(object? obj) => Equals(obj as TransferLegs);
+
+    public override int GetHashCode()
+    {
+        var hash = default(HashCode);
+        foreach (TokenTransfer leg in _legs)
+        {
+            hash.Add(leg);
+        }
+
+        return hash.ToHashCode();
+    }
+
+    public override string ToString() => string.Join(", ", _legs);
+}
+
+/// <summary>One token movement of a transfer event: <paramref name="Amount"/> tokens (UI units, like <see cref="RawEvent.TokenAmount"/>) from one wallet to another.</summary>
+public readonly record struct TokenTransfer(string From, string To, decimal Amount);

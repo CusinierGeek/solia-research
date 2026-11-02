@@ -139,6 +139,11 @@ Time-series feature snapshots per token. The model's input unit.
 | meta_has_website, meta_has_twitter, meta_has_telegram | SMALLINT | 0/1: the metadata JSON lists the link; NULL unless a successful fetch completed by `ts` (`token_metadata.fetched_at`) |
 | meta_name_matches_1h | INT | other launches in the last hour sharing a normalized name / ticker; NULL before 1 h of history or without a usable name |
 | meta_narrative_grads_3h | INT | other tokens sharing a normalized name / ticker that graduated in the last 3 h; NULL before 6 h of history or without a usable name |
+| hs_holders | INT | holder supply (FE-T13, 0017): wallets with a positive stream-derived position on the token; always written (NULL = row predates 0017) |
+| hs_top1_share, hs_top10_share | DOUBLE PRECISION | share of the circulating supply (Σ positive positions, pools excluded) held by the 1 / 10 largest holders, [0, 1]; NULL while nothing circulates |
+| hs_top10_net_flow | DOUBLE PRECISION | net token flow of the current 10 largest holders over the window, as a share of the circulating supply (negative = distributing); NULL while nothing circulates |
+| hs_large_holders | INT | wallets holding more than `Pipeline:HolderLargeShare` (2 %) of the total supply; NULL when the supply is unknown |
+| hs_incomplete | SMALLINT | 1 = the token's create wasn't seen (positions miss earlier history), 0 otherwise; always written |
 | onchain_signals | JSONB | Pump.fun-specific signals |
 | behavioral_signals | JSONB | pump/rug pattern flags |
 | raw | JSONB | nullable debug payload |

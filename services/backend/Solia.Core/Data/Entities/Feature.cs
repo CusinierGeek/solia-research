@@ -230,6 +230,26 @@ public sealed class Feature
     /// <summary>Other tokens sharing a normalized name / ticker that graduated in the last 3 h.</summary>
     public int? MetaNarrativeGrads3h { get; set; }
 
+    // Holder supply (FE-T13, #197): stream-derived holder positions. Shares are of the circulating supply.
+
+    /// <summary>Wallets holding a positive position (always written since 0017).</summary>
+    public int? HsHolders { get; set; }
+
+    /// <summary>Share of the circulating supply held by the largest holder; null while nothing circulates.</summary>
+    public double? HsTop1Share { get; set; }
+
+    /// <summary>Share of the circulating supply held by the 10 largest holders; null while nothing circulates.</summary>
+    public double? HsTop10Share { get; set; }
+
+    /// <summary>Net token flow of the 10 largest holders over the window, as a share of the circulating supply.</summary>
+    public double? HsTop10NetFlow { get; set; }
+
+    /// <summary>Wallets holding more than Pipeline:HolderLargeShare of the total supply; null when the supply is unknown.</summary>
+    public int? HsLargeHolders { get; set; }
+
+    /// <summary>1 = the token's create wasn't seen, so its positions are incomplete.</summary>
+    public short? HsIncomplete { get; set; }
+
     /// <summary>Pump.fun-specific signals (JSONB).</summary>
     public string? OnchainSignals { get; set; }
 

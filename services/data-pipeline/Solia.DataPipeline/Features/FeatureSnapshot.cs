@@ -136,6 +136,9 @@ public sealed record FeatureSnapshot
     /// </summary>
     public MetadataFeatures? Metadata { get; init; }
 
+    /// <summary>Holder-side supply concentration (FE-T13) from the token's stream-derived holder ledger. Always set by <see cref="TokenState.Snapshot"/>.</summary>
+    public HolderSupplyFeatures? HolderSupply { get; init; }
+
     public IReadOnlyDictionary<string, object?> OnchainSignals { get; init; } =
         new Dictionary<string, object?>();
 
