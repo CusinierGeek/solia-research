@@ -90,6 +90,22 @@ jobs:
           # No terminal and no --yes: reset must refuse before touching any volume.
           rc=0; infra/scripts/solia.sh reset </dev/null || rc=$?
           [ "$rc" -eq 1 ] || { echo "::error::reset without --yes exited $rc, expected 1"; exit 1; }
+      - name: Parallel replay split (infra/scripts/parallel-replay.sh)
+        run: |
+          s=infra/scripts/parallel-replay.sh
+          out=$(bash $s --from 2026-10-27T00:00Z --to 2026-10-27T07:00Z --chunks 3 --warmup-hours 24 --dry-run -- --rebuild)
+          expected="docker compose run -d --name replay-1 data-pipeline replay --from 2026-10-27T00:00Z --to 2026-10-27T03:00Z --warmup-hours 24 --rebuild
+          docker compose run -d --name replay-2 data-pipeline replay --from 2026-10-27T03:00Z --to 2026-10-27T05:00Z --warmup-hours 24 --rebuild
+          docker compose run -d --name replay-3 data-pipeline replay --from 2026-10-27T05:00Z --to 2026-10-27T07:00Z --warmup-hours 24 --rebuild"
+          [ "$out" = "$expected" ] || { echo "::error::unexpected split:"; echo "$out"; exit 1; }
+          for bad in "--from 2026-10-27T00:30Z --to 2026-10-27T07:00Z --chunks 3" \
+                     "--from 2026-10-27T07:00Z --to 2026-10-27T00:00Z --chunks 3" \
+                     "--from 2026-10-27T00:00Z --to 2026-10-27T02:00Z --chunks 3" \
+                     "--from bogus --to 2026-10-27T02:00Z --chunks 1" \
+                     "--from 2026-10-27T00:00Z --to 2026-10-27T02:00Z --chunks 0"; do
+            rc=0; bash $s $bad --dry-run >/dev/null 2>&1 || rc=$?
+            [ "$rc" -eq 2 ] || { echo "::error::'$bad' exited $rc, expected 2"; exit 1; }
+          done
       - name: Assert topology
         run: |
           docker compose config --format json > compose.json

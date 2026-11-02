@@ -511,4 +511,42 @@ public sealed class PostgresTokenSinkTests(PostgresFixture db) : IClassFixture<P
         Assert.DoesNotContain("mint = EXCLUDED", sql);
         Assert.DoesNotContain(" ts = EXCLUDED", sql);
     }
+    [Fact]
+    public async Task Concurrent_writers_sharing_mints_in_opposite_orders_do_not_deadlock()
+    {
+        // Two replays (or live + a replay) flush the same long-lived mints, each in its own order, and each
+        // deactivates mints the other still upserts. Without one lock order this deadlocks (40P01) within a few flushes.
+        string[] shared = Enumerable.Range(0, 300).Select(i => $"SHARED{i:D3}").ToArray();
+        await Sink.WriteAsync(Batch(T0, shared.Select(m => Snap(m, T0, 1m)).ToArray()), default);
+
+        async Task Writer(bool reversed)
+        {
+            PostgresTokenSink sink = Sink;
+            for (int flush = 1; flush <= 40; flush++)
+            {
+                DateTimeOffset ts = T0.AddSeconds(10 * flush + (reversed ? 5 : 0));
+                string[] order = reversed ? shared.Reverse().ToArray() : shared;
+                string[] tracked = order.Where((_, k) => k % 3 != flush % 3).ToArray();
+                string[] dropped = order.Where((_, k) => k % 3 == flush % 3).ToArray();
+                await sink.WriteAsync(Batch(ts, tracked.Select(m => Snap(m, ts, flush)).ToArray(), dropped), default);
+            }
+        }
+
+        await Task.WhenAll(Task.Run(() => Writer(false)), Task.Run(() => Writer(true)));
+
+        Assert.Equal(300 + 2 * 40 * 200,
+            await db.ScalarAsync<long>("SELECT count(*) FROM features WHERE mint LIKE 'SHARED%'"));
+    }
+
+    [Fact]
+    public void Snapshots_and_mints_are_put_in_ordinal_mint_order()
+    {
+        FeatureSnapshot[] snapshots = [Snap("b", T0, 1m), Snap("B", T0, 1m), Snap("a", T0.AddSeconds(1), 1m), Snap("a", T0, 1m)];
+
+        IReadOnlyList<FeatureSnapshot> ordered = PostgresTokenSink.InLockOrder(snapshots);
+
+        Assert.Equal(["B", "a", "a", "b"], ordered.Select(x => x.Mint));
+        Assert.Equal(T0, ordered[1].Ts);
+        Assert.Equal(["B", "a", "b"], PostgresTokenSink.InLockOrder(["b", "a", "B", "a"]));
+    }
 }

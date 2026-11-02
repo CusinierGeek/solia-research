@@ -32,6 +32,10 @@ public sealed class PostgresTokenSink : ITokenSink
         "UPDATE tokens_live SET is_active = FALSE, updated_at = @ts " +
         "WHERE mint = ANY(@mints) AND is_active AND updated_at <= @ts";
 
+    /// <summary>Locks the existing <c>tokens_live</c> rows of a flush in one sorted pass (see <see cref="WriteAsync"/>).</summary>
+    internal const string LockLiveSql =
+        "SELECT 1 FROM tokens_live WHERE mint = ANY(@mints) ORDER BY mint COLLATE \"C\" FOR UPDATE";
+
     private const string TokensHistorySql =
         "INSERT INTO tokens_history (mint, created_at, first_seen_at, last_seen_at) " +
         "SELECT * FROM unnest(@mint, @created, @first, @ts) " +
@@ -147,27 +151,40 @@ public sealed class PostgresTokenSink : ITokenSink
         await using var commands = new NpgsqlBatch(connection, transaction);
         var features = new List<NpgsqlBatchCommand>(2);
 
-        // Deactivate first, so a mint dropped and re-tracked within one interval ends up active.
-        if (batch.Deactivated.Count > 0)
-        {
-            commands.BatchCommands.Add(Command(DeactivateSql,
-                Param("ts", NpgsqlDbType.TimestampTz, batch.Ts),
-                Array("mints", NpgsqlDbType.Text, batch.Deactivated.ToArray())));
-        }
+        // Row locks are taken in one fixed order — tokens_history by mint, then every tokens_live row the flush
+        // touches (deactivated or upserted) by mint, then the new rows — so concurrent writers sharing long-lived
+        // mints (live + replay, or several replays) wait for each other instead of deadlocking (40P01, which
+        // drops the batch once its retries run out).
+        IReadOnlyList<FeatureSnapshot> s = InLockOrder(Bound(batch, out int outOfRange));
+        string[] mints = Column(s, x => x.Mint);
+        DateTimeOffset[] ts = Column(s, x => x.Ts);
+        DateTimeOffset?[] created = Column(s, x => x.CreatedAtUtc);
 
-        IReadOnlyList<FeatureSnapshot> s = Bound(batch, out int outOfRange);
         if (s.Count > 0)
         {
-            string[] mints = Column(s, x => x.Mint);
-            DateTimeOffset[] ts = Column(s, x => x.Ts);
-            DateTimeOffset?[] created = Column(s, x => x.CreatedAtUtc);
-
             commands.BatchCommands.Add(Command(TokensHistorySql,
                 Array("mint", NpgsqlDbType.Text, mints),
                 Array("created", NpgsqlDbType.TimestampTz, created),
                 Array("first", NpgsqlDbType.TimestampTz, Column(s, x => x.FirstSeenUtc)),
                 Array("ts", NpgsqlDbType.TimestampTz, ts)));
+        }
 
+        string[] liveMints = InLockOrder(mints.Concat(batch.Deactivated).ToArray());
+        if (liveMints.Length > 0)
+        {
+            commands.BatchCommands.Add(Command(LockLiveSql, Array("mints", NpgsqlDbType.Text, liveMints)));
+        }
+
+        // Deactivate before the live upsert, so a mint dropped and re-tracked within one interval ends up active.
+        if (batch.Deactivated.Count > 0)
+        {
+            commands.BatchCommands.Add(Command(DeactivateSql,
+                Param("ts", NpgsqlDbType.TimestampTz, batch.Ts),
+                Array("mints", NpgsqlDbType.Text, InLockOrder(batch.Deactivated))));
+        }
+
+        if (s.Count > 0)
+        {
             commands.BatchCommands.Add(Command(TokensLiveSql,
                 Array("mint", NpgsqlDbType.Text, mints),
                 Array("created", NpgsqlDbType.TimestampTz, created),
@@ -206,6 +223,14 @@ public sealed class PostgresTokenSink : ITokenSink
             }
         }
     }
+
+    /// <summary>Snapshots sorted by mint (ordinal, ties by ts): the order every write locks rows in.</summary>
+    internal static IReadOnlyList<FeatureSnapshot> InLockOrder(IReadOnlyList<FeatureSnapshot> snapshots) =>
+        snapshots.OrderBy(x => x.Mint, StringComparer.Ordinal).ThenBy(x => x.Ts).ToArray();
+
+    /// <summary>Mints sorted ordinally, distinct: the order every write locks rows in.</summary>
+    internal static string[] InLockOrder(IReadOnlyCollection<string> mints) =>
+        mints.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
 
     private IReadOnlyList<FeatureSnapshot> Bound(FlushBatch batch, out int outOfRange)
     {

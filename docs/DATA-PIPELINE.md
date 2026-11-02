@@ -403,6 +403,28 @@ To **train on history older than the TTL**:
 `--allow-expired` replays regardless (with a warning) — only useful when the live pipeline's purge is off
 or uses a longer TTL than the replay's configuration.
 
+### Parallel replay
+
+One replay is CPU-bound on about one core (the warm-up, which writes nothing, runs at ~1.5 min per
+archive-hour). A long window is replayed faster as several concurrent replays, one per contiguous slice,
+each with its own warm-up:
+
+```bash
+SOLIA_COMPOSE_ARGS="-p solia --env-file ../Solia/.env" \
+  bash infra/scripts/parallel-replay.sh --from 2026-10-27T00:00Z --to 2026-11-02T20:00Z --chunks 4 --warmup-hours 24
+```
+
+- Slices are whole hours, half-open and disjoint, so no `features` row is written twice; each still warms
+  up on the 24 h before its own start, so its first rows match live ingestion.
+- The warm-ups run concurrently: the extra cost is one warm-up of wall time, not N.
+- Concurrent writers are safe because the sink takes its row locks in one fixed order (`tokens_history`
+  by mint, then the flush's `tokens_live` rows by mint). Before that, slices sharing long-lived mints
+  (migrated tokens trade for days) deadlocked (`40P01`) and dropped batches once their retries ran out.
+- The gain stops when Postgres or the disk saturates: watch each slice's rate (max `ts` written per
+  minute) and `docker stats` in the first 15 minutes.
+- The script waits for every slice, prints each summary and exits with the highest exit code; re-run a
+  slice that ended with `3` on its own (idempotent).
+
 ### Recipes
 
 Replay **recent** windows first (the most recent days are closest to what the live model will see).
