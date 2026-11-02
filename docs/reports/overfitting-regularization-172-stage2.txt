@@ -1,0 +1,79 @@
+Search (random) — 10 trial(s) [stopped by trials], 2 window(s) x 2 seed(s); objective = mean pr_auc over heads x horizons, scored on the base labels; rank by mean - std
+generated 2026-11-02T07:23:38.493373+00:00
+
+     trial |    pr_auc mean ± std |    score | best ep | val-train gap | params
+  trial-04 |      0.5074 ± 0.0185 |   0.4889 |  2.5000 |       -0.0988 | dropout=0.2, weight_decay=0.05, learning_rate=0.0003, d_model=128
+  trial-03 |      0.5085 ± 0.0203 |   0.4881 |  3.0000 |       -0.0926 | dropout=0.1, weight_decay=0.1, learning_rate=0.0003, d_model=128
+  baseline |      0.5054 ± 0.0175 |   0.4879 |  2.2500 |       -0.1063 | (base config)
+  trial-05 |      0.5096 ± 0.0237 |   0.4859 |  5.7500 |       -0.0933 | dropout=0.1, weight_decay=0.1, learning_rate=0.0003, d_model=64
+  trial-02 |      0.5077 ± 0.0221 |   0.4856 | 10.2500 |       -0.0916 | dropout=0.1, weight_decay=0.01, learning_rate=0.0001, d_model=64
+  trial-08 |      0.5097 ± 0.0243 |   0.4853 |  6.2500 |       -0.0871 | dropout=0.1, weight_decay=0.1, learning_rate=0.0001, d_model=128
+  trial-09 |      0.5063 ± 0.0217 |   0.4846 | 10.2500 |       -0.0949 | dropout=0.2, weight_decay=0.01, learning_rate=0.0001, d_model=64
+  trial-01 |      0.5040 ± 0.0206 |   0.4833 |  5.2500 |       -0.0998 | dropout=0.3, weight_decay=0.05, learning_rate=0.0003, d_model=64
+  trial-06 |      0.5049 ± 0.0219 |   0.4830 |  5.5000 |       -0.0988 | dropout=0.2, weight_decay=0.1, learning_rate=0.0003, d_model=64
+  trial-07 |      0.5060 ± 0.0231 |   0.4829 |  6.7500 |       -0.0984 | dropout=0.3, weight_decay=0.1, learning_rate=0.0003, d_model=64
+
+Rug drift — baseline: roc_auc / pr_auc per held-out slice
+            slice |           30s |            1m |            5m |           15m |            1h
+11-01T06:35..14:05 | 0.8904/0.3983 | 0.8785/0.4320 | 0.8863/0.6652 | 0.9089/0.8369 | 0.9327/0.9264
+11-01T14:05..19:17 | 0.9077/0.4224 | 0.8959/0.4563 | 0.9034/0.7127 | 0.9293/0.8761 | 0.9447/0.9472
+
+Rug drift — trial-04: roc_auc / pr_auc per held-out slice
+            slice |           30s |            1m |            5m |           15m |            1h
+11-01T06:35..14:05 | 0.8922/0.3992 | 0.8796/0.4372 | 0.8860/0.6715 | 0.9103/0.8428 | 0.9331/0.9283
+11-01T14:05..19:17 | 0.9073/0.4236 | 0.8949/0.4568 | 0.9025/0.7105 | 0.9293/0.8751 | 0.9450/0.9473
+
+Best: trial-04 vs baseline — objective lift 0.0020 ± 0.0036 (margin 0.01): not significant
+                metric |              lift | verdict
+      pump/30s/roc_auc |   0.0000 ± 0.0007 | not significant
+       pump/30s/pr_auc |   0.0034 ± 0.0051 | not significant
+          pump/30s/ece |  -0.0004 ± 0.0002 | not significant
+       pump/1m/roc_auc |   0.0001 ± 0.0005 | not significant
+        pump/1m/pr_auc |   0.0022 ± 0.0088 | not significant
+           pump/1m/ece |  -0.0003 ± 0.0001 | not significant
+       pump/5m/roc_auc |  -0.0006 ± 0.0014 | not significant
+        pump/5m/pr_auc |   0.0013 ± 0.0037 | not significant
+           pump/5m/ece |  -0.0005 ± 0.0007 | not significant
+      pump/15m/roc_auc |  -0.0001 ± 0.0021 | not significant
+       pump/15m/pr_auc |  -0.0005 ± 0.0046 | not significant
+          pump/15m/ece |  -0.0000 ± 0.0008 | not significant
+       pump/1h/roc_auc |   0.0040 ± 0.0029 | not significant
+        pump/1h/pr_auc |   0.0039 ± 0.0021 | not significant
+           pump/1h/ece |  -0.0010 ± 0.0006 | not significant
+       rug/30s/roc_auc |   0.0007 ± 0.0036 | not significant
+        rug/30s/pr_auc |   0.0010 ± 0.0027 | not significant
+           rug/30s/ece |   0.0004 ± 0.0010 | not significant
+        rug/1m/roc_auc |   0.0001 ± 0.0037 | not significant
+         rug/1m/pr_auc |   0.0028 ± 0.0064 | not significant
+            rug/1m/ece |   0.0001 ± 0.0008 | not significant
+        rug/5m/roc_auc |  -0.0006 ± 0.0018 | not significant
+         rug/5m/pr_auc |   0.0020 ± 0.0085 | not significant
+            rug/5m/ece |  -0.0033 ± 0.0036 | not significant
+       rug/15m/roc_auc |   0.0007 ± 0.0017 | not significant
+        rug/15m/pr_auc |   0.0024 ± 0.0058 | not significant
+           rug/15m/ece |  -0.0028 ± 0.0053 | not significant
+        rug/1h/roc_auc |   0.0003 ± 0.0009 | not significant
+         rug/1h/pr_auc |   0.0010 ± 0.0019 | not significant
+            rug/1h/ece |   0.0017 ± 0.0030 | not significant
+      policy/total_pnl |  -0.3687 ± 3.6068 | not significant
+        policy/avg_pnl |  -0.0154 ± 0.0988 | not significant
+
+Proposed config.yaml diff (NOT applied):
+--- config.yaml
++++ config.yaml (proposed)
+@@ -3,12 +3,12 @@
+   n_heads: 8
+   n_layers: 4
+   ff_dim: 512
+-  dropout: 0.1
++  dropout: 0.2
+   seq_len: 64
+   min_seq_len: 8
+ training:
+   learning_rate: 0.0003
+-  weight_decay: 0.01
++  weight_decay: 0.05
+   epochs: 50
+   batch_size: 256
+   warmup_steps: 500
+

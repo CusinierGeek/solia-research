@@ -1048,11 +1048,74 @@ infra/scripts/overnight-sweep.sh             # preflight, then stage 1 -> stage 
   data, and every failure (a stage that stopped or crashed, a failed trial). The run exits 1 when
   anything failed. `python -m solia_ai.overnight summary` rewrites it from the reports.
 
-**Results & chosen defaults.** *Pending the overnight runs above.* Until they are measured, the shipped config
-keeps the pre-#160 behaviour (`window_stride_seconds: 0`, `max_rows` 4 M, `dropout` 0.1, `weight_decay` 0.01,
-`learning_rate` 3e-4, `d_model` 128): defaults are measured, not guessed. Record here each stage's table (trial,
-PR-AUC per head/horizon, ECE, best epoch, gap), the rug drift per slice, and the chosen values. Also state whether
-the best epoch moved past 1 and the gap narrowed, or why not.
+**Results & chosen defaults (#172, 2026-11-01/02).**
+
+How to read the tables:
+- **Objective:** mean PR-AUC over every head × horizon (pump and rug, 30 s → 1 h).
+- **Score:** objective mean − std, used for ranking.
+- **Gap:** validation − train loss at the best epoch. Negative means the validation loss is below the train loss: dropout is active in training, and validation is unweighted.
+- **Lifts:** paired run for run against the baseline, verdict `mean − std > margin` (0.01).
+
+The absolute values of the two stages are not comparable with each other, because their windows differ. Only the lifts within a stage are.
+
+*Stage 1 — data* (`docs/reports/overfitting-data-172-stage1.json`):
+- Features as of 2026-10-31, 19 baseline columns.
+- Held-out 10-31 03:01 → 16:29 UTC, 2 windows × 2 seeds.
+
+| trial | stride | max_rows | objective | score | best epoch | gap | min / run |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| baseline | 0 | 4 M | 0.4701 ± 0.0378 | 0.4323 | 1.00 | −0.092 | 50 |
+| trial-01 | 60 s | 4 M | 0.4645 ± 0.0332 | 0.4313 | 2.75 | −0.096 | 22 |
+| trial-02 | 30 s | 4 M | 0.4759 ± 0.0361 | 0.4397 | 2.25 | −0.080 | 26 |
+| trial-03 | 30 s | 8 M | 0.4905 ± 0.0357 | 0.4548 | 1.75 | −0.098 | 30 |
+| **trial-04** | **60 s** | **8 M** | 0.4904 ± 0.0351 | **0.4552** | **3.25** | −0.091 | **24** |
+
+Best trial-04 vs baseline:
+- **Objective:** +0.020 ± 0.011, not significant (mean − std = 0.0095, just under the margin).
+- **Pump / rug PR-AUC:** rug/5m +0.025 ± 0.012 (better); pump/5m −0.005 ± 0.027; pump/15m +0.023 ± 0.021.
+- **No ECE regression:** pump/5m ECE +0.002 ± 0.002.
+- **Policy P&L:** +72 ± 130, not significant.
+- **The stride fixes the original symptom:** the best epoch moves from 1 (every baseline run) to 2–3, and a run takes half the time.
+
+*Stage 2 — regularization* (`docs/reports/overfitting-regularization-172-stage2.{json,txt}`, driver `…-stage2-driver.sh`):
+- Run on 8 M rows / stride 60, with the groups #188 enabled (`momentum` + `concentration`).
+- Window 10-30 19:17 → 11-01 19:17 UTC, held-out 11-01 06:35 → 19:17, 2 windows × 2 seeds, 10 random trials.
+
+| trial | dropout | weight_decay | lr | d_model | objective | score | best epoch | gap |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| trial-04 | 0.2 | 0.05 | 3e-4 | 128 | 0.5074 ± 0.0185 | 0.4889 | 2.50 | −0.099 |
+| trial-03 | 0.1 | 0.1 | 3e-4 | 128 | 0.5085 ± 0.0203 | 0.4881 | 3.00 | −0.093 |
+| **baseline** | 0.1 | 0.01 | 3e-4 | 128 | 0.5054 ± 0.0175 | 0.4879 | 2.25 | −0.106 |
+| trial-05 | 0.1 | 0.1 | 3e-4 | 64 | 0.5096 ± 0.0237 | 0.4859 | 5.75 | −0.093 |
+| trial-02 | 0.1 | 0.01 | 1e-4 | 64 | 0.5077 ± 0.0221 | 0.4856 | 10.25 | −0.092 |
+| trial-08 | 0.1 | 0.1 | 1e-4 | 128 | 0.5097 ± 0.0243 | 0.4853 | 6.25 | −0.087 |
+| trial-09 | 0.2 | 0.01 | 1e-4 | 64 | 0.5063 ± 0.0217 | 0.4846 | 10.25 | −0.095 |
+| trial-01 | 0.3 | 0.05 | 3e-4 | 64 | 0.5040 ± 0.0206 | 0.4833 | 5.25 | −0.100 |
+| trial-06 | 0.2 | 0.1 | 3e-4 | 64 | 0.5049 ± 0.0219 | 0.4830 | 5.50 | −0.099 |
+| trial-07 | 0.3 | 0.1 | 3e-4 | 64 | 0.5060 ± 0.0231 | 0.4829 | 6.75 | −0.098 |
+
+Best trial-04 vs baseline:
+- **Objective:** +0.002 ± 0.004.
+- **Pump / rug PR-AUC:** pump/5m +0.001 ± 0.004; rug/5m +0.002 ± 0.009.
+- **ECE:** pump/5m −0.0005 ± 0.0007.
+- **Policy P&L:** −0.4 ± 3.6.
+- **Verdict:** nothing significant on any metric, so the proposed diff (dropout 0.2, weight decay 0.05) is **not** applied.
+
+Findings:
+- **Regularization is not the lever.** All `d_model` 128 trials are within ±0.001 of the baseline's score, and every `d_model` 64 trial scores 0.002–0.005 lower.
+- **A lower learning rate (1e-4) only delays the best epoch** (to 6–10) at a higher cost, with no gain.
+- **The gap is the same with every setting** (−0.087 to −0.106). Neither dropout nor weight decay changes how the model generalizes from its training period to the next. The held-out slices also differ more from each other than the trials do: rug/5m PR-AUC is 0.665 on slice 0 and 0.713 on slice 1 for the baseline.
+- **Where to look next:** more and broader data (#202), recency weighting (#203), market context (#195 / #198) and seed ensembles (#204).
+
+*Chosen defaults.*
+- **`data.window_stride_seconds: 60`, `data.max_rows: 8000000` — a documented exception to the margin rule:**
+  - the objective lift (+0.020 ± 0.011) falls just short of significance;
+  - every metric's lift is ≥ −0.005 in mean, and rug/5m is significantly better;
+  - the best epoch moves past 1;
+  - each training takes half the time (24 vs 50 min per run, 2 × 2 on the RTX 4070), which halves every retrain, ablation and search;
+  - #202 re-decides the data settings rigorously.
+- **Model and optimizer stay unchanged** (`dropout` 0.1, `weight_decay` 0.01, `learning_rate` 3e-4, `d_model` 128).
+- **Peak RSS of the 8 M-row read at stride 60:** measured with `python -m solia_ai.throughput --max-rows 8000000` (stride 60, 80 478 tokens, 843 k samples): **8.7 GB at peak, during the read** (transient), and 4.5 GB after the build (4.8 GB while training; 3 loader workers add only ~0.1 GB PSS). The ablation, stage 2 and this measurement each ran to completion at 8 M rows. The peak is inside the ~16 GB Docker budget, but with Postgres (~7 GB) the host is close to full during the read: do not raise `max_rows` further before #202 lowers the read's peak. Training throughput: ~7 700 samples/s (RTX 4070).
 
 ## Files (ai-service, built in Sprints 2 & 7)
 

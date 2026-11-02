@@ -122,6 +122,18 @@ def test_invalid_values_are_rejected_with_the_key_named(tmp_path, sections, mess
         load_config(write(tmp_path, variant(**sections)))
 
 
+def test_the_packaged_config_ships_the_data_settings_172_chose():
+    # #172: 8 M rows at a 60 s stride; omitting `data` keeps the legacy behaviour (DATA_DEFAULTS).
+    assert VALID["data"]["max_rows"] == 8_000_000
+    assert VALID["data"]["window_stride_seconds"] == 60
+    assert DATA_DEFAULTS["max_rows"] == 4_000_000 and DATA_DEFAULTS["window_stride_seconds"] == 0
+
+
+def test_the_packaged_config_keeps_the_regularization_172_did_not_beat():
+    assert (VALID["model"]["dropout"], VALID["model"]["d_model"]) == (0.1, 128)
+    assert (VALID["training"]["weight_decay"], VALID["training"]["learning_rate"]) == (0.01, 3e-4)
+
+
 def test_the_packaged_config_enables_the_groups_the_ablation_retained():
     # #188: momentum + concentration cleared the pump/5m margin; the other candidates did not.
     from solia_ai.features import BASELINE_GROUPS, group_columns

@@ -130,12 +130,13 @@ data:
   lookback_days: 2.0
   # When the window holds more rows, whole tokens are kept in md5(mint) order (deterministic, not
   # biased in time; never a partial token history) up to this many rows. Peak RSS ~ rows x size.
-  max_rows: 4000000
+  # 8 M with the 60 s stride (#172): half the training time of 4 M / stride 0, no metric worse.
+  max_rows: 8000000
   # At most one training window per this many seconds of a token's life (0 = one per ~10 s snapshot).
   # Consecutive snapshots are near-duplicates: thinning them shows the model more distinct
   # situations per epoch (solia_ai/dataset.py, docs/ML-MODEL.md "Overfitting: window stride").
   # Applied identically to train / validation / held-out windows; each window keeps its full history.
-  window_stride_seconds: 0
+  window_stride_seconds: 60
 
 # Token eligibility (solia_ai/eligibility.py, docs/ML-MODEL.md "Token eligibility"): only windows
 # anchored on an eligible row are trained / validated / held out, and the bot only scores (hence

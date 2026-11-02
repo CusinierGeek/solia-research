@@ -1,0 +1,17 @@
+--- config.yaml
++++ config.yaml (proposed)
+@@ -3,12 +3,12 @@
+   n_heads: 8
+   n_layers: 4
+   ff_dim: 512
+-  dropout: 0.1
++  dropout: 0.2
+   seq_len: 64
+   min_seq_len: 8
+ training:
+   learning_rate: 0.0003
+-  weight_decay: 0.01
++  weight_decay: 0.05
+   epochs: 50
+   batch_size: 256
+   warmup_steps: 500
