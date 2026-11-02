@@ -118,6 +118,12 @@ public sealed record FeatureSnapshot
     /// </summary>
     public MarketAggregates? Market { get; init; }
 
+    /// <summary>
+    /// Wallet features (FE-T9): trader freshness and creator behaviour. Null only for snapshots taken without a
+    /// <see cref="WalletStore"/> (outside <see cref="TokenWindowStore.SnapshotActive"/>).
+    /// </summary>
+    public WalletFeatures? Wallet { get; init; }
+
     public IReadOnlyDictionary<string, object?> OnchainSignals { get; init; } =
         new Dictionary<string, object?>();
 

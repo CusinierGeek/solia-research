@@ -53,6 +53,29 @@ public sealed class PipelineOptions
     public MomentumWindows Momentum => new(MomentumShortSeconds, MomentumMediumSeconds, MomentumLongSeconds);
 
     /// <summary>
+    /// Cross-token wallet memory (FE-T9, <see cref="WalletStore"/>): a wallet inactive for longer than
+    /// this is forgotten (it counts as fresh again). Default 14 days, aligned with the <c>features</c> retention.
+    /// </summary>
+    [Range(1, 8_760)]
+    public int WalletTtlHours { get; set; } = 336;
+
+    /// <summary>
+    /// Horizon of the wallet features: ages are capped at it and a creator's previous launches are counted
+    /// within it, so any history at least this long gives the same features. Also the replay warm-up the
+    /// wallet features need (they stay NULL until this much history has been observed). At least 24 h
+    /// (the longest freshness bucket), at most <see cref="WalletTtlHours"/>.
+    /// </summary>
+    [Range(24, 8_760)]
+    public int WalletAgeCapHours { get; set; } = 24;
+
+    /// <summary>How often (event time, seconds) live ingestion persists the changed wallets to <c>wallet_state</c>.</summary>
+    [Range(10, 86_400)]
+    public int WalletPersistSeconds { get; set; } = 300;
+
+    /// <summary>The wallet age cap can't outlive the wallets it measures.</summary>
+    public bool HasConsistentWalletHorizon() => WalletAgeCapHours <= WalletTtlHours;
+
+    /// <summary>
     /// When false (default), holders are approximated from unique traders seen in the
     /// stream (free). When true, a paid Get Token Info enrichment may be used.
     /// </summary>

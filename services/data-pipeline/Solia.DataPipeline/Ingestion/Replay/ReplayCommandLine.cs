@@ -13,6 +13,9 @@ namespace Solia.DataPipeline.Ingestion.Replay;
 /// <item><c>--mirror-only</c>: only fill the mirror (requires <c>--mirror</c>); no replay, no database.</item>
 /// <item><c>--rebuild</c>: overwrite <c>features</c> rows already stored for the same (mint, ts) instead of keeping them
 /// (only for tokens whose whole history is inside the window, see <c>PostgresTokenSink</c>).</item>
+/// <item><c>--warmup-hours &lt;n&gt;</c>: replay the <c>n</c> hours before <c>--from</c> first, writing nothing, so the
+/// state that needs history (wallet memory, market context) is warm when the window starts. Default 0; the wallet
+/// features need <c>Pipeline:WalletAgeCapHours</c> (24 h) of it.</item>
 /// <item><c>--allow-expired</c>: replay a window older than the <c>features</c> retention TTL anyway (refused by default,
 /// see <c>ReplayRetentionGuard</c>): the next retention run deletes what it writes.</item>
 /// <item>Configuration overrides, handed to the host as for the live service: a key path
@@ -21,12 +24,23 @@ namespace Solia.DataPipeline.Ingestion.Replay;
 /// </summary>
 public sealed record ReplayCommandLine(
     ReplayWindow Window, string? MirrorDirectory, bool MirrorOnly, bool Rebuild, IReadOnlyList<string> ConfigArgs,
-    bool AllowExpired = false)
+    bool AllowExpired = false, int WarmupHours = 0)
 {
+    /// <summary>Longest accepted warm-up: the default wallet TTL (14 days).</summary>
+    public const int MaxWarmupHours = 336;
+
+    /// <summary>The warm-up: replayed before <see cref="Window"/>, nothing written.</summary>
+    public TimeSpan Warmup => TimeSpan.FromHours(WarmupHours);
+
+    /// <summary>Everything read from the archive: the warm-up followed by the window.</summary>
+    public ReplayWindow SourceWindow => new(Window.StartUtc - Warmup, Window.EndUtc);
+
     public const string Usage =
-        "usage: replay --from <utc> --to <utc> [--mirror <dir>] [--mirror-only] [--rebuild] [--allow-expired] [--Section:Key=value ...]\n" +
+        "usage: replay --from <utc> --to <utc> [--warmup-hours <n>] [--mirror <dir>] [--mirror-only] [--rebuild] [--allow-expired] [--Section:Key=value ...]\n" +
         "  --from, --to    half-open UTC window [from, to), ISO 8601 (2026-05-01T00:00Z or 2026-05-01);\n" +
         "                  must end at or before the start of the current hour\n" +
+        "  --warmup-hours <n>  replay the n hours before --from first without writing (warms the wallet memory and\n" +
+        "                  market context; the wallet features need Pipeline:WalletAgeCapHours, 24 by default)\n" +
         "  --mirror <dir>  opt-in local archive mirror: read hours from <dir>, download absent ones into it\n" +
         "  --mirror-only   only download the window into the mirror (needs --mirror); no replay\n" +
         "  --rebuild       refresh features rows already stored for the window (default keeps them)\n" +
@@ -43,6 +57,7 @@ public sealed record ReplayCommandLine(
         DateTimeOffset? from = null, to = null;
         string? mirror = null;
         bool mirrorOnly = false, rebuild = false, allowExpired = false;
+        int warmupHours = 0;
         var configArgs = new List<string>();
 
         for (int i = 0; i < args.Count; i++)
@@ -77,6 +92,22 @@ public sealed record ReplayCommandLine(
                     else
                     {
                         to = parsed;
+                    }
+
+                    break;
+                case "--warmup-hours":
+                    if (i + 1 >= args.Count || args[i + 1].StartsWith("--", StringComparison.Ordinal))
+                    {
+                        error = $"{arg} needs a value.";
+                        return null;
+                    }
+
+                    string hours = args[++i];
+                    if (!int.TryParse(hours, NumberStyles.None, CultureInfo.InvariantCulture, out warmupHours)
+                        || warmupHours > MaxWarmupHours)
+                    {
+                        error = $"--warmup-hours '{hours}' must be a whole number of hours between 0 and {MaxWarmupHours}.";
+                        return null;
                     }
 
                     break;
@@ -131,6 +162,10 @@ public sealed record ReplayCommandLine(
         try
         {
             window.EnsureValid();
+            if (warmupHours > 0)
+            {
+                new ReplayWindow(window.StartUtc - TimeSpan.FromHours(warmupHours), window.EndUtc).EnsureValid();
+            }
         }
         catch (ArgumentException ex)
         {
@@ -149,7 +184,7 @@ public sealed record ReplayCommandLine(
         }
 
         error = null;
-        return new ReplayCommandLine(window, mirror, mirrorOnly, rebuild, configArgs, allowExpired);
+        return new ReplayCommandLine(window, mirror, mirrorOnly, rebuild, configArgs, allowExpired, warmupHours);
     }
 
     /// <summary>A configuration key path (<c>--Section:Key[=value]</c>) or the host's <c>--environment</c>.</summary>

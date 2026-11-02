@@ -729,7 +729,11 @@ and seeds.
   `venue` (FE-T5, #114) — the `venue` column one-hot encoded (`VENUE_COLUMNS`);
   `market` (FE-T11, #195) — `MARKET_COLUMNS`: market-wide launch rate (5 min / 1 h), graduations and
   graduation ratio (1 h), SOL buy volume and net SOL flow (5 min / 1 h), active tokens (5 min / 1 h) and
-  `mkt_coverage_sec`, the same on every row of a tick (see docs/DATA-PIPELINE.md "Market-regime context").
+  `mkt_coverage_sec`, the same on every row of a tick (see docs/DATA-PIPELINE.md "Market-regime context");
+  `wallet` (FE-T9, #189) — `WALLET_COLUMNS`: freshness of the window's signers (share first seen < 1 h /
+  < 24 h, median age), the creator's age and previous launches, and its behaviour on this launch (dev buy in
+  SOL and / supply, share sold, time since first sell), plus `wal_coverage_sec` (see docs/DATA-PIPELINE.md
+  "Cross-token wallet memory").
 - **Venue one-hot is encoded at load time, not stored.** `features.py` derives `venue_<name>` from the
   raw `venue` column (training reads it from the DB, `/predict` rows carry it as a string), over a
   fixed category list (`VENUES`: `pumpfun`, `pumpswap`, `raydium-launchpad`, `raydium`,
@@ -738,10 +742,10 @@ and seeds.
   so the champion keeps serving). `DB_FEATURE_COLUMNS` is the stored part the parity tests check.
 - **Rows predating a group are refused, not zero-filled.** A NULL in a column the pipeline always writes
   since the group's migration (`ALWAYS_WRITTEN`, e.g. `net_sol_flow`/`large_buy_count` for
-  `buy_pressure`, `volume_burst_ratio`/`price_history_sec` for `momentum`, `unique_traders` for `concentration`, `mkt_coverage_sec` for `market`; none for `burn`, whose
+  `buy_pressure`, `volume_burst_ratio`/`price_history_sec` for `momentum`, `unique_traders` for `concentration`, `mkt_coverage_sec` for `market`, `wal_coverage_sec` for `wallet`; none for `burn`, whose
   migration 0008 backfills earlier rows from `onchain_signals`, nor `venue`) means "never computed": training, evaluation and ablation raise if an enabled (or
   ablated) group has such rows — re-replay them first. Other NULLs are imputed per `NULL_FILL`
-  (`buy_volume_ratio` → 0.5, "no pressure either way"; `volume_burst_ratio` → 1, "steady"; `new_trader_ratio` → −1, "no recent trader", as 0 is "all returning"; `burned_liquidity` → −1, "unknown", as 0% burned is a real rug signal; the non-negative `mkt_*` aggregates → −1, "window not observed yet" (warm-up), as 0 launches / 0 active tokens is a dead market — the signed `mkt_net_sol_flow_*` keep 0 and `mkt_coverage_sec` marks the warm-up; else 0 —
+  (`buy_volume_ratio` → 0.5, "no pressure either way"; `volume_burst_ratio` → 1, "steady"; `new_trader_ratio` → −1, "no recent trader", as 0 is "all returning"; `burned_liquidity` → −1, "unknown", as 0% burned is a real rug signal; the non-negative `mkt_*` aggregates → −1, "window not observed yet" (warm-up), as 0 launches / 0 active tokens is a dead market — the signed `mkt_net_sol_flow_*` keep 0 and `mkt_coverage_sec` marks the warm-up; every `wal_*` but `wal_coverage_sec` → −1, "not computable" (warm-up, unknown creator, creator hasn't sold), as 0 is a real reading (no fresh trader, nothing sold yet); else 0 —
   e.g. a return a young token has no history for, which `price_history_sec` tells apart from a flat
   price).
 - **Adding columns keeps the champion serving.** A checkpoint trained before columns were added (its
@@ -821,6 +825,17 @@ re-replay + ablation (#198), so the history is replayed once for all of them. Pr
   vs quiet hours), and the lift is reported **per window**, not only on average: a regime feature that
   only helps in the regime it was trained on is not a gain.
 - **Decision rule**: same margin as the other groups. `market` is enabled only if it clears it.
+
+#### Results: `wallet` (#189) — pending, measured in #198
+
+Not measured yet. The `wallet` group is computed by the pipeline but **disabled** until the combined ablation
+#198 measures it. Protocol specifics:
+
+- **Data**: migration 0014 applied, then the combined re-replay with **`--warmup-hours 24`**, so the evaluated
+  rows carry the history-dependent `wal_*` columns. Rows predating 0014 are refused for the group
+  (`wal_coverage_sec` NULL).
+- **Variants**: the current defaults vs the same **+wallet**.
+- **Decision rule**: same margin as the other groups. `wallet` is enabled only if it clears it.
 
 ```bash
 # from services/ai-service, database from SOLIA_DB_CONNECTION / POSTGRES_* (a replayed history)

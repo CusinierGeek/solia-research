@@ -17,6 +17,7 @@ from solia_ai.features import (
     VENUE_COLUMNS,
     VENUE_OTHER,
     VENUES,
+    WALLET_COLUMNS,
     build_feature_matrix,
     check_group_coverage,
     column_mask,
@@ -458,7 +459,12 @@ def test_burn_and_venue_are_candidate_groups_outside_the_baseline():
     assert "burn" not in BASELINE_GROUPS and "venue" not in BASELINE_GROUPS
     assert FEATURE_GROUPS["burn"] == ("burned_liquidity",)
     assert FEATURE_GROUPS["venue"] == VENUE_COLUMNS
-    assert FEATURE_COLUMNS[36:] == ["burned_liquidity", *MARKET_COLUMNS, *VENUE_COLUMNS]
+    assert FEATURE_COLUMNS[36:] == [
+        "burned_liquidity",
+        *MARKET_COLUMNS,
+        *WALLET_COLUMNS,
+        *VENUE_COLUMNS,
+    ]
 
 
 def test_venue_categories_are_a_fixed_list_plus_an_other_bucket():
@@ -644,3 +650,43 @@ def test_market_warm_up_is_told_apart_from_a_dead_market():
     j = FEATURE_COLUMNS.index("mkt_net_sol_flow_1h")
     assert matrix[0, j] == 0.0
     assert matrix[:, FEATURE_COLUMNS.index("mkt_coverage_sec")].tolist() == [120.0, 3600.0]
+
+
+# --- FE-T9 (#189): wallet features ---
+
+
+def test_wallet_is_a_candidate_group_outside_the_defaults():
+    # Disabled by default; its ablation is measured in the combined run #198.
+    assert "wallet" not in BASELINE_GROUPS
+    assert FEATURE_GROUPS["wallet"] == WALLET_COLUMNS
+    assert len(WALLET_COLUMNS) == 10 and all(c.startswith("wal_") for c in WALLET_COLUMNS)
+    assert group_columns(["wallet"]) == list(WALLET_COLUMNS)
+
+
+def test_rows_predating_the_wallet_group_are_refused_when_it_is_enabled():
+    df = pd.concat(
+        [_frame(wal_coverage_sec=86400.0), _frame(wal_coverage_sec=None)], ignore_index=True
+    )
+
+    with pytest.raises(ValueError, match="1 of 2 feature rows predate the 'wallet' group"):
+        check_group_coverage(df, [*BASELINE_GROUPS, "wallet"])
+    check_group_coverage(df, BASELINE_GROUPS)  # disabled: no error
+
+
+def test_wallet_nulls_are_told_apart_from_real_zeros():
+    # Warm-up / creator still holding: NULL. Nothing sold yet, no dev buy: real zeros.
+    unknown = {col: None for col in WALLET_COLUMNS if col != "wal_coverage_sec"}
+    zeros = {col: 0.0 for col in WALLET_COLUMNS if col != "wal_coverage_sec"}
+    df = pd.concat(
+        [_frame(wal_coverage_sec=600.0, **unknown), _frame(wal_coverage_sec=86400.0, **zeros)],
+        ignore_index=True,
+    )
+
+    check_group_coverage(df, ["wallet"])  # warm-up rows are computed rows, not stale ones
+    matrix = build_feature_matrix(df)
+    for col in WALLET_COLUMNS:
+        j = FEATURE_COLUMNS.index(col)
+        if col == "wal_coverage_sec":
+            assert matrix[:, j].tolist() == [600.0, 86400.0]
+        else:
+            assert matrix[0, j] == -1.0 and matrix[1, j] == 0.0, col

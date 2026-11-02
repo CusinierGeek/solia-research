@@ -59,6 +59,7 @@ public sealed record RawEvent
     /// <summary>Market cap in quote currency (pumpapi <c>marketCapQuote</c>).</summary>
     public decimal? MarketCap { get; init; }
 
+    /// <summary>Tokens traded; for a <see cref="EventKind.Create"/>, the creator's dev buy (pumpapi <c>initialBuy</c>).</summary>
     public decimal? TokenAmount { get; init; }
     public decimal? QuoteAmount { get; init; }
 

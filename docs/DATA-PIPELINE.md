@@ -105,6 +105,60 @@ the whole stream, so the model can tell "this token is strong" from "the whole m
   price feed (out of scope: "derive, don't fetch"). Everything here is in SOL, so a SOL/USD move does
   not distort the aggregates themselves.
 
+### Cross-token wallet memory (FE-T9, #189)
+
+Every other feature comes from one token's own trades; on Pump.fun *who* trades a token is often a stronger
+signal (a launch bought by wallets created minutes ago, a creator who already launched ten tokens today).
+`WalletStore` (owned by `TokenWindowStore`, fed every event) keeps **per-wallet state across tokens**, derived
+for free from the signers of the stream's trades and creates (`RawEvent.Trader` = pumpapi `txSigner`): first /
+last seen, trade count, tokens traded, tokens created and the times of the latest 16 launches. The model never
+sees an address, only statistics built from them, so an unknown wallet simply counts as fresh and nothing needs
+a retrain when wallets rotate.
+
+| Column | Meaning |
+|---|---|
+| `wal_fresh_1h_share` / `_24h_share` | share of the window's signers first seen < 1 h / < 24 h before `ts` (unknown = fresh) |
+| `wal_median_trader_age_sec` | median wallet age of the window's signers |
+| `wal_creator_age_sec` | age of the creator's wallet (signer of the token's `Create`) |
+| `wal_creator_prev_launches` | the creator's launches before this one within the age cap |
+| `wal_creator_buy_sol` / `_buy_supply_share` | the creator's dev buy (carried by the `Create` event: `solAmount`, `initialBuy`), in SOL and / supply |
+| `wal_creator_sold_share` | tokens the creator sold / bought on this launch |
+| `wal_creator_first_sell_sec` | seconds since the creator's first sell (NULL while it hasn't sold) |
+| `wal_coverage_sec` | seconds of wallet history behind the lookups, capped at the age cap (always written) |
+
+- **Point-in-time.** `WalletStore.Apply` only queues an event; each tick advances the store to the snapshot
+  time, applying the queued events dated **strictly before** it, in timestamp order, before any lookup. A trade
+  at or after a snapshot's `ts` never changes it (`WalletStoreTests`). The creator-behaviour columns come from
+  the token's own events, like every per-token feature (events up to `ts`).
+- **Live = replay.** The result depends only on event timestamps and arrival order, so the same events give the
+  same values live and in a replay that reads the archive hours in order (`ReplayWalletTests` replays a fixture
+  both ways).
+- **Bounded.** Ages are capped at `Pipeline:WalletAgeCapHours` (default **24 h**) and launches counted within
+  it, so any history at least that long gives the same features. A wallet inactive for longer than
+  `Pipeline:WalletTtlHours` (default **336 h = 14 d**, the `features` retention) is forgotten — logically at
+  once (it counts as fresh again, whenever the hourly sweep runs), physically by the sweep, which also deletes it
+  from `wallet_state`.
+- **Warm-up.** The history-dependent columns (freshness, ages, launches) are **NULL until their horizon has been
+  observed**: 1 h for `wal_fresh_1h_share`, 24 h for the others. A replay meant for training therefore uses
+  **`--warmup-hours 24`** (at least `WalletAgeCapHours`): the 24 hours before `--from` are replayed through the
+  same engine, nothing dated before `--from` is written, and the window starts with a warm wallet memory (and
+  market context). With 24 h of warm-up the replay reproduces live values except for wallets dormant between
+  24 h and the 14-day TTL, which live still remembers (their age is capped at 24 h either way, so only their
+  "fresh" flag can differ); a warm-up of 336 h reproduces live exactly.
+- **Restart persistence (live only).** The live host loads `wallet_state` before the first event and saves the
+  changed and evicted wallets every `Pipeline:WalletPersistSeconds` (default 300 s of event time) and at
+  shutdown — in batches, never per trade (binary `COPY` + one upsert). A failed load starts from an empty memory
+  (only the coverage is lost), a failed save is retried with the next one. If the first event after a restart
+  comes more than 1 h after the last saved one, the coverage restarts (the outage left a hole: wallets that
+  traded during it would look fresher than they are), so the history-dependent columns are NULL for 24 h again.
+  A replay never reads or writes `wallet_state`: it may run alongside live ingestion.
+- **Size.** Each wallet costs roughly 150–250 bytes in memory (address string + record + dictionary entry).
+  Every save logs the wallets held and the managed heap (`saved wallet state: … wallets in memory, managed heap
+  … MB`): the bound on one day of live traffic (memory, `pg_total_relation_size('wallet_state')`) is recorded
+  here once measured on the deployed pipeline.
+- **Out of scope here:** outcome-based reputation (creator rug rate, early buyers' win rate: #190, built on this
+  state) and funding links between wallets (need Solana RPC, which is paid).
+
 ### Granularity: aggregated snapshots, not raw trades
 
 The pipeline persists **one aggregated `FeatureSnapshot` per token per cadence** — it does **not** store individual trade events. `TokenState.Apply` streams every `RawEvent` into an in-memory rolling window (carrying `Ts`, `Kind`, `QuoteAmount` in SOL, `QuoteMint`, and the `Trader`/txSigner), and `Snapshot` reduces that window to the feature row. The `features.raw` JSONB column exists but is currently **unused**.
@@ -155,6 +209,7 @@ docker compose run --rm data-pipeline replay --from <utc> --to <utc> [options]
 | `--from`, `--to` | Half-open UTC window `[from, to)`, ISO 8601 (`2026-05-01T03:00Z`; a bare date = midnight UTC; no offset = UTC). Rejected: `from >= to`, a start before 2026-04-18, an end after the start of the current hour (that hour's archive isn't published until it is over). |
 | `--mirror <dir>` | **Opt-in** local mirror (off by default). Hours are read from `<dir>/YYYY/MM/DD/HH.jsonl.zst` first and downloaded into it only when absent. The directory must already exist and be writable (it is never created for you). In compose: `--mirror /replay-archives` (the `replay-archives` volume). |
 | `--mirror-only` | With `--mirror`: only download the window into the mirror; no replay, no database. |
+| `--warmup-hours <n>` | Replay the `n` hours (0–336) before `--from` first, writing nothing dated before `--from`, so the state that needs history (wallet memory, market context, growth baselines) is warm when the window starts. The wallet features need **24** (see *Cross-token wallet memory*). The warm-up hours count in the summary and are mirrored by `--mirror-only`; the retention check applies to the window. |
 | `--rebuild` | Refresh `features` rows the replay recomputes (see *Rebuild* below). |
 | `--allow-expired` | Replay a window older than the `features` retention TTL anyway (see *Replay vs retention* below). |
 | `--Section:Key=value`, `--environment <name>` | Configuration overrides, as on the live host's command line (e.g. `--Pipeline:SnapshotCadenceSeconds=5`; `--Key value` works too). |
@@ -248,6 +303,9 @@ Cold start: a token's rolling window begins at the replay's first event, so the 
   file (kept when the source lost the hour), atomic downloads, stalled downloads, end-of-replay deactivation,
   idempotent re-run and `--rebuild` refresh limited to tokens born in the window (Postgres parts in the
   Integration category).
+- Wallet memory: state updates, TTL eviction, point-in-time ordering, restart persistence (engine + Postgres
+  round trip), live/replay parity and the warm-up (`WalletStoreTests`, `WalletPersistenceTests`,
+  `ReplayWalletTests`, `PostgresWalletStateStoreTests`).
 
 ## Data retention
 

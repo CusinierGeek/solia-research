@@ -55,6 +55,11 @@ public sealed class ReplayRunner
     /// <paramref name="featureRowsWritten"/> reads the sink's committed-row counter for the summary; an
     /// <see cref="ArchiveMirror"/> archive also reports its hit/download counts.
     /// Fatal source errors propagate; cancellation throws <see cref="OperationCanceledException"/>.
+    /// <para>
+    /// A <paramref name="warmup"/> replays that much history before the window through the same engine but writes
+    /// nothing dated before the window's start (<see cref="WarmupSink"/>): the wallet memory and the market context
+    /// enter the window warm. Its hours count in the summary like the window's.
+    /// </para>
     /// </summary>
     public async Task<ReplaySummary> ReplayAsync(
         ReplayWindow window,
@@ -62,11 +67,14 @@ public sealed class ReplayRunner
         ITokenSink sink,
         Func<long> featureRowsWritten,
         PipelineOptions options,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeSpan warmup = default)
     {
-        var source = new PumpApiReplaySource(window, archive.OpenAsync, _loggerFactory.CreateLogger<PumpApiReplaySource>(),
+        ReplayWindow sourceWindow = new(window.StartUtc - warmup, window.EndUtc);
+        ITokenSink target = warmup > TimeSpan.Zero ? new WarmupSink(sink, window.StartUtc) : sink;
+        var source = new PumpApiReplaySource(sourceWindow, archive.OpenAsync, _loggerFactory.CreateLogger<PumpApiReplaySource>(),
             PumpApiReplaySource.DefaultMaxAttemptsPerHour, _delay);
-        var engine = new PipelineEngine(source, new TokenWindowStore(options), sink,
+        var engine = new PipelineEngine(source, new TokenWindowStore(options), target,
             Microsoft.Extensions.Options.Options.Create(options), _loggerFactory.CreateLogger<PipelineEngine>())
         {
             ReleaseTrackedOnStop = true,
@@ -76,7 +84,7 @@ public sealed class ReplayRunner
         cancellationToken.ThrowIfCancellationRequested(); // the engine treats cancellation as a graceful stop
 
         ArchiveMirror? mirror = archive as ArchiveMirror;
-        return new ReplaySummary(window.Hours().Count(), source.MissingHours.ToList(), source.FailedHours.ToList(),
+        return new ReplaySummary(sourceWindow.Hours().Count(), source.MissingHours.ToList(), source.FailedHours.ToList(),
             featureRowsWritten(), engine.FailedBatches, mirror?.Hits ?? 0, mirror?.Downloads ?? 0);
     }
 

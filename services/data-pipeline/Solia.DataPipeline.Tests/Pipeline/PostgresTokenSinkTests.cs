@@ -232,6 +232,41 @@ public sealed class PostgresTokenSinkTests(PostgresFixture db) : IClassFixture<P
     }
 
     [Fact]
+    public async Task Wallet_columns_are_persisted_and_null_when_not_computable()
+    {
+        var wallet = new WalletFeatures
+        {
+            CoverageSec = 86_400,
+            FreshShare1h = 0.25,
+            FreshShare24h = 0.75,
+            MedianTraderAgeSec = 5_400.5,
+            CreatorAgeSec = 120,
+            CreatorPrevLaunches = 7,
+            CreatorBuySol = 1.5,
+            CreatorBuySupplyShare = 0.05,
+            CreatorSoldShare = 0.4,
+            CreatorFirstSellSec = 42,
+        };
+        FeatureSnapshot snap = Snap("WAL1", T0, 1m) with { Wallet = wallet };
+        FeatureSnapshot warmUp = Snap("WAL2", T0, 1m) with { Wallet = new WalletFeatures { CoverageSec = 600 } };
+        await Sink.WriteAsync(Batch(T0, [snap, warmUp]), default);
+
+        Assert.Equal(86_400, await Feature<int>("wal_coverage_sec", "WAL1"));
+        Assert.Equal(0.25, await Feature<double>("wal_fresh_1h_share", "WAL1"));
+        Assert.Equal(0.75, await Feature<double>("wal_fresh_24h_share", "WAL1"));
+        Assert.Equal(5_400.5, await Feature<double>("wal_median_trader_age_sec", "WAL1"));
+        Assert.Equal(120, await Feature<int>("wal_creator_age_sec", "WAL1"));
+        Assert.Equal(7, await Feature<int>("wal_creator_prev_launches", "WAL1"));
+        Assert.Equal(1.5, await Feature<double>("wal_creator_buy_sol", "WAL1"));
+        Assert.Equal(0.05, await Feature<double>("wal_creator_buy_supply_share", "WAL1"));
+        Assert.Equal(0.4, await Feature<double>("wal_creator_sold_share", "WAL1"));
+        Assert.Equal(42, await Feature<int>("wal_creator_first_sell_sec", "WAL1"));
+        Assert.Equal(1L, await db.ScalarAsync<long>(
+            "SELECT count(*) FROM features WHERE mint = 'WAL2' AND wal_coverage_sec = 600 " +
+            "AND wal_fresh_1h_share IS NULL AND wal_creator_age_sec IS NULL AND wal_creator_first_sell_sec IS NULL"));
+    }
+
+    [Fact]
     public async Task Burned_liquidity_is_persisted_and_null_when_unknown()
     {
         FeatureSnapshot snap = Snap("BURN1", T0, 1m) with { BurnedLiquidity = 57.5 };

@@ -28,6 +28,35 @@ public class ReplayCommandLineTests
     }
 
     [Fact]
+    public void A_warm_up_reads_the_hours_before_the_window()
+    {
+        ReplayCommandLine cmd = Parse("--from", "2026-05-02", "--to", "2026-05-03", "--warmup-hours", "24")!;
+
+        Assert.Equal(24, cmd.WarmupHours);
+        Assert.Equal(new DateTimeOffset(2026, 5, 2, 0, 0, 0, TimeSpan.Zero), cmd.Window.StartUtc); // what is written
+        Assert.Equal(new DateTimeOffset(2026, 5, 1, 0, 0, 0, TimeSpan.Zero), cmd.SourceWindow.StartUtc); // what is read
+        Assert.Equal(48, cmd.SourceWindow.Hours().Count());
+        Assert.Equal(0, Parse("--from", "2026-05-02", "--to", "2026-05-03")!.WarmupHours);
+    }
+
+    [Theory]
+    [InlineData("-1")]
+    [InlineData("1.5")]
+    [InlineData("abc")]
+    [InlineData("337")]
+    public void An_invalid_warm_up_is_rejected(string hours)
+    {
+        Assert.Contains("--warmup-hours", Error("--from", "2026-05-02", "--to", "2026-05-03", "--warmup-hours", hours));
+    }
+
+    [Fact]
+    public void A_warm_up_reaching_before_the_archive_is_rejected()
+    {
+        Assert.Contains("before the archive begins", Error("--from", "2026-04-18T12:00Z", "--to", "2026-04-19", "--warmup-hours", "24"));
+        Assert.Contains("needs a value", Error("--from", "2026-05-02", "--to", "2026-05-03", "--warmup-hours"));
+    }
+
+    [Fact]
     public void Defaults_to_direct_streaming_without_rebuild()
     {
         ReplayCommandLine cmd = Parse("--from", "2026-05-01", "--to", "2026-05-02")!;

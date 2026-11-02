@@ -157,6 +157,16 @@ public sealed class SoliaDbContext(DbContextOptions<SoliaDbContext> options) : D
             e.Property(x => x.MktNetSolFlow1h).HasColumnName("mkt_net_sol_flow_1h");
             e.Property(x => x.MktActiveTokens5m).HasColumnName("mkt_active_tokens_5m");
             e.Property(x => x.MktActiveTokens1h).HasColumnName("mkt_active_tokens_1h");
+            e.Property(x => x.WalCoverageSec).HasColumnName("wal_coverage_sec");
+            e.Property(x => x.WalFresh1hShare).HasColumnName("wal_fresh_1h_share");
+            e.Property(x => x.WalFresh24hShare).HasColumnName("wal_fresh_24h_share");
+            e.Property(x => x.WalMedianTraderAgeSec).HasColumnName("wal_median_trader_age_sec");
+            e.Property(x => x.WalCreatorAgeSec).HasColumnName("wal_creator_age_sec");
+            e.Property(x => x.WalCreatorPrevLaunches).HasColumnName("wal_creator_prev_launches");
+            e.Property(x => x.WalCreatorBuySol).HasColumnName("wal_creator_buy_sol");
+            e.Property(x => x.WalCreatorBuySupplyShare).HasColumnName("wal_creator_buy_supply_share");
+            e.Property(x => x.WalCreatorSoldShare).HasColumnName("wal_creator_sold_share");
+            e.Property(x => x.WalCreatorFirstSellSec).HasColumnName("wal_creator_first_sell_sec");
             e.Property(x => x.OnchainSignals).HasColumnName("onchain_signals").HasColumnType("jsonb");
             e.Property(x => x.BehavioralSignals).HasColumnName("behavioral_signals").HasColumnType("jsonb");
             e.Property(x => x.Raw).HasColumnName("raw").HasColumnType("jsonb");

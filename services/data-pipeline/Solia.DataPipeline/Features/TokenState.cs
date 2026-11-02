@@ -35,6 +35,11 @@ namespace Solia.DataPipeline.Features;
 /// the window's trades and their signers, so per-wallet volume never outlives the window; whether a
 /// recent trader is new or returning looks up its first-seen time on the token.
 /// </para>
+/// <para>
+/// Wallet features (FE-T9): the window's signers are looked up in the cross-token <see cref="WalletStore"/>
+/// handed to <see cref="Snapshot"/>; the creator (signer of the create) and its dev buy, later buys and sells on
+/// this launch are kept for the token's lifetime.
+/// </para>
 /// </summary>
 internal sealed class TokenState
 {
@@ -77,6 +82,15 @@ internal sealed class TokenState
     private DateTimeOffset _firstSeen;
     private DateTimeOffset _createdAt;
     private bool _hasCreate;
+
+    // The creator (signer of the create) and its trades on this launch (FE-T9).
+    private string? _creator;
+    private decimal? _creatorBuySol;     // the create's dev buy, in SOL
+    private decimal? _creatorBuyTokens;  // the create's dev buy, in tokens
+    private decimal? _createSupply;
+    private decimal _creatorBoughtTokens;
+    private decimal _creatorSoldTokens;
+    private DateTimeOffset? _creatorFirstSell;
 
     private DateTimeOffset? _prevSnapshotTs;
     private decimal _prevVolume;
@@ -152,6 +166,11 @@ internal sealed class TokenState
         {
             _hasCreate = true;
             _createdAt = e.Timestamp;
+            ApplyCreator(e);
+        }
+        else if (e.Kind is EventKind.Buy or EventKind.Sell && _creator is not null && e.Trader == _creator)
+        {
+            ApplyCreatorTrade(e);
         }
 
         if (e.IsMigrated)
@@ -237,7 +256,11 @@ internal sealed class TokenState
         return false;
     }
 
-    public FeatureSnapshot Snapshot(DateTimeOffset now)
+    /// <param name="now">Snapshot time.</param>
+    /// <param name="wallets">
+    /// Cross-token wallet memory, already advanced to <paramref name="now"/>; null leaves <see cref="FeatureSnapshot.Wallet"/> null.
+    /// </param>
+    public FeatureSnapshot Snapshot(DateTimeOffset now, WalletStore? wallets = null)
     {
         Advance(now);
         Prune(now);
@@ -422,6 +445,7 @@ internal sealed class TokenState
             TraderHhi = traderHhi,
             NewTraderRatio = _concentration.NewTraderRatio,
             BurnedLiquidity = _burned,
+            Wallet = wallets is null ? null : WalletFeatures(now, wallets),
             OnchainSignals = new Dictionary<string, object?>
             {
                 ["burnedLiquidityPercent"] = _burned,
@@ -442,6 +466,66 @@ internal sealed class TokenState
         _prevPrice = _price;
         _prevEma = emaNow;
         return snapshot;
+    }
+
+    private void ApplyCreator(RawEvent e)
+    {
+        if (e.Trader is null)
+        {
+            return;
+        }
+
+        _creator = e.Trader;
+        _createSupply = e.Supply ?? _createSupply;
+        _creatorBuySol = IsSolQuoted(e.QuoteMint) ? e.QuoteAmount ?? 0 : null;
+        _creatorBuyTokens = e.TokenAmount ?? 0;
+        _creatorBoughtTokens += _creatorBuyTokens.Value;
+    }
+
+    private void ApplyCreatorTrade(RawEvent e)
+    {
+        decimal tokens = e.TokenAmount ?? 0;
+        if (e.Kind == EventKind.Buy)
+        {
+            _creatorBoughtTokens += tokens;
+            return;
+        }
+
+        _creatorSoldTokens += tokens;
+        if (_creatorFirstSell is not { } first || e.Timestamp < first)
+        {
+            _creatorFirstSell = e.Timestamp;
+        }
+    }
+
+    /// <summary>Freshness of the window's signers (from <see cref="TraderConcentration"/>) and the creator's behaviour.</summary>
+    private WalletFeatures WalletFeatures(DateTimeOffset now, WalletStore wallets)
+    {
+        (double? fresh1h, double? fresh24h, double? medianAge) = wallets.TraderStats(_concentration.Traders, now);
+        var features = new WalletFeatures
+        {
+            CoverageSec = wallets.CoverageSec(now),
+            FreshShare1h = fresh1h,
+            FreshShare24h = fresh24h,
+            MedianTraderAgeSec = medianAge,
+        };
+
+        if (_creator is null)
+        {
+            return features;
+        }
+
+        (int? creatorAge, int? previousLaunches) = wallets.CreatorStats(_creator, _createdAt, now);
+        decimal? supply = _createSupply ?? _supply;
+        return features with
+        {
+            CreatorAgeSec = creatorAge,
+            CreatorPrevLaunches = previousLaunches,
+            CreatorBuySol = (double?)_creatorBuySol,
+            CreatorBuySupplyShare = _creatorBuyTokens is { } tokens && supply is > 0 ? (double)(tokens / supply.Value) : null,
+            CreatorSoldShare = _creatorBoughtTokens > 0 ? Math.Min(1, (double)(_creatorSoldTokens / _creatorBoughtTokens)) : null,
+            CreatorFirstSellSec = _creatorFirstSell is { } sold ? (int)Math.Max(0, (now - sold).TotalSeconds) : null,
+        };
     }
 
     /// <summary>The price in force at <paramref name="ts"/>: the last one at or before it; null when the history starts later.</summary>

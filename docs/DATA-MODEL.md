@@ -117,6 +117,15 @@ Time-series feature snapshots per token. The model's input unit.
 | mkt_buy_sol_5m, mkt_buy_sol_1h | DOUBLE PRECISION | market-wide SOL buy volume (SOL-quoted trades) |
 | mkt_net_sol_flow_5m, mkt_net_sol_flow_1h | DOUBLE PRECISION | market-wide SOL buys minus sells |
 | mkt_active_tokens_5m, mkt_active_tokens_1h | INT | distinct tokens with a trade in the window |
+| wal_coverage_sec | INT | wallet features (FE-T9, 0014): seconds of wallet history behind the lookups, capped at `Pipeline:WalletAgeCapHours` (24 h); always written (NULL = row predates 0014) |
+| wal_fresh_1h_share, wal_fresh_24h_share | DOUBLE PRECISION | share of the window's signers first seen less than 1 h / 24 h before `ts` (an unknown wallet is fresh), [0, 1]; NULL without a signer or before 1 h / 24 h of history |
+| wal_median_trader_age_sec | DOUBLE PRECISION | median wallet age of the window's signers, capped at the age cap; NULL without a signer or before the age cap is covered |
+| wal_creator_age_sec | INT | creator wallet age (signer of the token's `Create`), capped; NULL when no create was seen or before the age cap is covered |
+| wal_creator_prev_launches | INT | the creator's launches before this one within the age cap (at most 16); NULL like `wal_creator_age_sec` |
+| wal_creator_buy_sol | DOUBLE PRECISION | the creator's dev buy (the create's own buy), SOL; 0 without one; NULL when the creator is unknown |
+| wal_creator_buy_supply_share | DOUBLE PRECISION | dev buy tokens / supply; 0 without a dev buy; NULL when the creator or supply is unknown |
+| wal_creator_sold_share | DOUBLE PRECISION | tokens the creator sold / bought on this launch, [0, 1]; NULL when it bought none |
+| wal_creator_first_sell_sec | INT | seconds since the creator's first sell on this launch; NULL while it hasn't sold |
 | onchain_signals | JSONB | Pump.fun-specific signals |
 | behavioral_signals | JSONB | pump/rug pattern flags |
 | raw | JSONB | nullable debug payload |
@@ -126,6 +135,29 @@ Constraints: `UNIQUE (mint, ts)` (idempotent live + replay ingestion; also serve
 The `mkt_*` columns are the same on every row of a pipeline tick (computed once per tick from whole
 seconds strictly before the second of `ts`) and NULL until their window has been fully observed
 (replay warm-up, see docs/DATA-PIPELINE.md "Market-regime context").
+
+The `wal_*` columns come from the pipeline's cross-token wallet memory: the wallet lookups of a row use only
+events strictly before its `ts`; the history-dependent ones stay NULL until `Pipeline:WalletAgeCapHours` of
+history has been observed (replay warm-up, see docs/DATA-PIPELINE.md "Cross-token wallet memory").
+
+### `wallet_state`, `wallet_state_meta`
+The live pipeline's cross-token wallet memory (FE-T9, 0014), so a restart doesn't reset every wallet to fresh.
+Written with raw SQL by the data-pipeline only, in batches (binary `COPY` into a staging table + one upsert,
+every `Pipeline:WalletPersistSeconds`); replays keep theirs in memory and never write here. No EF mapping
+(nothing reads it but the pipeline).
+
+| Column | Type | Notes |
+|--------|------|-------|
+| wallet | TEXT PK | signer address (pumpapi `txSigner`); never a model input |
+| first_seen_at, last_seen_at | TIMESTAMPTZ | first / latest trade or create seen (second precision) |
+| trade_count | INT | trades signed |
+| tokens_traded | INT | distinct tokens traded (approximate: a token re-entered after 4 others counts again) |
+| tokens_created | INT | `Create` events signed |
+| recent_launches | TIMESTAMPTZ[] | latest creations, ascending, at most 16 |
+
+`wallet_state_meta` is one row (`id` = TRUE): `history_start` (start of the history behind the state — the
+features' coverage), `last_event_at` (newest event applied), `saved_at`. Bounded by the pipeline: a wallet
+inactive for longer than `Pipeline:WalletTtlHours` (14 d, the `features` retention) is deleted at the next save.
 
 ### `predictions`
 Model outputs. One row per inference call.

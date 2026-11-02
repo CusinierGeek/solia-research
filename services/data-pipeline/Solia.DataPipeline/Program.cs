@@ -53,6 +53,7 @@ builder.Services.AddSingleton<PumpApiStreamSource>();
 builder.Services.AddSingleton<IDataSource>(sp => sp.GetRequiredService<PumpApiStreamSource>());
 builder.Services.AddSingleton<TokenWindowStore>();
 builder.Services.AddSingleton<ITokenSink, PostgresTokenSink>();
+builder.Services.AddSingleton<IWalletStateStore, PostgresWalletStateStore>(); // live only: replays never persist wallets
 builder.Services.AddSingleton<PipelineEngine>();
 
 // --- Health (bounded so probes don't hang on an unreachable database) ---

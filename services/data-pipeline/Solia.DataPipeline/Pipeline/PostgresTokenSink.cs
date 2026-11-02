@@ -63,6 +63,8 @@ public sealed class PostgresTokenSink : ITokenSink
         "price_history_sec, unique_traders, top_trader_share, trader_hhi, new_trader_ratio, burned_liquidity, " +
         "mkt_coverage_sec, mkt_launch_rate_5m, mkt_launch_rate_1h, mkt_graduations_1h, mkt_graduation_ratio_1h, " +
         "mkt_buy_sol_5m, mkt_buy_sol_1h, mkt_net_sol_flow_5m, mkt_net_sol_flow_1h, mkt_active_tokens_5m, mkt_active_tokens_1h, " +
+        "wal_coverage_sec, wal_fresh_1h_share, wal_fresh_24h_share, wal_median_trader_age_sec, wal_creator_age_sec, " +
+        "wal_creator_prev_launches, wal_creator_buy_sol, wal_creator_buy_supply_share, wal_creator_sold_share, wal_creator_first_sell_sec, " +
         "onchain_signals, behavioral_signals";
 
     private const string FeaturesInsertSql =
@@ -74,6 +76,8 @@ public sealed class PostgresTokenSink : ITokenSink
         "@uniqtraders, @toptrader, @hhi, @newtraders, @burned, " +
         "@mkt_cov, @mkt_launch_s, @mkt_launch_l, @mkt_grad_l, @mkt_gradratio_l, " +
         "@mkt_buy_s, @mkt_buy_l, @mkt_flow_s, @mkt_flow_l, @mkt_active_s, @mkt_active_l, " +
+        "@wal_cov, @wal_fresh_s, @wal_fresh_l, @wal_median_age, @wal_creator_age, " +
+        "@wal_creator_launches, @wal_creator_buy, @wal_creator_buy_share, @wal_creator_sold, @wal_creator_sell_sec, " +
         "@onchain, @behavioral) ";
 
     internal const string FeaturesInsertOnlySql = FeaturesInsertSql + "ON CONFLICT (mint, ts) DO NOTHING";
@@ -277,6 +281,16 @@ public sealed class PostgresTokenSink : ITokenSink
             Array("mkt_flow_l", NpgsqlDbType.Double, Column(s, x => x.Market?.NetSolFlowLong)),
             Array("mkt_active_s", NpgsqlDbType.Integer, Column(s, x => x.Market?.ActiveTokensShort)),
             Array("mkt_active_l", NpgsqlDbType.Integer, Column(s, x => x.Market?.ActiveTokensLong)),
+            Array("wal_cov", NpgsqlDbType.Integer, Column(s, x => x.Wallet?.CoverageSec)),
+            Array("wal_fresh_s", NpgsqlDbType.Double, Column(s, x => x.Wallet?.FreshShare1h)),
+            Array("wal_fresh_l", NpgsqlDbType.Double, Column(s, x => x.Wallet?.FreshShare24h)),
+            Array("wal_median_age", NpgsqlDbType.Double, Column(s, x => x.Wallet?.MedianTraderAgeSec)),
+            Array("wal_creator_age", NpgsqlDbType.Integer, Column(s, x => x.Wallet?.CreatorAgeSec)),
+            Array("wal_creator_launches", NpgsqlDbType.Integer, Column(s, x => x.Wallet?.CreatorPrevLaunches)),
+            Array("wal_creator_buy", NpgsqlDbType.Double, Column(s, x => x.Wallet?.CreatorBuySol)),
+            Array("wal_creator_buy_share", NpgsqlDbType.Double, Column(s, x => x.Wallet?.CreatorBuySupplyShare)),
+            Array("wal_creator_sold", NpgsqlDbType.Double, Column(s, x => x.Wallet?.CreatorSoldShare)),
+            Array("wal_creator_sell_sec", NpgsqlDbType.Integer, Column(s, x => x.Wallet?.CreatorFirstSellSec)),
             Array("onchain", NpgsqlDbType.Jsonb, Column(s, x => JsonSerializer.Serialize(x.OnchainSignals))),
             Array("behavioral", NpgsqlDbType.Jsonb, Column(s, x => JsonSerializer.Serialize(x.BehavioralSignals))));
     }

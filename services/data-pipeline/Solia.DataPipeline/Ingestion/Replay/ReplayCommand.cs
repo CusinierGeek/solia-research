@@ -159,7 +159,7 @@ public static class ReplayCommand
         if (command.MirrorDirectory is { } dir)
         {
             mirror = new ArchiveMirror(dir, download.OpenAsync, loggerFactory.CreateLogger<ArchiveMirror>());
-            int absent = mirror.CountAbsent(command.Window.Hours());
+            int absent = mirror.CountAbsent(command.SourceWindow.Hours());
             if (absent > 0)
             {
                 logger.LogWarning("replay: {Warning}", ArchiveMirror.DiskUseWarning(dir, absent));
@@ -171,20 +171,21 @@ public static class ReplayCommand
         }
 
         logger.LogInformation(
-            "replay {Mode} {From:O} .. {To:O} ({Hours} h) from {Source}{Rebuild}",
+            "replay {Mode} {From:O} .. {To:O} ({Hours} h) from {Source}{Warmup}{Rebuild}",
             command.MirrorOnly ? "(mirror only)" : "", command.Window.StartUtc, command.Window.EndUtc,
             command.Window.Hours().Count(), mirror?.Root ?? pumpApi.Value.ReplayBaseUrl,
+            command.WarmupHours > 0 ? $" — warm-up from {command.SourceWindow.StartUtc:O} ({command.WarmupHours} h, nothing written)" : "",
             command.Rebuild ? " — rebuild: existing features rows are refreshed" : "");
 
         if (command.MirrorOnly)
         {
-            return await runner.MirrorOnlyAsync(command.Window, mirror!, cancellationToken);
+            return await runner.MirrorOnlyAsync(command.SourceWindow, mirror!, cancellationToken);
         }
 
         var sink = new PostgresTokenSink(services.GetRequiredService<NpgsqlDataSource>(), command.Rebuild,
             loggerFactory.CreateLogger<PostgresTokenSink>());
         ReplaySummary summary = await runner.ReplayAsync(command.Window, mirror ?? (IReplayArchive)download,
-            sink, () => sink.FeatureRowsWritten, pipeline, cancellationToken);
+            sink, () => sink.FeatureRowsWritten, pipeline, cancellationToken, command.Warmup);
         if (sink.OutOfRangeValues > 0)
         {
             logger.LogWarning("replay: {Count} out-of-range NUMERIC values were written as NULL " +
@@ -206,6 +207,7 @@ public static class ReplayCommand
                     To = command.Window.EndUtc,
                     command.MirrorOnly,
                     command.Rebuild,
+                    command.WarmupHours,
                     s.Hours,
                     s.ProcessedHours,
                     MissingHours = s.MissingHours.Count,

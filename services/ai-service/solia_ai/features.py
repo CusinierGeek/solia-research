@@ -53,6 +53,25 @@ MARKET_COLUMNS: tuple[str, ...] = (
     "mkt_active_tokens_1h",
 )
 
+# FE-T9 (#189): wallet features — who trades the token, from the pipeline's cross-token wallet
+# memory (the model never sees an address): freshness of the window's signers and the creator's
+# age, past launches and behaviour on this launch. Point-in-time: wallet lookups use only events
+# strictly before the row's ts. The history-dependent ones (freshness, ages, launches) are NULL
+# until the pipeline has observed Pipeline:WalletAgeCapHours (24 h) of history (replay warm-up);
+# wal_coverage_sec, always written, tells how much it has.
+WALLET_COLUMNS: tuple[str, ...] = (
+    "wal_coverage_sec",
+    "wal_fresh_1h_share",
+    "wal_fresh_24h_share",
+    "wal_median_trader_age_sec",
+    "wal_creator_age_sec",
+    "wal_creator_prev_launches",
+    "wal_creator_buy_sol",
+    "wal_creator_buy_supply_share",
+    "wal_creator_sold_share",
+    "wal_creator_first_sell_sec",
+)
+
 # Ordered model inputs: the numeric features plus the migrated flag, then the venue one-hot. Keep
 # the stored ones (DB_FEATURE_COLUMNS) and the `features` table (services/db/migrations) in
 # lockstep — see tests/test_features.py.
@@ -95,6 +114,7 @@ FEATURE_COLUMNS: list[str] = [
     "new_trader_ratio",
     "burned_liquidity",
     *MARKET_COLUMNS,
+    *WALLET_COLUMNS,
     *VENUE_COLUMNS,
 ]
 
@@ -148,6 +168,8 @@ FEATURE_GROUPS: dict[str, tuple[str, ...]] = {
     # FE-T11 (#195): market-regime context (launch / graduation rates, market-wide SOL flow,
     # active tokens), stream-derived and point-in-time.
     "market": MARKET_COLUMNS,
+    # FE-T9 (#189): wallet freshness and creator behaviour, from the cross-token wallet memory.
+    "wallet": WALLET_COLUMNS,
     # FE-T5 (#114): trading venue (Pump.fun curve vs launchpads vs AMMs), one-hot.
     "venue": VENUE_COLUMNS,
 }
@@ -210,6 +232,9 @@ def group_mask(groups: Iterable[str]) -> np.ndarray:
 # graduation ratio also without any launch: -1 for the ones that are never negative, so a warm-up
 # row can't pass for a dead market (0 launches, 0 active tokens). The net flows are signed: they
 # keep 0 (no net flow either way), and mkt_coverage_sec marks the warm-up for them.
+# Every wallet column but the coverage is never negative, and NULL means "not computable" (warm-up,
+# unknown creator, no signer, creator hasn't sold or bought nothing): -1, so it can't pass for a
+# real 0 (no fresh trader, a creator born this second, no dev buy, nothing sold yet).
 NULL_FILL: dict[str, float] = {
     "buy_volume_ratio": 0.5,
     "volume_burst_ratio": 1.0,
@@ -220,6 +245,7 @@ NULL_FILL: dict[str, float] = {
         for col in MARKET_COLUMNS
         if col not in ("mkt_coverage_sec", "mkt_net_sol_flow_5m", "mkt_net_sol_flow_1h")
     },
+    **{col: -1.0 for col in WALLET_COLUMNS if col != "wal_coverage_sec"},
 }
 
 # Per group, the columns the pipeline always writes since the group's migration: a NULL there
@@ -230,6 +256,7 @@ ALWAYS_WRITTEN: dict[str, tuple[str, ...]] = {
     "momentum": ("volume_burst_ratio", "price_history_sec"),  # migration 0006
     "concentration": ("unique_traders",),  # migration 0007
     "market": ("mkt_coverage_sec",),  # migration 0013 (the aggregates are NULL during warm-up)
+    "wallet": ("wal_coverage_sec",),  # migration 0014 (history-dependent ones NULL in warm-up)
     # `burn` has none: burned_liquidity is legitimately NULL (unknown), and the database keeps it
     # equal to onchain_signals.burnedLiquidityPercent (0008's insert trigger covers writers that
     # omit it, 0009 backfills earlier rows), so a NULL there is never a stale row. `venue` reads a

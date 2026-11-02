@@ -67,6 +67,22 @@ public class PumpApiEventParserTests
     }
 
     [Fact]
+    public void A_creates_dev_buy_and_signer_are_kept()
+    {
+        const string json = """
+        {"txType":"create","mint":"MINT1","pool":"pump","txSigner":"DEV","initialBuy":96449438.144093,
+         "solAmount":2.962962962,"supply":1000000000,"timestamp":1700000000000}
+        """;
+
+        RawEvent evt = PumpApiEventParser.Parse(json)!;
+
+        Assert.Equal("DEV", evt.Trader);
+        Assert.Equal(96449438.144093m, evt.TokenAmount);
+        Assert.Equal(2.962962962m, evt.QuoteAmount);
+        Assert.Null(PumpApiEventParser.Parse(json.Replace("create", "createPool"))!.TokenAmount); // only a create's
+    }
+
+    [Fact]
     public void Parses_a_create_with_metadata_and_scientific_price()
     {
         const string json = """

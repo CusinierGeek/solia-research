@@ -35,6 +35,9 @@ internal sealed class TraderConcentration(HolderCounter holders)
     /// <summary>Distinct signers of the window's trades in the current quote currency.</summary>
     public int UniqueTraders => _unique;
 
+    /// <summary>Distinct signers of the window's trades, whatever their quote currency (FE-T9 wallet freshness).</summary>
+    public IEnumerable<string> Traders => _traders.Keys;
+
     /// <summary>
     /// Share of the traders active since the recent start that are new to the token (first seen in
     /// that span, not returning); null without a recent signed trade.

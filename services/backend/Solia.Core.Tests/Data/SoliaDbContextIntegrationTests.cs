@@ -41,9 +41,9 @@ public class SoliaDbContextIntegrationTests(SoliaDbFixture db) : IClassFixture<S
         long featureId = await InsertAsync(
             "INSERT INTO features (mint, ts, venue, is_migrated, price, market_cap, liquidity, holders, buy_sell_ratio, " +
             "volatility, net_sol_flow, avg_buy_sol, price_acceleration, trader_hhi, burned_liquidity, " +
-            "mkt_coverage_sec, mkt_net_sol_flow_1h, mkt_graduations_1h, onchain_signals, raw) VALUES (@m, @ts, 'pumpfun', FALSE, " +
+            "mkt_coverage_sec, mkt_net_sol_flow_1h, mkt_graduations_1h, wal_coverage_sec, wal_median_trader_age_sec, onchain_signals, raw) VALUES (@m, @ts, 'pumpfun', FALSE, " +
             "0.000000123456789, 123456789.123456789, 42.5, 311, 1.75, 0.0123456789, -1.234567890123, 0.5, -0.0625, 0.375, 57.5, " +
-            "3600, -812.25, 17, " +
+            "3600, -812.25, 17, 86400, 5400.5, " +
             "'{\"dev_sold\":false}', '{\"src\":\"test\"}') RETURNING id",
             ("m", mint),
             ("ts", T0));
@@ -86,6 +86,9 @@ public class SoliaDbContextIntegrationTests(SoliaDbFixture db) : IClassFixture<S
         Assert.Equal(-812.25, feature.MktNetSolFlow1h);
         Assert.Equal(17, feature.MktGraduations1h);
         Assert.Null(feature.MktActiveTokens5m);
+        Assert.Equal(86400, feature.WalCoverageSec);
+        Assert.Equal(5400.5, feature.WalMedianTraderAgeSec);
+        Assert.Null(feature.WalCreatorAgeSec);
         Assert.Equal(0.0123456789, feature.Volatility!.Value, 12);
         Assert.Equal(T0, feature.Ts);
         Assert.Equal(TimeSpan.Zero, feature.Ts.Offset); // timestamptz reads back as UTC

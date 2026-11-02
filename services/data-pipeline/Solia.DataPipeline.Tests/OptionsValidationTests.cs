@@ -131,6 +131,24 @@ public class OptionsValidationTests
         Assert.False(IsValid(o));
     }
 
+    [Theory]
+    [InlineData(336, 24, true)]
+    [InlineData(24, 24, true)]
+    [InlineData(24, 48, false)] // the age cap can't outlive the wallets
+    public void The_wallet_age_cap_fits_the_ttl(int ttl, int cap, bool valid)
+    {
+        Assert.Equal(valid, new PipelineOptions { WalletTtlHours = ttl, WalletAgeCapHours = cap }.HasConsistentWalletHorizon());
+    }
+
+    [Theory]
+    [InlineData(0, 24, 300)]
+    [InlineData(336, 23, 300)] // below the 24 h freshness bucket
+    [InlineData(336, 24, 5)]
+    public void Out_of_range_wallet_settings_are_rejected(int ttl, int cap, int persist)
+    {
+        Assert.False(IsValid(new PipelineOptions { WalletTtlHours = ttl, WalletAgeCapHours = cap, WalletPersistSeconds = persist }));
+    }
+
     [Fact]
     public void Every_log_severity_maps_to_a_value_the_logs_table_accepts()
     {

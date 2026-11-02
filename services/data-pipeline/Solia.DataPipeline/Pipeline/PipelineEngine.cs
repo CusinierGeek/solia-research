@@ -24,6 +24,12 @@ namespace Solia.DataPipeline.Pipeline;
 /// replay sources). If a flush was interrupted mid-write, the final flush writes that same batch
 /// rather than snapshotting again at the same instant (which would zero the growth rates).
 /// </para>
+/// <para>
+/// With an <see cref="IWalletStateStore"/> (live ingestion only), the cross-token wallet memory is loaded before the
+/// first event and its changes are saved every <see cref="PipelineOptions.WalletPersistSeconds"/> of event time and
+/// at shutdown, in batches — never per trade. Both are best-effort like a write: a failed load starts from an empty
+/// memory, a failed save is retried at the next one.
+/// </para>
 /// </summary>
 public sealed class PipelineEngine
 {
@@ -39,6 +45,7 @@ public sealed class PipelineEngine
     private readonly ILogger<PipelineEngine> _logger;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
     private readonly TimeSpan _finalFlushTimeout;
+    private readonly IWalletStateStore? _walletState;
 
     private FlushBatch? _pending; // snapshotted but not yet persisted
 
@@ -47,8 +54,9 @@ public sealed class PipelineEngine
         TokenWindowStore store,
         ITokenSink sink,
         IOptions<PipelineOptions> options,
-        ILogger<PipelineEngine> logger)
-        : this(source, store, sink, options.Value, logger, static (d, ct) => Task.Delay(d, ct), DefaultFinalFlushTimeout)
+        ILogger<PipelineEngine> logger,
+        IWalletStateStore? walletState = null)
+        : this(source, store, sink, options.Value, logger, static (d, ct) => Task.Delay(d, ct), DefaultFinalFlushTimeout, walletState)
     {
     }
 
@@ -60,7 +68,8 @@ public sealed class PipelineEngine
         PipelineOptions options,
         ILogger<PipelineEngine> logger,
         Func<TimeSpan, CancellationToken, Task> delay,
-        TimeSpan finalFlushTimeout)
+        TimeSpan finalFlushTimeout,
+        IWalletStateStore? walletState = null)
     {
         _source = source;
         _store = store;
@@ -69,6 +78,7 @@ public sealed class PipelineEngine
         _logger = logger;
         _delay = delay;
         _finalFlushTimeout = finalFlushTimeout;
+        _walletState = walletState is not null && store.Wallets.TracksChanges ? walletState : null;
     }
 
     /// <summary>Batches dropped after exhausting write retries (or a timed-out final flush).</summary>
@@ -87,12 +97,16 @@ public sealed class PipelineEngine
         var clock = new EventClock(TokenWindowStore.MaxFutureSkew, ClockJumpConfirmations);
         DateTimeOffset? windowStart = null; // start of the current cadence interval
         DateTimeOffset? lastFlushAt = null;
+        DateTimeOffset? lastWalletSave = null;
+        var walletCadence = TimeSpan.FromSeconds(_options.WalletPersistSeconds);
         long events = 0;
         Exception? failure = null;
 
         _logger.LogInformation("pipeline engine started (cadence={Cadence}s)", _options.SnapshotCadenceSeconds);
         try
         {
+            await LoadWalletsAsync(cancellationToken);
+
             await foreach (RawEvent e in _source.StreamAsync(cancellationToken))
             {
                 _store.Apply(e);
@@ -109,6 +123,13 @@ public sealed class PipelineEngine
                     windowStart = now;
                     lastFlushAt = now;
                     await FlushAsync(now, cancellationToken);
+
+                    lastWalletSave ??= now;
+                    if (now - lastWalletSave >= walletCadence)
+                    {
+                        lastWalletSave = now;
+                        await SaveWalletsAsync(cancellationToken);
+                    }
                 }
             }
         }
@@ -123,6 +144,7 @@ public sealed class PipelineEngine
         }
 
         await FinalFlushAsync(clock.Now, lastFlushAt);
+        await FinalWalletSaveAsync();
         _logger.LogInformation("pipeline engine stopped after {Events} events", events);
 
         if (failure is not null)
@@ -157,6 +179,63 @@ public sealed class PipelineEngine
             FailedBatches++;
             _logger.LogError("dropped {Count} feature snapshots at {Now:O} after {Attempts} write attempts",
                 batch.Snapshots.Count, batch.Ts, MaxWriteAttempts);
+        }
+    }
+
+    /// <summary>Restores the saved wallet memory (live only); on failure starts from an empty one, which only costs coverage.</summary>
+    private async Task LoadWalletsAsync(CancellationToken cancellationToken)
+    {
+        if (_walletState is null)
+        {
+            return;
+        }
+
+        WalletStateSnapshot? saved = null;
+        bool loaded = await WithRetriesAsync(async ct => saved = await _walletState.LoadAsync(ct), "wallet state load", cancellationToken);
+        if (!loaded)
+        {
+            _logger.LogWarning("could not load the wallet state; starting from an empty one (wallet features stay NULL until re-covered)");
+        }
+        else if (saved is not null)
+        {
+            _store.Wallets.Load(saved);
+            _logger.LogInformation("loaded {Count} wallets (history since {Start:O}, last event {Last:O})",
+                saved.Wallets.Count, saved.HistoryStart, saved.LastEvent);
+        }
+    }
+
+    /// <summary>Saves the last wallet changes at shutdown, bounded like the final flush.</summary>
+    private async Task FinalWalletSaveAsync()
+    {
+        using var timeout = new CancellationTokenSource(_finalFlushTimeout);
+        try
+        {
+            await SaveWalletsAsync(timeout.Token);
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            _logger.LogWarning("final wallet state save timed out after {Timeout}; the changes since the last save are lost", _finalFlushTimeout);
+        }
+    }
+
+    /// <summary>Saves the wallets changed or evicted since the last save; a failed save keeps them for the next one.</summary>
+    private async Task SaveWalletsAsync(CancellationToken cancellationToken)
+    {
+        if (_walletState is null || _store.Wallets.DrainChanges() is not { } changes)
+        {
+            return;
+        }
+
+        if (await WithRetriesAsync(ct => _walletState.SaveAsync(changes, ct), "wallet state save", cancellationToken))
+        {
+            // Size of the memory, for the bound measured on live traffic (docs/DATA-PIPELINE.md).
+            _logger.LogInformation("saved wallet state: {Upserts} upserted, {Deletes} evicted; {Count} wallets in memory, managed heap {HeapMb} MB",
+                changes.Upserts.Count, changes.Deletes.Count, _store.Wallets.Count, GC.GetTotalMemory(false) / (1024 * 1024));
+        }
+        else
+        {
+            _store.Wallets.RestoreChanges(changes);
+            _logger.LogError("wallet state save failed after {Attempts} attempts; retrying with the next save", MaxWriteAttempts);
         }
     }
 

@@ -32,13 +32,23 @@ public sealed class TokenWindowStore
     private readonly LinkedList<TokenState> _byRecency = new(); // least recently updated first
     private readonly HashSet<string> _removed = new(StringComparer.Ordinal);
     private readonly MarketContext _market = new();
+    private readonly WalletStore _wallets;
 
     public TokenWindowStore(IOptions<PipelineOptions> options)
-        : this(options.Value)
+        : this(options.Value, trackWalletChanges: true)
     {
     }
 
-    internal TokenWindowStore(PipelineOptions options) => _options = options;
+    /// <param name="options">Pipeline options.</param>
+    /// <param name="trackWalletChanges">
+    /// Collect wallet changes for persistence (live ingestion, see <see cref="WalletStore"/>); a replay keeps its
+    /// wallet state in memory only.
+    /// </param>
+    internal TokenWindowStore(PipelineOptions options, bool trackWalletChanges = false)
+    {
+        _options = options;
+        _wallets = new WalletStore(options, trackWalletChanges);
+    }
 
     public int TrackedCount => _tokens.Count;
 
@@ -59,9 +69,13 @@ public sealed class TokenWindowStore
     /// <summary>Market-wide aggregates (fed every event, tracked token or not).</summary>
     internal MarketContext Market => _market;
 
+    /// <summary>Cross-token wallet memory (fed every event, tracked token or not).</summary>
+    public WalletStore Wallets => _wallets;
+
     public void Apply(RawEvent e)
     {
         _market.Apply(e);
+        _wallets.Apply(e);
         if (_tokens.TryGetValue(e.Mint, out LinkedListNode<TokenState>? node))
         {
             node.Value.Apply(e);
@@ -84,19 +98,21 @@ public sealed class TokenWindowStore
     /// <summary>
     /// Evicts idle tokens, then returns one snapshot per token still active in the window. Eager:
     /// each call snapshots exactly once (snapshots advance each token's growth-rate baseline). The
-    /// market-wide aggregates are computed once for the tick and shared by every snapshot.
+    /// market-wide aggregates are computed once for the tick and shared by every snapshot; the wallet memory is
+    /// advanced to <paramref name="now"/> (events strictly before it) before any lookup.
     /// </summary>
     public IReadOnlyList<FeatureSnapshot> SnapshotActive(DateTimeOffset now)
     {
         Prune(now);
         MarketAggregates market = _market.Aggregate(now);
+        _wallets.Advance(now);
 
         var snapshots = new List<FeatureSnapshot>();
         foreach (TokenState state in _byRecency)
         {
             if (state.HasActivityInWindow(now))
             {
-                snapshots.Add(state.Snapshot(now) with { Market = market });
+                snapshots.Add(state.Snapshot(now, _wallets) with { Market = market });
             }
         }
 

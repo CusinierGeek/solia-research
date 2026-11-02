@@ -137,6 +137,38 @@ public sealed class Feature
     /// <summary>Distinct tokens with a trade, last hour.</summary>
     public int? MktActiveTokens1h { get; set; }
 
+    // Wallet features (FE-T9, #189): trader freshness and creator behaviour, from the pipeline's wallet memory.
+
+    /// <summary>Seconds of wallet history behind the wallet features, capped at the age cap (FE-T9).</summary>
+    public int? WalCoverageSec { get; set; }
+
+    /// <summary>Share of the window's signers first seen less than 1 h ago.</summary>
+    public double? WalFresh1hShare { get; set; }
+
+    /// <summary>Share of the window's signers first seen less than 24 h ago.</summary>
+    public double? WalFresh24hShare { get; set; }
+
+    /// <summary>Median wallet age of the window's signers, capped.</summary>
+    public double? WalMedianTraderAgeSec { get; set; }
+
+    /// <summary>Creator wallet age, capped; null when the creator is unknown or during warm-up.</summary>
+    public int? WalCreatorAgeSec { get; set; }
+
+    /// <summary>Creator's launches before this one within the age cap.</summary>
+    public int? WalCreatorPrevLaunches { get; set; }
+
+    /// <summary>Creator's dev buy, SOL.</summary>
+    public double? WalCreatorBuySol { get; set; }
+
+    /// <summary>Creator's dev buy tokens / supply.</summary>
+    public double? WalCreatorBuySupplyShare { get; set; }
+
+    /// <summary>Tokens the creator sold / bought on this launch.</summary>
+    public double? WalCreatorSoldShare { get; set; }
+
+    /// <summary>Seconds since the creator's first sell; null while it hasn't sold.</summary>
+    public int? WalCreatorFirstSellSec { get; set; }
+
     /// <summary>Pump.fun-specific signals (JSONB).</summary>
     public string? OnchainSignals { get; set; }
 

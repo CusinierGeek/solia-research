@@ -146,7 +146,8 @@ public static class PumpApiEventParser
             Price = GetDecimal(root, "price") ?? DerivePrice(quoteInPool, tokensInPool, virtualQuote, virtualTokens),
             QuoteMint = quoteMint,
             MarketCap = GetDecimal(root, "marketCapQuote") ?? GetDecimal(root, "marketCapSol"),
-            TokenAmount = GetDecimal(root, "tokenAmount"),
+            // A create carries the creator's dev buy: initialBuy tokens for solAmount SOL.
+            TokenAmount = GetDecimal(root, "tokenAmount") ?? (kind == EventKind.Create ? GetDecimal(root, "initialBuy") : null),
             QuoteAmount = GetDecimal(root, "quoteAmount") ?? GetDecimal(root, "solAmount"),
             TokensInPool = tokensInPool,
             QuoteInPool = quoteInPool,
