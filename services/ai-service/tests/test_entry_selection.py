@@ -98,10 +98,14 @@ def test_flatten_names_every_entry_key():
 
 
 def settings(entry=None, **promotion) -> PromotionSettings:
+    """The packaged gate, guarding every horizon unless ``entry`` says otherwise."""
     config = copy.deepcopy(CONFIG)
     config["promotion"] = {**config["promotion"], "windows": 3, "seeds": 1, **promotion}
-    if entry is not None:
-        config["promotion"]["entry_selection"] = entry
+    config["promotion"]["entry_selection"] = {
+        **config["promotion"]["entry_selection"],
+        "horizons": None,
+        **(entry or {}),
+    }
     return PromotionSettings.from_config(config)
 
 
@@ -152,6 +156,43 @@ def test_default_config_enables_the_guard():
         0.01, 1.0, 20, 0.5
     )  # fmt: skip
     assert SETTINGS.entry_top_fraction == 0.01
+
+
+def test_the_packaged_guard_rejects_only_on_the_horizons_the_bot_may_trade():
+    entry = PromotionSettings.from_config(CONFIG).entry_selection
+    assert entry.horizons == ("5m", "15m")
+    assert [h for h in HORIZONS if entry.guards(h)] == ["5m", "15m"]
+
+
+BROKEN = {"precision": 0.012, "base_rate": 0.032}  # retrain #4's 1h rug-gated selection
+
+
+def test_a_failure_outside_the_guarded_horizons_is_reported_not_blocking():
+    candidate = runs(*(run(0.50, gated=BROKEN) for _ in range(3)))  # fails at H = 1h only
+
+    decision = decide_promotion(candidate, CHAMPION, settings({"horizons": ["5m", "15m"]}))
+
+    assert decision.promote, decision.reasons
+    horizons = decision.metrics()["entry_selection"]["horizons"]
+    assert horizons[H]["candidate"]["status"] == "report-only"
+    assert horizons[H]["candidate"]["precision"] == pytest.approx(0.012)  # still measured
+    assert {horizons[h]["candidate"]["status"] for h in ("5m", "15m")} == {"pass"}
+
+
+def test_a_failure_on_a_guarded_horizon_still_rejects():
+    candidate = runs(*(run(0.50, gated=BROKEN) for _ in range(3)))
+
+    decision = decide_promotion(candidate, CHAMPION, settings({"horizons": [H]}))
+
+    assert not decision.promote
+    assert decision.reasons == (
+        f"pump/{H} entry top-1% (rug<=0.2): precision 0.012 < base rate 0.032",
+    )
+
+
+def test_null_horizons_guard_every_horizon():
+    candidate = runs(*(run(0.50, gated=BROKEN) for _ in range(3)))
+    assert not decide_promotion(candidate, CHAMPION, settings({"horizons": None})).promote
 
 
 def test_a_healthy_broad_selection_passes():
@@ -307,6 +348,10 @@ def write(tmp_path: Path, entry) -> Path:
         ({"max_token_share": 1.5}, r"max_token_share' must be a number in \(0, 1\]"),
         ({"min_tokens": 0}, "min_tokens' must be an integer >= 1"),
         ({"min_tokens": 2.5}, "min_tokens' must be an integer >= 1"),
+        ({"horizons": []}, "horizons' must be a non-empty list of horizons"),
+        ({"horizons": "15m"}, "horizons' must be a non-empty list of horizons"),
+        ({"horizons": [15]}, "horizons' must be a non-empty list of horizons"),
+        ({"horizons": ["15m", "2h"]}, r"horizons' has horizon\(s\) not in 'horizons': 2h"),
     ],
 )
 def test_invalid_entry_selection_settings_are_rejected(tmp_path, entry, message):

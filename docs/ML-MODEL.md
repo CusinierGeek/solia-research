@@ -695,7 +695,7 @@ paper-trading account — a single live path has no counterfactual for the champ
   rejected. The pump-only top-k and the champion's selections are reported, never blocking; all are
   in `training_events.metrics.entry_selection` and in the run metrics (`entry/<h>/…`,
   `entry_pump/<h>/…`) of ablation / search reports. It can reject — the first candidate too — never
-  promote; omit the block or set `min_top_lift: 0` to disable it. No champion → first valid candidate
+  promote; omit the block or set `min_top_lift: 0` to disable it. **Guarded horizons** (`entry_selection.horizons`, default null = all): only those horizons can reject; the others are still measured and reported (`report-only`). The packaged config guards the horizons the bot may trade, `5m` and `15m`. Retrain #4's candidate (pump/5m PR-AUC +0.109, 9/9 runs) was rejected at 1h alone, a horizon the bot never trades, where the rug-gated selection fails in every model (candidate 0.012, champion 0.004, base rate 0.032; #179). No champion → first valid candidate
   is promoted (`initial`) — and since seeds only matter for a paired comparison, a retrain without
   a champion trains **one** candidate (noted in the run); missing/NaN metrics (candidate or
   champion), or runs that are not exactly `windows` distinct windows × `seeds` distinct seeds

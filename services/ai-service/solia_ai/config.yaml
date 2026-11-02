@@ -95,6 +95,10 @@ promotion:
     min_top_lift: 1.0 # precision >= this x the horizon's base rate
     min_tokens: 20 # distinct tokens in the selection (fewer in the pool = undefined)
     max_token_share: 0.5 # no token above this share of the selected windows
+    # Horizons it can reject on: those the bot may trade (Bot:Horizon, 15m). The others are measured
+    # and reported only: the 1h rug-gated selection is broken in every model so far (#179, retrain
+    # #4: candidate 0.012 vs champion 0.004 precision, base 0.032) and the bot never trades it.
+    horizons: ["5m", "15m"]
 
 # Candidate training (solia_ai/candidate.py): each retrain fits a candidate on every labeled window
 # ending before the held-out window (the most recent `heldout_fraction`, minus the label embargo),

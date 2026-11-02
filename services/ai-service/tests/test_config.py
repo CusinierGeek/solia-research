@@ -324,6 +324,8 @@ def test_invalid_data_bounds_are_rejected(tmp_path, data, message):
 def test_the_lookback_floor_follows_the_gate_windows_and_the_longest_horizon(tmp_path):
     short = variant(data={"lookback_days": 0.1}, horizons=["30s", "5m"])
     short["labeling"] = {**short["labeling"]}
+    entry = short["promotion"]["entry_selection"]
+    short["promotion"] = {**short["promotion"], "entry_selection": {**entry, "horizons": ["5m"]}}
     assert load_config(write(tmp_path, short))["data"]["lookback_days"] == 0.1  # 4 x 5 m fits
     short["promotion"] = {**short["promotion"], "windows": 50}  # 51 x 5 m = 4.25 h does not
     with pytest.raises(ConfigError, match="4.25 h"):

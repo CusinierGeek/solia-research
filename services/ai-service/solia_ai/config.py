@@ -60,6 +60,9 @@ ENTRY_SELECTION_DEFAULTS: dict[str, Any] = {
     "min_top_lift": 1.0,
     "min_tokens": 20,
     "max_token_share": 0.5,
+    # The horizons it can reject on (e.g. those the bot may trade); null = every configured horizon.
+    # The others are still measured and reported ("report-only"), never blocking.
+    "horizons": None,
 }
 
 # The most recent share of labeled windows the walk-forward evaluation holds out
@@ -483,6 +486,23 @@ def _validate(config: Any, source: str) -> None:
                     fail(
                         f"'promotion.entry_selection.{key}' must be a number {bounds}, "
                         f"got {value!r}"
+                    )
+            guarded = entry.get("horizons")
+            if guarded is not None:
+                if (
+                    not isinstance(guarded, list)
+                    or not guarded
+                    or not all(isinstance(h, str) for h in guarded)
+                ):
+                    fail(
+                        "'promotion.entry_selection.horizons' must be a non-empty list of "
+                        f"horizons (or null for all), got {guarded!r}"
+                    )
+                unknown_h = [h for h in guarded if h not in config.get("horizons", [])]
+                if unknown_h:
+                    fail(
+                        "'promotion.entry_selection.horizons' has horizon(s) not in 'horizons': "
+                        f"{', '.join(unknown_h)}"
                     )
             tokens = entry.get("min_tokens", ENTRY_SELECTION_DEFAULTS["min_tokens"])
             if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens < 1:

@@ -20,8 +20,10 @@ the ablation harness and the hyper-parameter search:
   x base rate) and be broad (>= ``min_tokens`` distinct tokens, none above ``max_token_share``):
   averaged metrics can't see a confidently wrong rule concentrated on a few tokens (#179). A
   selection drawn from fewer than ``min_tokens`` tokens is undefined — reported, never passed nor
-  rejected. The pump-only selection and the champion's are reported, never blocking. Like the P&L
-  veto it can reject, never promote; it also applies to the first (``initial``) candidate.
+  rejected. Only the ``horizons`` it guards (default all) can reject; the others are reported
+  (``report-only``). The pump-only selection and the champion's are reported, never
+  blocking. Like the P&L veto it can reject, never promote; it also applies to the first
+  (``initial``) candidate.
 * **P&L is a sanity check, never a reason to promote.** The reference-policy P&L lift is reported
   with a bootstrap confidence interval (over runs); with ``pnl_veto`` a lift whose whole interval
   lies below zero rejects the candidate.
@@ -78,10 +80,19 @@ class EntrySelectionSettings:
     min_top_lift: float
     min_tokens: int
     max_token_share: float
+    horizons: tuple[str, ...] | None = None  # the horizons it can reject on; None = all
+
+    def __post_init__(self) -> None:
+        if self.horizons is not None:
+            object.__setattr__(self, "horizons", tuple(self.horizons))
 
     @property
     def enabled(self) -> bool:
         return self.min_top_lift > 0
+
+    def guards(self, horizon: str) -> bool:
+        """Whether a failure at ``horizon`` rejects (otherwise it is reported only)."""
+        return self.enabled and (self.horizons is None or horizon in self.horizons)
 
 
 @dataclass(frozen=True)
@@ -209,7 +220,7 @@ def check_entry_selection(
     for horizon in settings.horizons:
         sel = summarize_selection(candidate, GATED, horizon, min_tokens=entry.min_tokens)
         failures: list[str] = []
-        if sel["defined"] and entry.enabled:
+        if sel["defined"] and entry.guards(horizon):
             label = f"pump/{horizon} entry {top} ({gate})"
             precision, base = sel["precision"], sel["base_rate"]
             if base is not None and precision < entry.min_top_lift * base:
@@ -229,7 +240,7 @@ def check_entry_selection(
         reasons += failures
         if not sel["defined"]:
             sel["status"] = "undefined"
-        elif not entry.enabled:
+        elif not entry.guards(horizon):
             sel["status"] = "report-only"
         else:
             sel["status"] = "fail" if failures else "pass"
