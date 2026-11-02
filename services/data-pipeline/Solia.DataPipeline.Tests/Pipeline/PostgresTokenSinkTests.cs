@@ -195,6 +195,43 @@ public sealed class PostgresTokenSinkTests(PostgresFixture db) : IClassFixture<P
     }
 
     [Fact]
+    public async Task Market_context_columns_are_persisted_and_null_during_warm_up()
+    {
+        var market = new MarketAggregates
+        {
+            CoverageSec = 3600,
+            LaunchRateShort = 12.5,
+            LaunchRateLong = 10.25,
+            GraduationsLong = 17,
+            GraduationRatioLong = 0.0276,
+            BuySolShort = 420.5,
+            BuySolLong = 5100.75,
+            NetSolFlowShort = -12.5,
+            NetSolFlowLong = 88.25,
+            ActiveTokensShort = 310,
+            ActiveTokensLong = 2400,
+        };
+        FeatureSnapshot snap = Snap("MKT1", T0, 1m) with { Market = market };
+        FeatureSnapshot warmUp = Snap("MKT2", T0, 1m) with { Market = new MarketAggregates { CoverageSec = 120 } };
+        await Sink.WriteAsync(Batch(T0, [snap, warmUp]), default);
+
+        Assert.Equal(3600, await Feature<int>("mkt_coverage_sec", "MKT1"));
+        Assert.Equal(12.5, await Feature<double>("mkt_launch_rate_5m", "MKT1"));
+        Assert.Equal(10.25, await Feature<double>("mkt_launch_rate_1h", "MKT1"));
+        Assert.Equal(17, await Feature<int>("mkt_graduations_1h", "MKT1"));
+        Assert.Equal(0.0276, await Feature<double>("mkt_graduation_ratio_1h", "MKT1"));
+        Assert.Equal(420.5, await Feature<double>("mkt_buy_sol_5m", "MKT1"));
+        Assert.Equal(5100.75, await Feature<double>("mkt_buy_sol_1h", "MKT1"));
+        Assert.Equal(-12.5, await Feature<double>("mkt_net_sol_flow_5m", "MKT1"));
+        Assert.Equal(88.25, await Feature<double>("mkt_net_sol_flow_1h", "MKT1"));
+        Assert.Equal(310, await Feature<int>("mkt_active_tokens_5m", "MKT1"));
+        Assert.Equal(2400, await Feature<int>("mkt_active_tokens_1h", "MKT1"));
+        Assert.Equal(1L, await db.ScalarAsync<long>(
+            "SELECT count(*) FROM features WHERE mint = 'MKT2' AND mkt_coverage_sec = 120 " +
+            "AND mkt_launch_rate_5m IS NULL AND mkt_graduations_1h IS NULL AND mkt_active_tokens_1h IS NULL"));
+    }
+
+    [Fact]
     public async Task Burned_liquidity_is_persisted_and_null_when_unknown()
     {
         FeatureSnapshot snap = Snap("BURN1", T0, 1m) with { BurnedLiquidity = 57.5 };

@@ -35,6 +35,24 @@ VENUE_COLUMNS: tuple[str, ...] = (
     VENUE_OTHER,
 )
 
+# FE-T11 (#195): market-regime context — market-wide rolling aggregates over every token of the
+# stream (5 min / 1 h), the same on every row of a pipeline tick. Point-in-time: only whole seconds
+# strictly before the row's ts count. NULL while the pipeline hasn't observed the whole window yet
+# (replay warm-up); mkt_coverage_sec, always written, tells how much it has.
+MARKET_COLUMNS: tuple[str, ...] = (
+    "mkt_coverage_sec",
+    "mkt_launch_rate_5m",
+    "mkt_launch_rate_1h",
+    "mkt_graduations_1h",
+    "mkt_graduation_ratio_1h",
+    "mkt_buy_sol_5m",
+    "mkt_buy_sol_1h",
+    "mkt_net_sol_flow_5m",
+    "mkt_net_sol_flow_1h",
+    "mkt_active_tokens_5m",
+    "mkt_active_tokens_1h",
+)
+
 # Ordered model inputs: the numeric features plus the migrated flag, then the venue one-hot. Keep
 # the stored ones (DB_FEATURE_COLUMNS) and the `features` table (services/db/migrations) in
 # lockstep — see tests/test_features.py.
@@ -76,6 +94,7 @@ FEATURE_COLUMNS: list[str] = [
     "trader_hhi",
     "new_trader_ratio",
     "burned_liquidity",
+    *MARKET_COLUMNS,
     *VENUE_COLUMNS,
 ]
 
@@ -126,6 +145,9 @@ FEATURE_GROUPS: dict[str, tuple[str, ...]] = {
     ),
     # FE-T5 (#114): % of the AMM pool's LP burned (rug signal), from the pool-creation event.
     "burn": ("burned_liquidity",),
+    # FE-T11 (#195): market-regime context (launch / graduation rates, market-wide SOL flow,
+    # active tokens), stream-derived and point-in-time.
+    "market": MARKET_COLUMNS,
     # FE-T5 (#114): trading venue (Pump.fun curve vs launchpads vs AMMs), one-hot.
     "venue": VENUE_COLUMNS,
 }
@@ -184,11 +206,20 @@ def group_mask(groups: Iterable[str]) -> np.ndarray:
 # concentration shares live in (0, 1], so their default 0 already marks "no signed volume".
 # Unknown burned liquidity (no pool-creation event seen, e.g. still on the curve) is -1: 0% burned
 # is a real reading, and a strong rug signal.
+# A market aggregate is NULL while its window isn't fully observed yet (warm-up) — and the 1 h
+# graduation ratio also without any launch: -1 for the ones that are never negative, so a warm-up
+# row can't pass for a dead market (0 launches, 0 active tokens). The net flows are signed: they
+# keep 0 (no net flow either way), and mkt_coverage_sec marks the warm-up for them.
 NULL_FILL: dict[str, float] = {
     "buy_volume_ratio": 0.5,
     "volume_burst_ratio": 1.0,
     "new_trader_ratio": -1.0,
     "burned_liquidity": -1.0,
+    **{
+        col: -1.0
+        for col in MARKET_COLUMNS
+        if col not in ("mkt_coverage_sec", "mkt_net_sol_flow_5m", "mkt_net_sol_flow_1h")
+    },
 }
 
 # Per group, the columns the pipeline always writes since the group's migration: a NULL there
@@ -198,6 +229,7 @@ ALWAYS_WRITTEN: dict[str, tuple[str, ...]] = {
     "buy_pressure": ("net_sol_flow", "large_buy_count"),  # migration 0005
     "momentum": ("volume_burst_ratio", "price_history_sec"),  # migration 0006
     "concentration": ("unique_traders",),  # migration 0007
+    "market": ("mkt_coverage_sec",),  # migration 0013 (the aggregates are NULL during warm-up)
     # `burn` has none: burned_liquidity is legitimately NULL (unknown), and the database keeps it
     # equal to onchain_signals.burnedLiquidityPercent (0008's insert trigger covers writers that
     # omit it, 0009 backfills earlier rows), so a NULL there is never a stale row. `venue` reads a

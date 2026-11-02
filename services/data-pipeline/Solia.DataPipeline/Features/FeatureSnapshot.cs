@@ -112,6 +112,12 @@ public sealed record FeatureSnapshot
     /// </summary>
     public double? BurnedLiquidity { get; init; }
 
+    /// <summary>
+    /// Market-wide context of the tick (FE-T11): the same instance for every snapshot of a flush.
+    /// Null only for snapshots taken outside <see cref="TokenWindowStore.SnapshotActive"/>.
+    /// </summary>
+    public MarketAggregates? Market { get; init; }
+
     public IReadOnlyDictionary<string, object?> OnchainSignals { get; init; } =
         new Dictionary<string, object?>();
 

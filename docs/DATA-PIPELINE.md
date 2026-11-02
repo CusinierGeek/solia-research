@@ -64,6 +64,47 @@ Derived: `buy_sell_ratio, holders_growth_rate, volume_growth_rate, tx_creation_r
 
 Feature definitions must stay **in sync** with `ai-service/features.py` — single documented spec, mirrored, with a parity test (Sprint 2).
 
+### Market-regime context (FE-T11, #195)
+
+Every other feature describes one token in isolation. `MarketContext` (fed every event by
+`TokenWindowStore.Apply`, tracked token or not) maintains **market-wide rolling aggregates** over
+the whole stream, so the model can tell "this token is strong" from "the whole market is up":
+
+| Column | Window | Meaning |
+|---|---|---|
+| `mkt_launch_rate_5m` / `_1h` | 5 min / 1 h | `Create` events per minute |
+| `mkt_graduations_1h` | 1 h | `Migrate` events (graduations) |
+| `mkt_graduation_ratio_1h` | 1 h | graduations / launches (NULL without a launch) |
+| `mkt_buy_sol_5m` / `_1h` | 5 min / 1 h | SOL buy volume across all tokens (SOL-quoted trades) |
+| `mkt_net_sol_flow_5m` / `_1h` | 5 min / 1 h | SOL buys − sells across all tokens |
+| `mkt_active_tokens_5m` / `_1h` | 5 min / 1 h | distinct tokens with a trade |
+| `mkt_coverage_sec` | — | seconds of stream history behind them, capped at 3600 (always written) |
+
+- **Computed once per tick.** `SnapshotActive` aggregates once and attaches the same
+  `MarketAggregates` instance to every snapshot of that flush; nothing is recomputed per token.
+- **Bounded memory.** Counters live in one-second buckets of a ring buffer spanning the long window
+  (plus the clock skew), not raw events. The active-token counts keep each token's last two distinct
+  trade seconds, and forget tokens that last traded before the long window.
+- **Point-in-time.** The aggregates attached at `ts` sum the whole seconds strictly before the second
+  containing `ts`: `[floor(ts) − W, floor(ts))`. Nothing at or after the snapshot leaks in, and the
+  result depends only on event timestamps, not on arrival order or flush cadence, so live and replay
+  agree (`MarketContextTests`). Like every feature, an event arriving after a tick that already read
+  its second is not applied to that tick retroactively. Events are bucketed against their own
+  `EventClock` (same skew rules as the engine): one far-future timestamp is dropped instead of
+  overwriting a bucket of the past.
+- **Warm-up.** An aggregate is **NULL until its whole window has been observed** since the process (or
+  replay) started: 5 min for the `_5m` columns, **1 h** for the `_1h` ones. A replay meant for training
+  must therefore start **at least one hour before the first snapshot used for training** (e.g. replay
+  from 13:00 to train on rows from 14:00), or those rows carry NULL long-window aggregates. The same
+  holds for an hour after every live restart; `mkt_coverage_sec` tells such rows apart (the model's
+  NULL imputation, see docs/ML-MODEL.md, keeps them from looking like a dead market). A replay with a
+  missing archive hour counts that hour as quiet.
+- **SOL/USD is left out.** The stream only carries Pump.fun-ecosystem token pools, almost all quoted in
+  SOL; it has no SOL-vs-stable pool, and a SOL price inferred from the few tokens quoted in both SOL and
+  a stable would be sparse and dominated by those tokens' own moves. Deriving it would need an external
+  price feed (out of scope: "derive, don't fetch"). Everything here is in SOL, so a SOL/USD move does
+  not distort the aggregates themselves.
+
 ### Granularity: aggregated snapshots, not raw trades
 
 The pipeline persists **one aggregated `FeatureSnapshot` per token per cadence** — it does **not** store individual trade events. `TokenState.Apply` streams every `RawEvent` into an in-memory rolling window (carrying `Ts`, `Kind`, `QuoteAmount` in SOL, `QuoteMint`, and the `Trader`/txSigner), and `Snapshot` reduces that window to the feature row. The `features.raw` JSONB column exists but is currently **unused**.

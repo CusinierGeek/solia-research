@@ -61,6 +61,8 @@ public sealed class PostgresTokenSink : ITokenSink
         "net_sol_flow, buy_volume_ratio, avg_buy_sol, max_buy_sol, large_buy_count, " +
         "return_short, return_medium, return_long, price_acceleration, ema_slope, volume_acceleration, volume_burst_ratio, " +
         "price_history_sec, unique_traders, top_trader_share, trader_hhi, new_trader_ratio, burned_liquidity, " +
+        "mkt_coverage_sec, mkt_launch_rate_5m, mkt_launch_rate_1h, mkt_graduations_1h, mkt_graduation_ratio_1h, " +
+        "mkt_buy_sol_5m, mkt_buy_sol_1h, mkt_net_sol_flow_5m, mkt_net_sol_flow_1h, mkt_active_tokens_5m, mkt_active_tokens_1h, " +
         "onchain_signals, behavioral_signals";
 
     private const string FeaturesInsertSql =
@@ -69,7 +71,10 @@ public sealed class PostgresTokenSink : ITokenSink
         "@buys, @sells, @ratio, @age, @trending, @social, @hgrowth, @vgrowth, @txrate, @vol, @ema, @rsi, @deriv, " +
         "@netflow, @buyvolratio, @avgbuy, @maxbuy, @largebuys, " +
         "@ret_s, @ret_m, @ret_l, @paccel, @emaslope, @vaccel, @burst, @pricehist, " +
-        "@uniqtraders, @toptrader, @hhi, @newtraders, @burned, @onchain, @behavioral) ";
+        "@uniqtraders, @toptrader, @hhi, @newtraders, @burned, " +
+        "@mkt_cov, @mkt_launch_s, @mkt_launch_l, @mkt_grad_l, @mkt_gradratio_l, " +
+        "@mkt_buy_s, @mkt_buy_l, @mkt_flow_s, @mkt_flow_l, @mkt_active_s, @mkt_active_l, " +
+        "@onchain, @behavioral) ";
 
     internal const string FeaturesInsertOnlySql = FeaturesInsertSql + "ON CONFLICT (mint, ts) DO NOTHING";
 
@@ -261,6 +266,17 @@ public sealed class PostgresTokenSink : ITokenSink
             Array("hhi", NpgsqlDbType.Double, Column(s, x => x.TraderHhi)),
             Array("newtraders", NpgsqlDbType.Double, Column(s, x => x.NewTraderRatio)),
             Array("burned", NpgsqlDbType.Double, Column(s, x => x.BurnedLiquidity)),
+            Array("mkt_cov", NpgsqlDbType.Integer, Column(s, x => x.Market?.CoverageSec)),
+            Array("mkt_launch_s", NpgsqlDbType.Double, Column(s, x => x.Market?.LaunchRateShort)),
+            Array("mkt_launch_l", NpgsqlDbType.Double, Column(s, x => x.Market?.LaunchRateLong)),
+            Array("mkt_grad_l", NpgsqlDbType.Integer, Column(s, x => x.Market?.GraduationsLong)),
+            Array("mkt_gradratio_l", NpgsqlDbType.Double, Column(s, x => x.Market?.GraduationRatioLong)),
+            Array("mkt_buy_s", NpgsqlDbType.Double, Column(s, x => x.Market?.BuySolShort)),
+            Array("mkt_buy_l", NpgsqlDbType.Double, Column(s, x => x.Market?.BuySolLong)),
+            Array("mkt_flow_s", NpgsqlDbType.Double, Column(s, x => x.Market?.NetSolFlowShort)),
+            Array("mkt_flow_l", NpgsqlDbType.Double, Column(s, x => x.Market?.NetSolFlowLong)),
+            Array("mkt_active_s", NpgsqlDbType.Integer, Column(s, x => x.Market?.ActiveTokensShort)),
+            Array("mkt_active_l", NpgsqlDbType.Integer, Column(s, x => x.Market?.ActiveTokensLong)),
             Array("onchain", NpgsqlDbType.Jsonb, Column(s, x => JsonSerializer.Serialize(x.OnchainSignals))),
             Array("behavioral", NpgsqlDbType.Jsonb, Column(s, x => JsonSerializer.Serialize(x.BehavioralSignals))));
     }

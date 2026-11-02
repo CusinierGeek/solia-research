@@ -31,6 +31,7 @@ public sealed class TokenWindowStore
     private readonly Dictionary<string, LinkedListNode<TokenState>> _tokens = new(StringComparer.Ordinal);
     private readonly LinkedList<TokenState> _byRecency = new(); // least recently updated first
     private readonly HashSet<string> _removed = new(StringComparer.Ordinal);
+    private readonly MarketContext _market = new();
 
     public TokenWindowStore(IOptions<PipelineOptions> options)
         : this(options.Value)
@@ -55,8 +56,12 @@ public sealed class TokenWindowStore
         return removed;
     }
 
+    /// <summary>Market-wide aggregates (fed every event, tracked token or not).</summary>
+    internal MarketContext Market => _market;
+
     public void Apply(RawEvent e)
     {
+        _market.Apply(e);
         if (_tokens.TryGetValue(e.Mint, out LinkedListNode<TokenState>? node))
         {
             node.Value.Apply(e);
@@ -78,18 +83,20 @@ public sealed class TokenWindowStore
 
     /// <summary>
     /// Evicts idle tokens, then returns one snapshot per token still active in the window. Eager:
-    /// each call snapshots exactly once (snapshots advance each token's growth-rate baseline).
+    /// each call snapshots exactly once (snapshots advance each token's growth-rate baseline). The
+    /// market-wide aggregates are computed once for the tick and shared by every snapshot.
     /// </summary>
     public IReadOnlyList<FeatureSnapshot> SnapshotActive(DateTimeOffset now)
     {
         Prune(now);
+        MarketAggregates market = _market.Aggregate(now);
 
         var snapshots = new List<FeatureSnapshot>();
         foreach (TokenState state in _byRecency)
         {
             if (state.HasActivityInWindow(now))
             {
-                snapshots.Add(state.Snapshot(now));
+                snapshots.Add(state.Snapshot(now) with { Market = market });
             }
         }
 

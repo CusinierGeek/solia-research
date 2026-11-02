@@ -102,6 +102,41 @@ public sealed class Feature
     /// <summary>Percent [0, 100] of the AMM pool's LP burned; null when unknown (no pool creation seen).</summary>
     public double? BurnedLiquidity { get; set; }
 
+    // Market-regime context (FE-T11, #195): market-wide aggregates, the same for every row of a tick.
+
+    /// <summary>Seconds of stream history behind the market aggregates, capped at 3600 (FE-T11).</summary>
+    public int? MktCoverageSec { get; set; }
+
+    /// <summary>Market-wide Create events per minute, last 5 min.</summary>
+    public double? MktLaunchRate5m { get; set; }
+
+    /// <summary>Market-wide Create events per minute, last hour.</summary>
+    public double? MktLaunchRate1h { get; set; }
+
+    /// <summary>Market-wide graduations (Migrate events), last hour.</summary>
+    public int? MktGraduations1h { get; set; }
+
+    /// <summary>Graduations / launches, last hour; null without launches.</summary>
+    public double? MktGraduationRatio1h { get; set; }
+
+    /// <summary>Market-wide SOL buy volume, last 5 min.</summary>
+    public double? MktBuySol5m { get; set; }
+
+    /// <summary>Market-wide SOL buy volume, last hour.</summary>
+    public double? MktBuySol1h { get; set; }
+
+    /// <summary>Market-wide SOL buys minus sells, last 5 min.</summary>
+    public double? MktNetSolFlow5m { get; set; }
+
+    /// <summary>Market-wide SOL buys minus sells, last hour.</summary>
+    public double? MktNetSolFlow1h { get; set; }
+
+    /// <summary>Distinct tokens with a trade, last 5 min.</summary>
+    public int? MktActiveTokens5m { get; set; }
+
+    /// <summary>Distinct tokens with a trade, last hour.</summary>
+    public int? MktActiveTokens1h { get; set; }
+
     /// <summary>Pump.fun-specific signals (JSONB).</summary>
     public string? OnchainSignals { get; set; }
 

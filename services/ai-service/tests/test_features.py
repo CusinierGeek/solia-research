@@ -12,6 +12,7 @@ from solia_ai.features import (
     DB_FEATURE_COLUMNS,
     FEATURE_COLUMNS,
     FEATURE_GROUPS,
+    MARKET_COLUMNS,
     NON_FEATURE_COLUMNS,
     VENUE_COLUMNS,
     VENUE_OTHER,
@@ -457,7 +458,7 @@ def test_burn_and_venue_are_candidate_groups_outside_the_baseline():
     assert "burn" not in BASELINE_GROUPS and "venue" not in BASELINE_GROUPS
     assert FEATURE_GROUPS["burn"] == ("burned_liquidity",)
     assert FEATURE_GROUPS["venue"] == VENUE_COLUMNS
-    assert FEATURE_COLUMNS[36:] == ["burned_liquidity", *VENUE_COLUMNS]
+    assert FEATURE_COLUMNS[36:] == ["burned_liquidity", *MARKET_COLUMNS, *VENUE_COLUMNS]
 
 
 def test_venue_categories_are_a_fixed_list_plus_an_other_bucket():
@@ -604,3 +605,42 @@ def test_the_read_s_float32_columns_give_the_same_matrix():
         expected = np.float64 if col in _FLOAT64_COLUMNS else np.float32
         assert compact[col].dtype == expected, col
     assert {"price", "liquidity", "unique_traders", "volume", "token_age_sec"} <= _FLOAT64_COLUMNS
+
+
+# --- FE-T11 (#195): market-regime context ---
+
+
+def test_market_is_a_candidate_group_outside_the_defaults():
+    # Disabled by default until its ablation lift clears the margin.
+    assert "market" not in BASELINE_GROUPS
+    assert FEATURE_GROUPS["market"] == MARKET_COLUMNS
+    assert len(MARKET_COLUMNS) == 11 and all(c.startswith("mkt_") for c in MARKET_COLUMNS)
+    assert group_columns(["market"]) == list(MARKET_COLUMNS)
+
+
+def test_rows_predating_the_market_group_are_refused_when_it_is_enabled():
+    df = pd.concat([_frame(), _frame(mkt_coverage_sec=None)], ignore_index=True)
+
+    with pytest.raises(ValueError, match="1 of 2 feature rows predate the 'market' group"):
+        check_group_coverage(df, [*BASELINE_GROUPS, "market"])
+    check_group_coverage(df, BASELINE_GROUPS)  # disabled: no error
+
+
+def test_market_warm_up_is_told_apart_from_a_dead_market():
+    # Warm-up: coverage written, aggregates NULL. A dead market: real zeros.
+    warm_up = {col: None for col in MARKET_COLUMNS if col != "mkt_coverage_sec"}
+    dead = {col: 0.0 for col in MARKET_COLUMNS if col != "mkt_coverage_sec"}
+    df = pd.concat(
+        [_frame(mkt_coverage_sec=120.0, **warm_up), _frame(mkt_coverage_sec=3600.0, **dead)],
+        ignore_index=True,
+    )
+
+    check_group_coverage(df, ["market"])  # warm-up rows are computed rows, not stale ones
+    matrix = build_feature_matrix(df)
+    for col in ("mkt_launch_rate_1h", "mkt_graduation_ratio_1h", "mkt_active_tokens_5m"):
+        j = FEATURE_COLUMNS.index(col)
+        assert matrix[0, j] == -1.0 and matrix[1, j] == 0.0
+    # Signed flows can't take a sentinel: neutral 0, the coverage column marks the warm-up.
+    j = FEATURE_COLUMNS.index("mkt_net_sol_flow_1h")
+    assert matrix[0, j] == 0.0
+    assert matrix[:, FEATURE_COLUMNS.index("mkt_coverage_sec")].tolist() == [120.0, 3600.0]

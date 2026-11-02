@@ -110,11 +110,22 @@ Time-series feature snapshots per token. The model's input unit.
 | trader_hhi | DOUBLE PRECISION | Herfindahl-Hirschman index of per-wallet volume shares (Σ share²), (0, 1]: 1 = one wallet, 1/n = volume split evenly over n wallets; NULL without signed volume |
 | new_trader_ratio | DOUBLE PRECISION | share of the traders of the last `MomentumShortSeconds` first seen on the token in that span (the rest are returning, even from before the window; past `HolderCounter.ExactLimit` wallets, first seen in the window), [0, 1]; NULL without a signed trade in that span |
 | burned_liquidity | DOUBLE PRECISION | % [0, 100] of the AMM pool's LP burned, from the current pool's latest event reporting it (reset when the token moves to another pool); NULL when unknown (none seen, e.g. still on the curve, or malformed). Kept equal to `onchain_signals.burnedLiquidityPercent`: 0008's insert trigger fills it when a writer omits it, 0009 backfills earlier rows in batches |
+| mkt_coverage_sec | INT | market context (FE-T11, 0013): seconds of stream history behind the `mkt_*` aggregates, capped at 3600; always written (NULL = row predates 0013) |
+| mkt_launch_rate_5m, mkt_launch_rate_1h | DOUBLE PRECISION | market-wide `Create` events per minute over the last 5 min / 1 h |
+| mkt_graduations_1h | INT | market-wide graduations (`Migrate` events) over the last hour |
+| mkt_graduation_ratio_1h | DOUBLE PRECISION | graduations / launches over the last hour; NULL without a launch |
+| mkt_buy_sol_5m, mkt_buy_sol_1h | DOUBLE PRECISION | market-wide SOL buy volume (SOL-quoted trades) |
+| mkt_net_sol_flow_5m, mkt_net_sol_flow_1h | DOUBLE PRECISION | market-wide SOL buys minus sells |
+| mkt_active_tokens_5m, mkt_active_tokens_1h | INT | distinct tokens with a trade in the window |
 | onchain_signals | JSONB | Pump.fun-specific signals |
 | behavioral_signals | JSONB | pump/rug pattern flags |
 | raw | JSONB | nullable debug payload |
 
 Constraints: `UNIQUE (mint, ts)` (idempotent live + replay ingestion; also serves `(mint, ts)` lookups). Index: `ts`.
+
+The `mkt_*` columns are the same on every row of a pipeline tick (computed once per tick from whole
+seconds strictly before the second of `ts`) and NULL until their window has been fully observed
+(replay warm-up, see docs/DATA-PIPELINE.md "Market-regime context").
 
 ### `predictions`
 Model outputs. One row per inference call.

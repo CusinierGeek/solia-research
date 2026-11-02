@@ -726,7 +726,10 @@ and seeds.
   `concentration` (FE-T4, #113) — `unique_traders`, `top_trader_share`, `trader_hhi`,
   `new_trader_ratio`: a holder-concentration proxy from trade signers over the window;
   `burn` (FE-T5, #114) — `burned_liquidity`, % of the AMM pool's LP burned (rug signal);
-  `venue` (FE-T5, #114) — the `venue` column one-hot encoded (`VENUE_COLUMNS`).
+  `venue` (FE-T5, #114) — the `venue` column one-hot encoded (`VENUE_COLUMNS`);
+  `market` (FE-T11, #195) — `MARKET_COLUMNS`: market-wide launch rate (5 min / 1 h), graduations and
+  graduation ratio (1 h), SOL buy volume and net SOL flow (5 min / 1 h), active tokens (5 min / 1 h) and
+  `mkt_coverage_sec`, the same on every row of a tick (see docs/DATA-PIPELINE.md "Market-regime context").
 - **Venue one-hot is encoded at load time, not stored.** `features.py` derives `venue_<name>` from the
   raw `venue` column (training reads it from the DB, `/predict` rows carry it as a string), over a
   fixed category list (`VENUES`: `pumpfun`, `pumpswap`, `raydium-launchpad`, `raydium`,
@@ -735,10 +738,10 @@ and seeds.
   so the champion keeps serving). `DB_FEATURE_COLUMNS` is the stored part the parity tests check.
 - **Rows predating a group are refused, not zero-filled.** A NULL in a column the pipeline always writes
   since the group's migration (`ALWAYS_WRITTEN`, e.g. `net_sol_flow`/`large_buy_count` for
-  `buy_pressure`, `volume_burst_ratio`/`price_history_sec` for `momentum`, `unique_traders` for `concentration`; none for `burn`, whose
+  `buy_pressure`, `volume_burst_ratio`/`price_history_sec` for `momentum`, `unique_traders` for `concentration`, `mkt_coverage_sec` for `market`; none for `burn`, whose
   migration 0008 backfills earlier rows from `onchain_signals`, nor `venue`) means "never computed": training, evaluation and ablation raise if an enabled (or
   ablated) group has such rows — re-replay them first. Other NULLs are imputed per `NULL_FILL`
-  (`buy_volume_ratio` → 0.5, "no pressure either way"; `volume_burst_ratio` → 1, "steady"; `new_trader_ratio` → −1, "no recent trader", as 0 is "all returning"; `burned_liquidity` → −1, "unknown", as 0% burned is a real rug signal; else 0 —
+  (`buy_volume_ratio` → 0.5, "no pressure either way"; `volume_burst_ratio` → 1, "steady"; `new_trader_ratio` → −1, "no recent trader", as 0 is "all returning"; `burned_liquidity` → −1, "unknown", as 0% burned is a real rug signal; the non-negative `mkt_*` aggregates → −1, "window not observed yet" (warm-up), as 0 launches / 0 active tokens is a dead market — the signed `mkt_net_sol_flow_*` keep 0 and `mkt_coverage_sec` marks the warm-up; else 0 —
   e.g. a return a young token has no history for, which `price_history_sec` tells apart from a flat
   price).
 - **Adding columns keeps the champion serving.** A checkpoint trained before columns were added (its
@@ -802,6 +805,22 @@ compare against the 19-column baseline. Reports: `docs/reports/ablation-188-run1
   - `buy_pressure`, `burn` and `venue` stay computed but masked.
   - The change makes the champion's checkpoint incompatible (its feature mask differs), so the next retrain starts from scratch (`candidate.on_incompatible: scratch`).
   - That retrain then goes through the promotion gate like any challenger.
+
+#### Results: `market` (#195) — pending, measured in #198
+
+Not measured yet. The `market` group is computed by the pipeline but **disabled** (not in
+`features.groups`) until it is. It is measured together with `wallet` (#189),
+`wallet_reputation` (#190), `metadata` (#196) and `holders_supply` (#197) in one combined
+re-replay + ablation (#198), so the history is replayed once for all of them. Protocol:
+
+- **Data**: migration 0013 applied, then a re-replay that starts **≥ 1 h before** the first training
+  row (long-window warm-up), so the evaluated rows carry every `mkt_*` aggregate. Rows predating 0013
+  are refused for the group (`mkt_coverage_sec` NULL).
+- **Variants**: the current defaults (`momentum` + `concentration` enabled) vs the same **+market**.
+- **Regimes**: the walk-forward windows should span different activity levels (weekday vs weekend, busy
+  vs quiet hours), and the lift is reported **per window**, not only on average: a regime feature that
+  only helps in the regime it was trained on is not a gain.
+- **Decision rule**: same margin as the other groups. `market` is enabled only if it clears it.
 
 ```bash
 # from services/ai-service, database from SOLIA_DB_CONNECTION / POSTGRES_* (a replayed history)

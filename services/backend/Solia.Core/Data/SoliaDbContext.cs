@@ -146,6 +146,17 @@ public sealed class SoliaDbContext(DbContextOptions<SoliaDbContext> options) : D
             e.Property(x => x.TraderHhi).HasColumnName("trader_hhi");
             e.Property(x => x.NewTraderRatio).HasColumnName("new_trader_ratio");
             e.Property(x => x.BurnedLiquidity).HasColumnName("burned_liquidity");
+            e.Property(x => x.MktCoverageSec).HasColumnName("mkt_coverage_sec");
+            e.Property(x => x.MktLaunchRate5m).HasColumnName("mkt_launch_rate_5m");
+            e.Property(x => x.MktLaunchRate1h).HasColumnName("mkt_launch_rate_1h");
+            e.Property(x => x.MktGraduations1h).HasColumnName("mkt_graduations_1h");
+            e.Property(x => x.MktGraduationRatio1h).HasColumnName("mkt_graduation_ratio_1h");
+            e.Property(x => x.MktBuySol5m).HasColumnName("mkt_buy_sol_5m");
+            e.Property(x => x.MktBuySol1h).HasColumnName("mkt_buy_sol_1h");
+            e.Property(x => x.MktNetSolFlow5m).HasColumnName("mkt_net_sol_flow_5m");
+            e.Property(x => x.MktNetSolFlow1h).HasColumnName("mkt_net_sol_flow_1h");
+            e.Property(x => x.MktActiveTokens5m).HasColumnName("mkt_active_tokens_5m");
+            e.Property(x => x.MktActiveTokens1h).HasColumnName("mkt_active_tokens_1h");
             e.Property(x => x.OnchainSignals).HasColumnName("onchain_signals").HasColumnType("jsonb");
             e.Property(x => x.BehavioralSignals).HasColumnName("behavioral_signals").HasColumnType("jsonb");
             e.Property(x => x.Raw).HasColumnName("raw").HasColumnType("jsonb");

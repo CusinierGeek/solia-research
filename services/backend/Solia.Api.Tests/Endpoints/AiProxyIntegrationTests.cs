@@ -57,8 +57,9 @@ public sealed class AiProxyFixture : PostgresFixture, IAsyncLifetime
         {
             await ExecAsync(
                 "INSERT INTO features (mint, ts, price, holders, buy_sell_ratio, net_sol_flow, large_buy_count, " +
-                "return_short, volume_burst_ratio, unique_traders, top_trader_share, burned_liquidity, venue, is_migrated) " +
-                "VALUES ('a', @ts, @p, @h, 1.5, -0.25, 2, 0.125, 3.5, 6, 0.4, @burn, @venue, @mig)",
+                "return_short, volume_burst_ratio, unique_traders, top_trader_share, burned_liquidity, venue, is_migrated, " +
+                "mkt_coverage_sec, mkt_launch_rate_5m, mkt_active_tokens_1h) " +
+                "VALUES ('a', @ts, @p, @h, 1.5, -0.25, 2, 0.125, 3.5, 6, 0.4, @burn, @venue, @mig, 3600, 12.5, 840)",
                 ("ts", T0.AddMinutes(i)), ("p", 0.001m * (i + 1)), ("h", i == 2 ? DBNull.Value : 10 * (i + 1)),
                 ("burn", i == 3 ? 100.0 : DBNull.Value), ("venue", i == 3 ? "pumpswap" : "pumpfun"), ("mig", i == 3));
         }
@@ -165,7 +166,11 @@ public class AiProxyIntegrationTests(AiProxyFixture api) : IClassFixture<AiProxy
         Assert.Equal(0.4, window[0]["top_trader_share"]);
         Assert.Null(window[0]["new_trader_ratio"]);
         Assert.Equal([null, null, 100.0], window.Select(r => r["burned_liquidity"]).ToArray());
-        Assert.Equal(37, window[0].Count); // the ai-service's DB_FEATURE_COLUMNS (+ venue)
+        Assert.Equal(3600.0, window[0]["mkt_coverage_sec"]);
+        Assert.Equal(12.5, window[0]["mkt_launch_rate_5m"]);
+        Assert.Equal(840.0, window[0]["mkt_active_tokens_1h"]);
+        Assert.Null(window[0]["mkt_graduation_ratio_1h"]);
+        Assert.Equal(48, window[0].Count); // the ai-service's DB_FEATURE_COLUMNS (+ venue)
     }
 
     [Fact]
