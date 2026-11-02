@@ -89,20 +89,37 @@ class FeatureNormalizer(nn.Module):
         self.register_buffer("fitted", torch.tensor(False))
 
     @torch.no_grad()
-    def fit(self, rows: torch.Tensor | np.ndarray) -> FeatureNormalizer:
-        """Fit on ``[R, F]`` training rows (not validation: that would leak)."""
+    def fit(
+        self, rows: torch.Tensor | np.ndarray, *, index: Sequence[int] | None = None
+    ) -> FeatureNormalizer:
+        """Fit on ``[R, F]`` training rows (not validation: that would leak).
+
+        With ``index``, ``rows`` is ``[R, len(index)]``: those features only, every other one taken
+        as constant 0 (mean 0, std 1) — the same fit as on the full rows with those columns 0,
+        without materializing them.
+        """
         data = torch.as_tensor(rows, dtype=torch.float32)
-        if data.ndim != 2 or data.shape[1] != self.mean.numel() or data.shape[0] == 0:
-            raise ValueError(
-                f"expected non-empty [R, {self.mean.numel()}] rows, got {tuple(data.shape)}"
-            )
+        width = self.mean.numel() if index is None else len(index)
+        if data.ndim != 2 or data.shape[1] != width or data.shape[0] == 0:
+            raise ValueError(f"expected non-empty [R, {width}] rows, got {tuple(data.shape)}")
+        if index is not None and sorted(set(index)) != sorted(index):
+            raise ValueError(f"normalizer index has duplicates: {list(index)}")
+        if index is not None and not all(0 <= int(i) < self.mean.numel() for i in index):
+            raise ValueError(f"normalizer index out of range [0, {self.mean.numel()}): {index}")
         logged = signed_log1p(data)
         if not torch.isfinite(logged).all():
             raise ValueError("normalizer rows contain non-finite values")
-        self.mean.copy_(logged.mean(dim=0))
+        mean = logged.mean(dim=0)
         # Constant features (std 0) are left unscaled rather than divided by ~0.
         std = logged.std(dim=0, unbiased=False)
-        self.std.copy_(torch.where(std > 1e-6, std, torch.ones_like(std)))
+        std = torch.where(std > 1e-6, std, torch.ones_like(std))
+        if index is None:
+            self.mean.copy_(mean)
+            self.std.copy_(std)
+        else:
+            at = torch.as_tensor(list(index), dtype=torch.long)
+            self.mean.zero_().index_copy_(0, at, mean)
+            self.std.fill_(1.0).index_copy_(0, at, std)
         self.fitted.fill_(True)
         return self
 
@@ -280,9 +297,29 @@ class SoliaTransformer(nn.Module):
             "expected_return": out["expected_return"],
         }
 
-    def fit_normalizer(self, rows: torch.Tensor | np.ndarray) -> SoliaTransformer:
-        """Fit the input normalization on ``[R, F]`` training rows (call before training)."""
-        self.normalizer.fit(self.mask_features(torch.as_tensor(rows, dtype=torch.float32)))
+    def fit_normalizer(
+        self, rows: torch.Tensor | np.ndarray, *, columns: Sequence[str] | None = None
+    ) -> SoliaTransformer:
+        """Fit the input normalization on ``[R, F]`` training rows (call before training).
+
+        With ``columns`` (a narrow matrix, :attr:`solia_ai.dataset.Samples.columns`), ``rows`` holds
+        only those columns, the others being 0: the fit is the same as on the widened rows.
+        """
+        data = torch.as_tensor(rows, dtype=torch.float32)
+        if columns is None:
+            self.normalizer.fit(self.mask_features(data))
+            return self
+        if data.ndim != 2 or data.shape[1] != len(columns) or data.shape[0] == 0:
+            raise ValueError(
+                f"expected non-empty [R, {len(columns)}] rows, got {tuple(data.shape)}"
+            )
+        unknown = [c for c in columns if c not in self.feature_columns]
+        if unknown:
+            raise ValueError(f"column(s) not among the model's features: {', '.join(unknown)}")
+        index = [self.feature_columns.index(c) for c in columns]
+        mask = self.feature_mask[torch.as_tensor(index, dtype=torch.long)].to(data.device)
+        masked = torch.where(mask, data, torch.zeros((), dtype=data.dtype, device=data.device))
+        self.normalizer.fit(masked, index=index)
         return self
 
     def mask_features(self, x: torch.Tensor) -> torch.Tensor:

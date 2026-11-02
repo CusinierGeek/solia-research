@@ -191,7 +191,7 @@ def run(
     training = config["training"]
     batch_size, seed = int(training["batch_size"]), int(training["seed"])
     model = SoliaTransformer.from_config(config).to(device)
-    model.fit_normalizer(samples.features)
+    model.fit_normalizer(samples.features, columns=samples.columns)
     loss_fn = SoliaLoss.from_config(config).to(device)
     pin = device.type == "cuda"
 
@@ -214,10 +214,19 @@ def run(
 
 
 def main(argv: list[str] | None = None) -> None:
-    from .db import DataSettings, add_data_bounds_arguments, make_engine, read_training_features
+    from .db import (
+        DataSettings,
+        add_data_bounds_arguments,
+        add_prune_columns_argument,
+        make_engine,
+        read_training_features,
+        training_columns,
+        with_prune_columns,
+    )
 
     parser = argparse.ArgumentParser(description="Measure the training throughput (no writes).")
     add_data_bounds_arguments(parser)
+    add_prune_columns_argument(parser)
     parser.add_argument("--workers", type=int, nargs="+", default=[0, 3])
     parser.add_argument("--batches", type=int, default=200, help="timed steps per setting")
     parser.add_argument("--per-item", action="store_true", help="also the pre-#152 loader")
@@ -226,12 +235,12 @@ def main(argv: list[str] | None = None) -> None:
     if any(n < 0 for n in args.workers) or args.batches < 1:
         raise SystemExit("--workers must be >= 0 and --batches >= 1")
 
-    config = load_config()
+    config = with_prune_columns(load_config(), args.prune_columns)
     data = DataSettings.from_config(
         config, lookback_days=args.lookback_days, max_rows=args.max_rows
     )
     started = time.monotonic()
-    df, bounds = read_training_features(make_engine(), data)
+    df, bounds = read_training_features(make_engine(), data, columns=training_columns(config))
     read_seconds = time.monotonic() - started
     print(bounds.describe(), flush=True)
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")

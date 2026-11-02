@@ -26,6 +26,13 @@ saved, registered or promoted.
   out of one frame read at the largest budget of the search, so "stride + more tokens for the same
   rows" is compared with today's read on the same held-out windows. A trial without it uses the
   base config's ``data.max_rows``.
+* **Lookback** — ``lookback_days`` (``data``) in the space widens the read to its largest value,
+  and then *every* trial (the baseline too, with the base ``data.lookback_days``) trains, per
+  walk-forward slice, on what a bounded read taken at that slice's training cutoff would keep:
+  whole tokens whose first row is within ``lookback_days`` of the cutoff, capped by the trial's
+  ``max_rows`` (rows up to the cutoff, ``md5(mint)`` order). The held-out slices are the same for
+  every trial (those of the widest read), so "a longer period" is compared paired, run for run.
+  Without it in the space, nothing changes (one global row budget, as above).
 * **Stride** — a stride trial trains and early-stops on its own (thinned) windows but, like a
   threshold trial, is scored on the base config's windows: every trial is measured on the same
   held-out windows.
@@ -86,7 +93,7 @@ from .ablation import (
     train_and_score,
     walk_forward_windows,
 )
-from .config import ConfigError, validate_config
+from .config import DATA_DEFAULTS, ConfigError, validate_config
 from .dataset import SequenceDataset, config_samples, embargo_seconds, window_stride
 from .entry_selection import entry_keys
 from .evaluate import ReferencePolicy, default_policy_horizon, fmt, json_safe
@@ -98,6 +105,7 @@ FLOAT_PARAMS = (
     "learning_rate",
     "weight_decay",
     "window_stride_seconds",
+    "lookback_days",
     "pump_threshold_scale",
     "rug_threshold_scale",
 )
@@ -149,6 +157,8 @@ def _value_error(name: str, value: Any, base: Mapping[str, Any]) -> str | None:
         return f"must be > 0, got {value}"
     if name in ("weight_decay", "window_stride_seconds") and value < 0:
         return f"must be >= 0, got {value}"
+    if name == "lookback_days" and value <= 0:
+        return f"must be > 0, got {value}"
     if name == "rug_threshold_scale":
         top = max(base["labeling"]["rug_threshold"].values())
         if value * top >= 1:
@@ -263,8 +273,8 @@ def apply_params(base: Mapping[str, Any], params: Mapping[str, Any]) -> dict[str
     """The ``base`` config with ``params`` applied (validated; ``base`` is not modified).
 
     ``ff_dim`` keeps the base ``ff_dim / d_model`` ratio, ``min_seq_len`` stays the base one, a
-    threshold scale multiplies that head's threshold on every horizon, and the stride and row budget
-    go to ``data.window_stride_seconds`` / ``data.max_rows``.
+    threshold scale multiplies that head's threshold on every horizon, and the stride, row budget
+    and lookback go to ``data.window_stride_seconds`` / ``data.max_rows`` / ``data.lookback_days``.
     """
     cfg = copy.deepcopy(dict(base))
     model, training, labeling = cfg["model"], cfg["training"], cfg["labeling"]
@@ -278,7 +288,7 @@ def apply_params(base: Mapping[str, Any], params: Mapping[str, Any]) -> dict[str
     for name in ("learning_rate", "weight_decay"):
         if name in params:
             training[name] = params[name]
-    for name in ("window_stride_seconds", "max_rows"):
+    for name in ("window_stride_seconds", "max_rows", "lookback_days"):
         if name in params:
             cfg["data"] = {**cfg.get("data", {}), name: params[name]}
     for head in HEADS:
@@ -310,18 +320,59 @@ def budget_tokens(mints: pd.Series, max_rows: int) -> set[str]:
     tokens in ``md5(mint)`` order while the running row total fits — the rule of
     :func:`solia_ai.db.read_training_features`, so a budget at most the one read gives the same
     tokens as reading with it."""
-    counts = mints.dropna().value_counts(sort=False)
+    return _md5_budget(mints.dropna().value_counts(sort=False), max_rows)
+
+
+def _md5_budget(counts: pd.Series, max_rows: int | None) -> set[str]:
+    """Of ``counts`` (rows per token), the tokens kept in ``md5(mint)`` order while the running
+    total fits ``max_rows`` (every one when ``None``)."""
     order = sorted(counts.index, key=lambda m: hashlib.md5(str(m).encode("utf-8")).hexdigest())
+    if max_rows is None:
+        return set(order)
     running = counts[order].cumsum()
     return set(running.index[running.to_numpy() <= max_rows])
 
 
 def read_rows(space: Mapping[str, Mapping[str, Any]], max_rows: int) -> int:
     """The rows to read for a search: the base budget or the space's largest ``max_rows``."""
-    spec = space.get("max_rows")
+    return _largest(space, "max_rows", max_rows)
+
+
+def read_lookback(space: Mapping[str, Mapping[str, Any]], lookback_days: float) -> float:
+    """The days to read for a search: the base lookback or the space's largest
+    ``lookback_days``."""
+    return float(_largest(space, "lookback_days", lookback_days))
+
+
+def _largest(space: Mapping[str, Mapping[str, Any]], name: str, base: Any) -> Any:
+    spec = space.get(name)
     if spec is None:
-        return max_rows
-    return max(max_rows, *(spec["choices"] if "choices" in spec else (spec["high"],)))
+        return base
+    return max(base, *(spec["choices"] if "choices" in spec else (spec["high"],)))
+
+
+class LookbackTokens:
+    """The tokens a bounded read taken at a cutoff would keep — the rule of
+    :func:`solia_ai.db.read_training_features`, replayed on the frame of a wider read: whole tokens
+    (first row at or after ``cutoff - lookback_days``) and, under ``max_rows``, the ``md5(mint)``
+    prefix whose rows up to the cutoff fit. Cached per (cutoff, lookback, budget)."""
+
+    def __init__(self, df: pd.DataFrame) -> None:
+        known = df["mint"].notna().to_numpy()
+        self._mint = df["mint"].to_numpy(dtype=object)[known]
+        ts = pd.to_datetime(df["ts"], utc=True).dt.tz_localize(None).to_numpy()
+        self._ts = ts[known].astype("datetime64[s]").astype(np.int64)
+        self._first = pd.Series(self._ts).groupby(self._mint).min()
+        self._cache: dict[tuple[int, float, int | None], set[str]] = {}
+
+    def __call__(self, cutoff: int, lookback_days: float, max_rows: int | None) -> set[str]:
+        key = (int(cutoff), float(lookback_days), max_rows)
+        if key not in self._cache:
+            start = cutoff - lookback_days * 86_400
+            whole = self._first.index[self._first.to_numpy() >= start]
+            counts = pd.Series(self._mint[self._ts <= cutoff]).value_counts(sort=False)
+            self._cache[key] = _md5_budget(counts[counts.index.isin(whole)], max_rows)
+        return self._cache[key]
 
 
 # --------------------------------------------------------------------------- objective
@@ -600,6 +651,8 @@ def run_search(
     policy = policy or ReferencePolicy(horizon=default_policy_horizon(horizons))
     policy.horizon_index(horizons)
     embargo = embargo_seconds(horizons)
+    # lookback_days searched: every trial trains on its own lookback per slice (module doc).
+    lookback_tokens = LookbackTokens(df) if "lookback_days" in space else None
 
     def run_trial(name: str, params: Mapping[str, Any]) -> tuple[Trial, list[dict[str, Any]]]:
         started = clock()
@@ -632,16 +685,25 @@ def run_search(
         )
         budget = cfg.get("data", {}).get("max_rows")
         trained = None  # windows of the tokens the trial's row budget keeps (None: every one)
-        if budget is not None and budget < df["mint"].notna().sum():
+        if lookback_tokens is not None:
+            lookback = cfg.get("data", {}).get("lookback_days", DATA_DEFAULTS["lookback_days"])
+            codes, uniques = pd.factorize(pd.Series(train_samples.mint, dtype=object))
+        elif budget is not None and budget < df["mint"].notna().sum():
             trained = np.isin(train_samples.mint, list(budget_tokens(df["mint"], budget)))
         runs = []
         for window in windows:
             train_idx, val_idx = window.train_idx, window.val_idx
+            if lookback_tokens is not None:  # what a read at this slice's cutoff would keep
+                kept = lookback_tokens(window.eval_start_ts - embargo, lookback, budget)
+                trained = np.isin(np.asarray(uniques, dtype=object), list(kept))[codes]
             if trained is not None:
                 train_idx, val_idx = train_idx[trained[train_idx]], val_idx[trained[val_idx]]
                 if len(train_idx) == 0 or len(val_idx) == 0:
+                    bound = f"max_rows {budget}"
+                    if lookback_tokens is not None:
+                        bound = f"lookback_days {lookback} / {bound}"
                     raise ValueError(
-                        f"trial {name}: max_rows {budget} leaves window {window.index} an empty "
+                        f"trial {name}: {bound} leaves window {window.index} an empty "
                         "train/validation split; raise it"
                     )
             train_ds = SequenceDataset(train_samples, train_idx)
@@ -842,7 +904,15 @@ def load_space(path: str | Path) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> None:
-    from .db import DataSettings, add_data_bounds_arguments, make_engine, read_training_features
+    from .db import (
+        DataSettings,
+        add_data_bounds_arguments,
+        add_prune_columns_argument,
+        make_engine,
+        read_training_features,
+        training_columns,
+        with_prune_columns,
+    )
 
     parser = argparse.ArgumentParser(
         description="Search hyperparameters and labeling thresholds over walk-forward windows "
@@ -869,6 +939,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--pump-threshold", type=float, default=ReferencePolicy.pump_threshold)
     parser.add_argument("--rug-threshold", type=float, default=ReferencePolicy.rug_threshold)
     add_data_bounds_arguments(parser)  # the retrain's bounded read (config.yaml `data`)
+    add_prune_columns_argument(parser)
     parser.add_argument(
         "--out",
         help="write the JSON report to this path; each finished trial also goes to "
@@ -885,7 +956,7 @@ def main(argv: list[str] | None = None) -> None:
 
     from .config import load_config
 
-    config = load_config()
+    config = with_prune_columns(load_config(), args.prune_columns)
     max_seconds = None if args.max_minutes is None else args.max_minutes * 60
     try:
         space = load_space(args.space) if args.space else DEFAULT_SPACE
@@ -911,10 +982,15 @@ def main(argv: list[str] | None = None) -> None:
         )
     except ValueError as exc:
         raise SystemExit(str(exc)) from None
-    # The base config trains on --max-rows (else data.max_rows); a larger max_rows in the space
-    # widens the read, and each trial trains on its own budget's tokens out of it.
-    config = {**config, "data": {**config.get("data", {}), "max_rows": data.max_rows}}
-    data = DataSettings(data.lookback_days, read_rows(normalized, data.max_rows))
+    # The base config trains on --max-rows / --lookback-days (else data.*); a larger max_rows or
+    # lookback_days in the space widens the read, and each trial trains on its own share of it.
+    base_data = {**config.get("data", {}), "max_rows": data.max_rows}
+    if "lookback_days" in normalized:
+        base_data["lookback_days"] = data.lookback_days
+    config = {**config, "data": base_data}
+    data = DataSettings(
+        read_lookback(normalized, data.lookback_days), read_rows(normalized, data.max_rows)
+    )
 
     checkpoint, end = None, None
     if args.out:
@@ -930,7 +1006,9 @@ def main(argv: list[str] | None = None) -> None:
             end = datetime.fromisoformat(header["data"]["window_end"])
             print(f"resuming {checkpoint} (window ending {end.isoformat()})", file=sys.stderr)
 
-    df, bounds = read_training_features(make_engine(), data, end=end)
+    df, bounds = read_training_features(
+        make_engine(), data, end=end, columns=training_columns(config)
+    )
     print(bounds.describe(), file=sys.stderr)
     try:
         report = run_search(

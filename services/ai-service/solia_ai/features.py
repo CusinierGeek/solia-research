@@ -402,9 +402,16 @@ def encode_venue(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(hot, index=df.index, columns=list(VENUE_COLUMNS))
 
 
-def build_feature_matrix(df: pd.DataFrame, *, rows: np.ndarray | None = None) -> np.ndarray:
+def build_feature_matrix(
+    df: pd.DataFrame,
+    *,
+    rows: np.ndarray | None = None,
+    columns: Sequence[str] | None = None,
+) -> np.ndarray:
     """Project ``features`` rows (``df``'s ``rows`` positions in that order, default all) onto
-    :data:`FEATURE_COLUMNS` as a ``float32`` matrix.
+    ``columns`` (default :data:`FEATURE_COLUMNS`; else an ordered subset of it, e.g. the enabled
+    groups' columns: a narrow matrix, see :class:`solia_ai.dataset.Samples`) as a ``float32``
+    matrix. Only the columns projected need to be in ``df``.
 
     Columns are taken in canonical order; booleans and ``NUMERIC``/``Decimal`` values are coerced
     to numbers. NULLs become their :data:`NULL_FILL` value (default ``0.0``); non-finite values
@@ -417,12 +424,19 @@ def build_feature_matrix(df: pd.DataFrame, *, rows: np.ndarray | None = None) ->
             column) or holds a value that isn't numeric, or if the frame carries both ``venue`` and
             some of its one-hot columns (ambiguous: which one is the venue?).
     """
+    columns = FEATURE_COLUMNS if columns is None else list(columns)
+    if not columns or not is_ordered_subset(columns):
+        raise ValueError(
+            "feature matrix columns must be a non-empty ordered subset of FEATURE_COLUMNS, "
+            f"got {columns!r}"
+        )
     has_venue = "venue" in df.columns
     if has_venue and (encoded := [col for col in VENUE_COLUMNS if col in df.columns]):
         raise ValueError(
             f"feature frame carries both 'venue' and its one-hot column(s): {', '.join(encoded)}"
         )
-    required = DB_FEATURE_COLUMNS if has_venue else FEATURE_COLUMNS
+    wants_venue = any(col in VENUE_COLUMNS for col in columns)
+    required = [col for col in columns if not (has_venue and col in VENUE_COLUMNS)]
     missing = [col for col in required if col not in df.columns]
     if not has_venue and any(col in missing for col in VENUE_COLUMNS):
         missing = [col for col in missing if col not in VENUE_COLUMNS] + ["venue"]
@@ -434,9 +448,9 @@ def build_feature_matrix(df: pd.DataFrame, *, rows: np.ndarray | None = None) ->
     def column(source: pd.DataFrame | pd.Series) -> pd.DataFrame | pd.Series:
         return source if rows is None else source.iloc[rows]
 
-    venue = encode_venue(column(df[["venue"]])) if has_venue else None
-    matrix = np.empty((len(df) if rows is None else len(rows), len(FEATURE_COLUMNS)), np.float32)
-    for j, col in enumerate(FEATURE_COLUMNS):
+    venue = encode_venue(column(df[["venue"]])) if has_venue and wants_venue else None
+    matrix = np.empty((len(df) if rows is None else len(rows), len(columns)), np.float32)
+    for j, col in enumerate(columns):
         values = venue[col] if venue is not None and col in VENUE_COLUMNS else column(df[col])
         coerced = pd.to_numeric(values, errors="coerce")
         invalid = coerced.isna() & values.notna()

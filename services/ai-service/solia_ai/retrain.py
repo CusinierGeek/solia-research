@@ -535,7 +535,7 @@ def train_and_evaluate(
     """
     from .ablation import run_metrics, walk_forward_windows
     from .candidate import CandidateSettings, champion_data_end_ts, train_candidate
-    from .dataset import SequenceDataset, config_samples, embargo_seconds
+    from .dataset import SequenceDataset, check_not_pruned, config_samples, embargo_seconds
     from .evaluate import ReferencePolicy, default_policy_horizon, evaluate
     from .inference import load_checkpoint, recorded_min_seq_len
     from .promotion import PromotionSettings
@@ -554,6 +554,7 @@ def train_and_evaluate(
             if note := check(champion_ckpt, config):
                 notes.append(note)
 
+    check_not_pruned(config, "retrain")
     samples = config_samples(df, config)
     embargo = embargo_seconds(samples.horizons)
     scoreable = np.ones(len(samples), bool)

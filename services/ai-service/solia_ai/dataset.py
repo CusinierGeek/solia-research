@@ -81,6 +81,8 @@ from .features import (
     FEATURE_COLUMNS,
     build_feature_matrix,
     check_group_coverage,
+    group_columns,
+    is_ordered_subset,
 )
 from .liquidity import LiquidityFloor
 
@@ -112,13 +114,41 @@ class Samples:
     # windows can be split by liquidity (solia_ai.liquidity.liquidity_buckets) without a rebuild.
     anchor_liquidity: np.ndarray | None = None
     anchor_venue: np.ndarray | None = None
+    # None: ``features`` holds every FEATURE_COLUMNS column. Else the (ordered) columns it holds —
+    # a narrow matrix of the enabled groups (data.prune_columns): the windows are still served
+    # FEATURE_COLUMNS-wide, the other columns 0, which is what the model's feature mask makes of
+    # them anyway. Only ``features`` (the bulk of the memory) is narrow.
+    columns: tuple[str, ...] | None = None
 
     def __len__(self) -> int:
         return len(self.end_row)
 
+    @property
+    def n_features(self) -> int:
+        """``F``: the width of the windows served (always FEATURE_COLUMNS-wide when narrow)."""
+        return self.features.shape[1] if self.columns is None else len(FEATURE_COLUMNS)
+
+    @property
+    def column_index(self) -> np.ndarray | None:
+        """Where each stored column sits among FEATURE_COLUMNS (None: not narrow)."""
+        if self.columns is None:
+            return None
+        return np.array([FEATURE_COLUMNS.index(c) for c in self.columns], np.int64)
+
+    def widen(self, x: np.ndarray) -> np.ndarray:
+        """``x`` (``[..., len(columns)]`` stored columns) as ``[..., F]`` FEATURE_COLUMNS-wide, the
+        columns not stored 0; ``x`` itself when the matrix isn't narrow."""
+        index = self.column_index
+        if index is None:
+            return x
+        out = np.zeros((*x.shape[:-1], len(FEATURE_COLUMNS)), np.float32)
+        out[..., index] = x
+        return out
+
     def window(self, i: int) -> np.ndarray:
-        """The unpadded ``[L, F]`` input of sample ``i``, ``L <= seq_len`` (a view, no copy)."""
-        return self.features[int(self.start_row[i]) : int(self.end_row[i]) + 1]
+        """The unpadded ``[L, F]`` input of sample ``i``, ``L <= seq_len`` (a view, no copy, unless
+        the matrix is narrow)."""
+        return self.widen(self.features[int(self.start_row[i]) : int(self.end_row[i]) + 1])
 
     def padded(self, i: int) -> tuple[np.ndarray, np.ndarray]:
         """Sample ``i`` left-padded to ``[seq_len, F]``, with its ``[seq_len]`` padding mask."""
@@ -133,7 +163,7 @@ class Samples:
         padding_mask = rows < self.start_row[indices, None]
         x = self.features[np.where(padding_mask, 0, rows)]
         x[padding_mask] = 0.0
-        return x, padding_mask
+        return self.widen(x), padding_mask
 
     @property
     def x(self) -> np.ndarray:
@@ -141,7 +171,7 @@ class Samples:
         ``seq_len`` copies of every row — for small sets and inspection only; training goes through
         :meth:`padded`."""
         if len(self) == 0:
-            return np.empty((0, self.seq_len, self.features.shape[1]), np.float32)
+            return np.empty((0, self.seq_len, self.n_features), np.float32)
         return np.stack([self.padded(i)[0] for i in range(len(self))])
 
 
@@ -176,6 +206,7 @@ def build_samples(
     eligibility: EligibilityRule | None = None,
     window_stride_seconds: float = 0,
     liquidity_floor: LiquidityFloor | None = None,
+    feature_columns: Sequence[str] | None = None,
 ) -> Samples:
     """Slide windows per mint and label each by the realized future trajectory (module doc).
 
@@ -186,6 +217,9 @@ def build_samples(
     recent ``<= seq_len`` rows. Built in vectorized passes over every token at once (one sort, one
     feature projection, the labels by searches and range extrema), never a loop per token or
     window.
+
+    ``feature_columns`` (an ordered subset of FEATURE_COLUMNS) stores a narrow matrix of only those
+    columns (:attr:`Samples.columns`); the windows, labels and served inputs are otherwise the same.
     """
     rule = EligibilityRule() if eligibility is None else eligibility
     rule.check_columns(df)
@@ -214,6 +248,11 @@ def build_samples(
             raise ValueError(f"no {name} threshold for horizon(s): {', '.join(missing)}")
     if "mint" not in df.columns or "ts" not in df.columns:
         raise ValueError("feature frame needs 'mint' and 'ts' columns")
+    columns = None if feature_columns is None else tuple(feature_columns)
+    if columns is not None and (not columns or not is_ordered_subset(columns)):
+        raise ValueError(
+            f"feature_columns must be a non-empty ordered subset of FEATURE_COLUMNS, got {columns}"
+        )
 
     horizon_s = np.array([horizon_seconds(h) for h in horizons], np.int64)
     pump_thr = np.array([pump_thresholds[h] for h in horizons], np.float64)
@@ -226,9 +265,9 @@ def build_samples(
     sizes = np.bincount(codes[codes >= 0], minlength=1)
     # groupby semantics: rows without a mint belong to no token; tokens too short hold no window
     rows = np.flatnonzero((codes >= 0) & (sizes[np.maximum(codes, 0)] >= min_len))
-    n_feat = len(FEATURE_COLUMNS)
+    n_feat = len(FEATURE_COLUMNS if columns is None else columns)
     if len(rows) == 0:
-        return _empty_samples(seq_len, horizons, n_feat)
+        return _empty_samples(seq_len, horizons, n_feat, columns)
     # Tokens in mint order, each token's rows in time order; ties keep a deterministic order (by
     # id when present, else input order: lexsort is stable).
     ts = pd.to_datetime(df["ts"], utc=True).dt.tz_localize(None).to_numpy()
@@ -267,7 +306,7 @@ def build_samples(
     )  # fmt: skip
     keep = mask.any(axis=1)  # drop windows with nothing labelable yet
     if not keep.any():
-        return _empty_samples(seq_len, horizons, n_feat)
+        return _empty_samples(seq_len, horizons, n_feat, columns)
     ends = window_ends[keep]
 
     # Only the rows of tokens holding a sample are stored; renumber rows over them.
@@ -279,7 +318,7 @@ def build_samples(
     start_row = end_row - np.minimum(pos[ends], seq_len - 1)
 
     return Samples(
-        build_feature_matrix(df, rows=order[stored]),  # [R, F] float32
+        build_feature_matrix(df, rows=order[stored], columns=columns),  # [R, F] float32
         start_row.astype(np.int64),
         end_row.astype(np.int64),
         seq_len,
@@ -293,6 +332,7 @@ def build_samples(
         anchor_inputs[keep].astype(np.float32),
         liquidity[ends].astype(np.float32),
         np.full(len(ends), None, object) if venue is None else venue[ends],
+        columns,
     )
 
 
@@ -314,7 +354,9 @@ def stride_ends(
     return np.r_[True, (tok[1:] != tok[:-1]) | (bucket[1:] != bucket[:-1])]
 
 
-def _empty_samples(seq_len: int, horizons: tuple[str, ...], n_feat: int) -> Samples:
+def _empty_samples(
+    seq_len: int, horizons: tuple[str, ...], n_feat: int, columns: tuple[str, ...] | None = None
+) -> Samples:
     empty_h = np.empty((0, len(horizons)), np.float32)
     return Samples(
         np.empty((0, n_feat), np.float32),
@@ -331,6 +373,7 @@ def _empty_samples(seq_len: int, horizons: tuple[str, ...], n_feat: int) -> Samp
         np.empty((0, len(ELIGIBILITY_INPUTS)), np.float32),
         np.empty((0,), np.float32),
         np.empty((0,), object),
+        columns,
     )
 
 
@@ -705,9 +748,12 @@ def embargo_seconds(horizons: Sequence[str]) -> int:
 def config_samples(df: pd.DataFrame, cfg: Mapping[str, Any]) -> Samples:
     """The windows of ``df`` per ``cfg`` (anchored on rows its ``eligibility`` rule accepts,
     labeled under its ``labeling.liquidity_floor``);
-    refuses rows predating an enabled feature group."""
-    check_group_coverage(df, cfg.get("features", {}).get("groups", BASELINE_GROUPS))
+    refuses rows predating an enabled feature group. With ``data.prune_columns`` the matrix holds
+    only the enabled groups' columns (:attr:`Samples.columns`)."""
+    groups = cfg.get("features", {}).get("groups", BASELINE_GROUPS)
+    check_group_coverage(df, groups)
     labeling = cfg["labeling"]
+    prune = cfg.get("data", {}).get("prune_columns", DATA_DEFAULTS["prune_columns"])
     return build_samples(
         df,
         seq_len=cfg["model"]["seq_len"],
@@ -721,7 +767,22 @@ def config_samples(df: pd.DataFrame, cfg: Mapping[str, Any]) -> Samples:
         eligibility=EligibilityRule.from_config(cfg),
         window_stride_seconds=window_stride(cfg),
         liquidity_floor=LiquidityFloor.from_config(cfg),
+        feature_columns=group_columns(groups) if prune else None,
     )
+
+
+def check_not_pruned(cfg: Mapping[str, Any], where: str) -> None:
+    """Refuse ``data.prune_columns`` where a champion is scored on the same windows: it may use
+    feature groups ``cfg`` doesn't enable, which a narrow matrix would serve as 0.
+
+    Raises:
+        ValueError: ``cfg`` sets ``data.prune_columns``.
+    """
+    if cfg.get("data", {}).get("prune_columns", DATA_DEFAULTS["prune_columns"]):
+        raise ValueError(
+            f"{where}: data.prune_columns is for research runs (search, throughput) only; the "
+            "champion scored on these windows may use feature groups this config doesn't enable"
+        )
 
 
 def window_stride(cfg: Mapping[str, Any]) -> float:

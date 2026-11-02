@@ -52,6 +52,7 @@ from .config import CANDIDATE_DEFAULTS, ConfigError, load_config, validate_confi
 from .dataset import (
     Samples,
     SequenceDataset,
+    check_not_pruned,
     config_samples,
     embargo_seconds,
     temporal_split,
@@ -392,6 +393,7 @@ def train_candidate(
     learning rate are recorded beside them, under ``hyperparams["warm_start"]``.
     """
     cfg = load_config() if config is None else config
+    check_not_pruned(cfg, "candidate")
     settings = CandidateSettings.from_config(cfg)
     samples = config_samples(df, cfg) if samples is None else samples
     split = candidate_split(

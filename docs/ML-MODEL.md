@@ -1117,6 +1117,56 @@ Findings:
 - **Model and optimizer stay unchanged** (`dropout` 0.1, `weight_decay` 0.01, `learning_rate` 3e-4, `d_model` 128).
 - **Peak RSS of the 8 M-row read at stride 60:** measured with `python -m solia_ai.throughput --max-rows 8000000` (stride 60, 80 478 tokens, 843 k samples): **8.7 GB at peak, during the read** (transient), and 4.5 GB after the build (4.8 GB while training; 3 loader workers add only ~0.1 GB PSS). The ablation, stage 2 and this measurement each ran to completion at 8 M rows. The peak is inside the ~16 GB Docker budget, but with Postgres (~7 GB) the host is close to full during the read: do not raise `max_rows` further before #202 lowers the read's peak. Training throughput: ~7 700 samples/s (RTX 4070).
 
+### Overfitting: training data breadth (#202)
+
+#172 stage 2 found that regularization is not the lever. Every `d_model` 128 trial scored within ±0.001 of the
+baseline, with the same validation − train gap. The largest effect so far is data volume (4 M → 8 M rows:
+0.4645 → 0.4904). The hypothesis: **more distinct tokens and a longer period** generalize better than more windows
+per token (stride 30 vs 60 made no difference).
+
+**Memory: why "every token of 3.5 d" doesn't fit as-is.** *Bounded training read* and #160 measured ≈ 1 000
+bytes per row read (frame 331 + `config_samples` peak 640). 3.5 d ≈ 60–70 M rows would need ≈ 65 GB, and the host
+has ~8 GB left beside Postgres (15.6 GB, ~7 GB for Postgres). The windows' float32 matrix is
+`FEATURE_COLUMNS`-wide (91 columns, 364 B/row) even though the model zeroes every disabled group. Row thinning
+can't help either: at `seq_len` 64 × ~10 s snapshots, a window's history (~640 s) is longer than the strides
+studied (120–240 s), so almost every row belongs to some kept window.
+
+**Step 1 (this change): read and hold only the enabled groups.** Opt-in, research CLIs only:
+
+- `--prune-columns` (`solia_ai.search`, `solia_ai.throughput`; sets `data.prune_columns`). The read selects only
+  the enabled groups' stored columns, plus what labels and eligibility need (`price`, `liquidity`,
+  `unique_traders`, `volume`, `token_age_sec`; `mint` / `ts` / `venue` as always). It returns the same rows and
+  tokens (`solia_ai.db.training_columns`).
+- The windows then keep a **narrow matrix** of the enabled columns only (`Samples.columns`): 31 of 91 for the
+  current `price, liquidity, flow, holders, context, momentum, concentration`. Windows are still served
+  `FEATURE_COLUMNS`-wide, with the other columns 0, which the model's feature mask would make of them anyway. The
+  model's outputs are bit-identical (`tests/test_training_breadth.py`). The normalizer is fit on the narrow rows
+  (`fit_normalizer(..., columns=)`), so the training rows are never widened. Its statistics equal the full fit
+  up to float32 summation order (~1e-7).
+- The candidate / retrain refuse `data.prune_columns`, because the champion scored on the same windows may use
+  groups the config doesn't enable. Without the flag, nothing changes: same columns, rows, windows and matrix.
+
+Expected effect: ≈ 2.5–3× fewer bytes per row (frame and matrix), so ~2 d of every token, or a partial 3.5 d,
+within today's budget. It must be **measured** before a run relies on it:
+`python -m solia_ai.throughput --prune-columns --lookback-days 3.5 --max-rows …` (peak RSS). Holding every token
+of 3.5 d probably also needs a token-chunked build that never holds the whole frame, and windows pre-built per
+stride for the search (it rebuilds them per trial from the frame). That is step 2, only if step 1's measurement
+falls short.
+
+**Searchable lookback.** `lookback_days` is a search parameter (`data`). When it is in the space, the read covers
+its largest value. Every trial, the baseline included with the base `data.lookback_days`, then trains per
+walk-forward slice on what a bounded read taken at that slice's training cutoff (`eval_start − embargo`) would
+keep: whole tokens whose first row is within the lookback, capped by the trial's `max_rows` (rows up to the cutoff,
+`md5(mint)` order). Every trial is scored on the same held-out slices (those of the widest read), so the lifts stay
+paired. Without `lookback_days` in the space, nothing changes. The shipped grid is `solia_ai/sweeps/training-breadth.yaml`
+(lookback 2 / 3.5 d × stride 120 / 240 s, every token). Its baseline is the current config (`--max-rows 8000000`,
+stride 60, momentum + concentration).
+
+**Results & decision.** *Pending.* The memory measurement and the comparison need the GPU and a large read. They
+run after the official post-#172 retrain, with the retrain scheduler and the bot off (~4–6 h). Record here the
+peak RSS per variant, the paired table (`mean − std > margin`, primary pump/5m PR-AUC), the decision and its cost,
+with the report under `docs/reports/`. `config.yaml` `data.*` changes only if a variant clears the margin.
+
 ## Files (ai-service, built in Sprints 2 & 7)
 
 | File | Role |

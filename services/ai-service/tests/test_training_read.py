@@ -11,7 +11,7 @@ import pandas as pd
 import pytest
 from sqlalchemy import create_engine, text
 
-from solia_ai.db import DataSettings, read_training_features
+from solia_ai.db import REQUIRED_COLUMNS, DataSettings, read_training_features
 from solia_ai.features import DB_FEATURE_COLUMNS
 
 NEWEST = datetime(2026, 1, 10, tzinfo=UTC)
@@ -99,6 +99,24 @@ def test_rows_are_ordered_by_mint_then_time_with_only_the_model_columns(engine, 
     assert df["price"].dtype == "float64" and df["volume"].dtype == "float64"  # not Decimal
     assert df["is_migrated"].dtype == bool
     assert df["mint"].dtype == object and df["venue"].dtype == object  # not left categorical
+
+
+def test_a_pruned_read_holds_only_its_columns_of_the_same_rows(engine, seeded):
+    whole, a = read_training_features(engine, settings())
+    slim, b = read_training_features(
+        engine, settings(), columns=["volume_growth_rate"], chunksize=3
+    )
+
+    wanted = {"volume_growth_rate", *REQUIRED_COLUMNS}
+    assert list(slim.columns) == ["mint", "ts", "venue",
+                                  *[c for c in DB_FEATURE_COLUMNS if c in wanted]]  # fmt: skip
+    pd.testing.assert_frame_equal(slim, whole[list(slim.columns)])
+    assert a == b  # same window, tokens and rows
+
+
+def test_a_read_of_an_unknown_column_is_refused(engine, seeded):
+    with pytest.raises(ValueError, match="not stored feature column"):
+        read_training_features(engine, settings(), columns=["raw"])
 
 
 def test_the_window_follows_the_newest_row_not_the_clock(engine):

@@ -183,7 +183,8 @@ def fit_calibration_window(
 
 
 def training_feature_rows(dataset: SequenceDataset) -> np.ndarray:
-    """The ``[R, F]`` feature rows covered by the training windows — what the normalizer fits on.
+    """The ``[R, F]`` feature rows covered by the training windows — what the normalizer fits on
+    (``F`` = the stored columns: narrow when :attr:`solia_ai.dataset.Samples.columns` is set).
 
     Only rows reachable from a training window are kept, so validation-only rows (later in time)
     never contribute to the normalization statistics.
@@ -379,7 +380,7 @@ def fit(
     model = SoliaTransformer.from_config(cfg).to(device)
     if init_state is not None:
         model.load_state_dict(init_state)
-    model.fit_normalizer(training_feature_rows(train_ds))
+    model.fit_normalizer(training_feature_rows(train_ds), columns=train_ds.samples.columns)
     pos_weight = resolve_pos_weight(train_ds, cfg)
     loss_fn = SoliaLoss.from_config(cfg, pos_weight=pos_weight).to(device)
 

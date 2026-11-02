@@ -97,6 +97,10 @@ DATA_DEFAULTS: dict[str, Any] = {
     "lookback_days": 2.0,
     "max_rows": 4_000_000,
     "window_stride_seconds": 0,
+    # Read only the enabled feature groups' columns (+ those labels / eligibility need) and hold
+    # the windows' features as a matrix of those columns only (solia_ai.db.training_columns). Set by
+    # the research CLIs' --prune-columns (search, throughput); the candidate / retrain refuse it.
+    "prune_columns": False,
 }
 
 # The token eligibility rule's thresholds and defaults (``config.yaml`` ``eligibility``,
@@ -517,6 +521,8 @@ def _validate(config: Any, source: str) -> None:
     problem = data_bounds_error(config, bounds["lookback_days"], bounds["max_rows"])
     if problem or (problem := window_stride_error(bounds["window_stride_seconds"])):
         fail(problem)
+    if not isinstance(bounds["prune_columns"], bool):
+        fail(f"'data.prune_columns' must be true or false, got {bounds['prune_columns']!r}")
 
     if "eligibility" in config and (problem := eligibility_error(config["eligibility"])):
         fail(problem)

@@ -30,7 +30,7 @@ from sqlalchemy.sql.elements import TextClause
 
 from .config import DATA_DEFAULTS, ConfigError, data_bounds_error, database_url
 from .eligibility import INPUT_COLUMNS as ELIGIBILITY_INPUTS
-from .features import DB_FEATURE_COLUMNS
+from .features import BASELINE_GROUPS, DB_FEATURE_COLUMNS, VENUE_COLUMNS, group_columns
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +163,21 @@ class DataBounds:
         )
 
 
+def add_prune_columns_argument(parser: argparse.ArgumentParser) -> None:
+    """``--prune-columns``: read and hold only the enabled groups' columns (``data.prune_columns``,
+    :func:`training_columns`). Research runs only (search, throughput)."""
+    parser.add_argument(
+        "--prune-columns", action="store_true",
+        help="read only the enabled feature groups' columns and keep a narrow feature matrix "
+        "(less memory per row; same windows, same model inputs)",
+    )  # fmt: skip
+
+
+def with_prune_columns(config: Mapping[str, Any], prune: bool) -> dict[str, Any]:
+    """``config`` with ``data.prune_columns`` set to ``prune`` (a copy; ``config`` unchanged)."""
+    return {**config, "data": {**config.get("data", {}), "prune_columns": bool(prune)}}
+
+
 def add_data_bounds_arguments(parser: argparse.ArgumentParser) -> None:
     """``--lookback-days`` / ``--max-rows``: override the config's ``data`` bounds (shared by the
     retrain, candidate and train CLIs)."""
@@ -178,10 +193,48 @@ def add_data_bounds_arguments(parser: argparse.ArgumentParser) -> None:
 
 # NUMERIC columns arrive as Decimal objects (object dtype, ~4x the memory of a float64); the model
 # reads float32 anyway and the 0002 bounds keep every value within float8, so they're cast in SQL.
-_TRAINING_COLUMNS = ", ".join(
-    ["mint", "ts", "venue"]
-    + [col if col == "is_migrated" else f"{col}::float8 AS {col}" for col in DB_FEATURE_COLUMNS]
-)
+def _select_list(columns: Sequence[str]) -> str:
+    return ", ".join(
+        ["mint", "ts", "venue"]
+        + [col if col == "is_migrated" else f"{col}::float8 AS {col}" for col in columns]
+    )
+
+
+# What every training read needs whatever the enabled groups: the labels' price and pool liquidity,
+# and the eligibility rule's inputs.
+REQUIRED_COLUMNS: tuple[str, ...] = ("price", "liquidity", *ELIGIBILITY_INPUTS)
+
+
+def training_columns(config: Mapping[str, Any]) -> list[str] | None:
+    """The ``features`` columns a training run under ``config`` reads: ``None`` (every model
+    column) unless ``data.prune_columns``, else the enabled groups' (``features.groups``) stored
+    columns plus :data:`REQUIRED_COLUMNS`, in table order.
+
+    Disabled groups are zeroed by the model before anything else (``SoliaTransformer
+    .mask_features``), so not reading them changes nothing the model sees; the windows' matrix then
+    holds only the enabled columns (:class:`solia_ai.dataset.Samples` ``columns``).
+    """
+    data = {**DATA_DEFAULTS, **config.get("data", {})}
+    if not data["prune_columns"]:
+        return None
+    groups = config.get("features", {}).get("groups", BASELINE_GROUPS)
+    wanted = set(group_columns(groups)) | set(REQUIRED_COLUMNS)
+    return [col for col in DB_FEATURE_COLUMNS if col in wanted]
+
+
+def _check_columns(columns: Sequence[str]) -> list[str]:
+    if isinstance(columns, str):
+        raise TypeError("columns must be a sequence of column names, not a single string")
+    unknown = sorted(set(columns) - set(DB_FEATURE_COLUMNS))
+    if unknown:
+        hint = (
+            " (the venue one-hot is derived from 'venue')"
+            if set(unknown) & set(VENUE_COLUMNS)
+            else ""
+        )
+        raise ValueError(f"not stored feature column(s): {', '.join(unknown)}{hint}")
+    wanted = set(columns) | set(REQUIRED_COLUMNS)
+    return [col for col in DB_FEATURE_COLUMNS if col in wanted]
 
 
 # Text columns held as categories while the chunks are collected: a str object per row, kept
@@ -199,7 +252,7 @@ def _compact(chunk: pd.DataFrame) -> pd.DataFrame:
     for col in _TEXT_COLUMNS:
         chunk[col] = chunk[col].astype("category")
     for col in DB_FEATURE_COLUMNS:
-        if col not in _FLOAT64_COLUMNS and chunk[col].dtype == np.float64:
+        if col in chunk.columns and col not in _FLOAT64_COLUMNS and chunk[col].dtype == np.float64:
             with np.errstate(over="ignore"):  # beyond float32 -> inf, imputed to 0 like the model
                 chunk[col] = chunk[col].astype(np.float32)
     return chunk
@@ -211,6 +264,7 @@ def read_training_features(
     *,
     chunksize: int = TRAINING_CHUNKSIZE,
     end: datetime | None = None,
+    columns: Sequence[str] | None = None,
 ) -> tuple[pd.DataFrame, DataBounds]:
     """The ``features`` a training run uses, bounded by ``settings``, ordered by ``(mint, ts)``.
 
@@ -223,12 +277,16 @@ def read_training_features(
        stable (a prefix of the same order).
 
     Only the model's columns are read (no JSONB), streamed in ``chunksize`` rows, so peak memory
-    follows ``max_rows``, never the table (docs/ML-MODEL.md "Bounded training read").
+    follows ``max_rows``, never the table (docs/ML-MODEL.md "Bounded training read"). With
+    ``columns`` (see :func:`training_columns`), only those stored feature columns are read, plus
+    :data:`REQUIRED_COLUMNS` (and ``mint`` / ``ts`` / ``venue``); rows and tokens are the same.
 
     Raises:
-        ValueError: the table is empty, or no whole token fits the window / cap.
+        ValueError: the table is empty, no whole token fits the window / cap, or ``columns`` names
+            a column that isn't a stored feature.
     """
     _check_positive("chunksize", chunksize)
+    selected = list(DB_FEATURE_COLUMNS) if columns is None else _check_columns(columns)
     with engine.connect() as conn:
         newest = end or conn.execute(text("SELECT max(ts) FROM features")).scalar()
         if newest is None:
@@ -255,7 +313,7 @@ def read_training_features(
         )
 
     query = text(
-        f"SELECT {_TRAINING_COLUMNS} FROM features WHERE mint = ANY(:mints) "
+        f"SELECT {_select_list(selected)} FROM features WHERE mint = ANY(:mints) "
         "AND ts >= :start AND ts <= :end ORDER BY mint, ts"
     )
     params = {**bounds, "mints": kept["mint"].tolist()}

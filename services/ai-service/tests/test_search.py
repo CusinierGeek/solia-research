@@ -351,7 +351,7 @@ def test_run_search_rejects_bad_setups(kwargs, message, monkeypatch):
 FAKE_WINDOW_END = datetime(2026, 10, 30, 12, tzinfo=UTC)
 
 
-def fake_bounded_read(_engine, settings, end=None):
+def fake_bounded_read(_engine, settings, end=None, columns=None):
     df = make_features_df()
 
     class Bounds:
@@ -557,7 +557,7 @@ def test_a_row_budget_trial_trains_on_fewer_tokens_but_scores_the_same_windows(
 def test_main_reads_the_largest_row_budget(offline_cli, no_registry, tmp_path, monkeypatch):
     read: list[int] = []
 
-    def recording_read(engine, settings, end=None):
+    def recording_read(engine, settings, end=None, columns=None):
         read.append(settings.max_rows)
         return fake_bounded_read(engine, settings, end)
 
@@ -571,7 +571,34 @@ def test_main_reads_the_largest_row_budget(offline_cli, no_registry, tmp_path, m
     assert read == [10_000_000]
 
 
-@pytest.mark.parametrize("name", ["overfitting-data.yaml", "overfitting-regularization.yaml"])
+def test_main_reads_the_longest_lookback_and_prunes_on_request(
+    offline_cli, no_registry, tmp_path, monkeypatch
+):
+    read: list[tuple[float, list[str] | None]] = []
+
+    def recording_read(engine, settings, end=None, columns=None):
+        read.append((settings.lookback_days, columns))
+        return fake_bounded_read(engine, settings, end)
+
+    monkeypatch.setattr(solia_ai.db, "read_training_features", recording_read)
+    space = tmp_path / "space.yaml"
+    space.write_text("lookback_days:\n  choices: [1.0, 3.5]\n", encoding="utf-8")
+
+    search.main(["--space", str(space), "--trials", "1", "--windows", "1", "--seeds", "0",
+                 "--lookback-days", "0.5", "--device", "cpu"])  # fmt: skip
+    search.main(["--space", str(space), "--trials", "1", "--windows", "1", "--seeds", "0",
+                 "--prune-columns", "--device", "cpu"])  # fmt: skip
+
+    (lookback, columns), (_, pruned) = read
+    assert lookback == 3.5 and columns is None
+    assert pruned == solia_ai.db.training_columns(
+        solia_ai.db.with_prune_columns(small_config(), True)
+    )
+
+
+@pytest.mark.parametrize(
+    "name", ["overfitting-data.yaml", "overfitting-regularization.yaml", "training-breadth.yaml"]
+)
 def test_the_shipped_sweep_spaces_are_valid(name):
     from pathlib import Path
 
@@ -759,7 +786,7 @@ def test_resumed_time_counts_against_the_time_budget(no_registry, tmp_path):
 def test_main_resumes_on_the_window_it_started_on(offline_cli, no_registry, tmp_path, monkeypatch):
     ends: list = []
 
-    def recording_read(engine, settings, end=None):
+    def recording_read(engine, settings, end=None, columns=None):
         ends.append(end)
         return fake_bounded_read(engine, settings, end)
 
