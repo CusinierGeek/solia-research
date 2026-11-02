@@ -44,7 +44,7 @@ from .dataset import pad_window
 from .eligibility import EligibilityRule
 from .features import FEATURE_COLUMNS, is_ordered_subset
 from .liquidity import LiquidityFloor
-from .model import IncompatibleCheckpointError, SoliaTransformer
+from .model import IncompatibleCheckpointError, SoliaEnsemble, SoliaTransformer
 
 # Pinned so the pipeline's ONNXRuntime always sees the same operator set the export was tested
 # against; bump deliberately (and re-check parity) rather than tracking torch's default. 18 is the
@@ -175,8 +175,9 @@ def recorded_min_seq_len(metadata: Mapping[str, Any], seq_len: int) -> int:
     return int(model.get("min_seq_len", model.get("seq_len", seq_len)))
 
 
-def build_model(checkpoint: dict[str, Any]) -> SoliaTransformer:
-    """Rebuild the model from a checkpoint and load its weights, in eval mode.
+def build_model(checkpoint: dict[str, Any]) -> SoliaTransformer | SoliaEnsemble:
+    """Rebuild the model from a checkpoint and load its weights, in eval mode — a
+    :class:`SoliaEnsemble` when the checkpoint records an ``ensemble_size`` > 1.
 
     The architecture comes from the checkpoint's recorded ``hyperparams``; loading the state dict
     re-checks (via the model's extra state) that its horizons and feature spec match. A checkpoint
@@ -200,8 +201,18 @@ def build_model(checkpoint: dict[str, Any]) -> SoliaTransformer:
                 + ": retrain on the current spec and promote the result"
             )
         columns = list(recorded)
-    model = SoliaTransformer.from_config(checkpoint["hyperparams"], feature_columns=columns)
     state = dict(checkpoint["model_state"])
+    size = int(checkpoint.get("ensemble_size", 1))
+    if size > 1:  # a seed ensemble (model.ensemble_size): its members, averaged
+        ensemble = SoliaEnsemble(
+            [
+                SoliaTransformer.from_config(checkpoint["hyperparams"], feature_columns=columns)
+                for _ in range(size)
+            ]
+        )
+        ensemble.load_state_dict(state)
+        return ensemble.eval()
+    model = SoliaTransformer.from_config(checkpoint["hyperparams"], feature_columns=columns)
     # Checkpoints from before feature groups carry no mask: every column was an input.
     state.setdefault("feature_mask", torch.ones(model.n_features, dtype=torch.bool))
     model.load_state_dict(state)

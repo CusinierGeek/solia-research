@@ -59,7 +59,7 @@ from .dataset import (
 )
 from .db import add_data_bounds_arguments
 from .features import BASELINE_GROUPS, FEATURE_COLUMNS, group_mask
-from .model import IncompatibleCheckpointError
+from .model import IncompatibleCheckpointError, ensemble_size
 from .train import (
     ProgressFn,
     build_checkpoint,
@@ -205,6 +205,8 @@ def warm_start_state(checkpoint: Mapping[str, Any]) -> dict[str, Any]:
     """The checkpoint's ``model_state``, with the all-enabled feature mask a checkpoint from
     before feature groups implies (as :func:`solia_ai.inference.build_model` loads it)."""
     state = dict(checkpoint["model_state"])
+    if int(checkpoint.get("ensemble_size", 1)) > 1:
+        return state  # an ensemble's members always record their mask
     n_features = len(checkpoint.get("feature_columns") or FEATURE_COLUMNS)
     state.setdefault("feature_mask", torch.ones(n_features, dtype=torch.bool))
     return state
@@ -231,9 +233,15 @@ def warm_start_problems(checkpoint: Mapping[str, Any], config: Mapping[str, Any]
     else:
         groups = config.get("features", {}).get("groups", BASELINE_GROUPS)
         wanted = group_mask(groups)
-        mask = warm_start_state(checkpoint)["feature_mask"]
-        if not np.array_equal(np.asarray(mask, dtype=bool), wanted):
+        state = warm_start_state(checkpoint)
+        mask = state.get("feature_mask", state.get("members.0.feature_mask"))
+        if mask is None or not np.array_equal(np.asarray(mask, dtype=bool), wanted):
             problems.append(f"enabled feature groups differ from the config's {list(groups)}")
+    size, wanted_size = int(checkpoint.get("ensemble_size", 1)), ensemble_size(config)
+    if size != wanted_size:
+        problems.append(
+            f"model.ensemble_size is {size} (the champion's members), the config's {wanted_size}"
+        )
     horizons = checkpoint.get("horizons")
     if horizons is None or list(horizons) != list(config["horizons"]):
         problems.append(f"horizons {horizons} differ from the config's {list(config['horizons'])}")

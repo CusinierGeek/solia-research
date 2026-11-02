@@ -63,7 +63,7 @@ from .evaluate import calibrate
 from .features import BASELINE_GROUPS
 from .liquidity import LiquidityFloor
 from .loss import SoliaLoss
-from .model import SoliaTransformer
+from .model import SoliaEnsemble, SoliaTransformer, ensemble_size, member_state
 
 logger = logging.getLogger(__name__)
 
@@ -218,9 +218,10 @@ def _to_device(
 
 
 def describe_epoch(event: Mapping[str, Any]) -> str:
-    """One line for an ``epoch`` progress event."""
+    """One line for an ``epoch`` progress event (prefixed with the member of an ensemble)."""
+    member = f"member {event['member']}/{event['members']} " if "member" in event else ""
     return (
-        f"epoch {event['epoch']}/{event['epochs']}: train_loss={event['train_loss']:.4f} "
+        f"{member}epoch {event['epoch']}/{event['epochs']}: train_loss={event['train_loss']:.4f} "
         f"val_loss={event['val_loss']:.4f} ({event['seconds']:.1f}s, "
         f"{event['samples_per_s']:.0f} samples/s, ETA {event['eta_seconds']:.0f}s), "
         f"no improvement {event['since_improved']}/{event['patience']}"
@@ -271,7 +272,7 @@ def _validate(
 
 
 def build_checkpoint(
-    model: SoliaTransformer,
+    model: SoliaTransformer | SoliaEnsemble,
     config: Mapping[str, Any],
     *,
     version: str,
@@ -304,7 +305,7 @@ def build_checkpoint(
         "calibration": None if calibration is None else calibration.as_dict(),
         "calibration_end_ts": calibration_end_ts,
         "data_end_ts": data_end_ts,
-    }
+    } | ({"ensemble_size": model.ensemble_size} if model.ensemble_size > 1 else {})
 
 
 def save_checkpoint(checkpoint: Mapping[str, Any], path: Path) -> None:
@@ -325,15 +326,81 @@ def save_checkpoint(checkpoint: Mapping[str, Any], path: Path) -> None:
 
 @dataclass
 class FitResult:
-    """A fitted model (best epoch's weights) and its validation trace; nothing saved."""
+    """A fitted model (best epoch's weights) and its validation trace; nothing saved.
 
-    model: SoliaTransformer
+    For an ensemble (``model.ensemble_size`` > 1): ``model`` is the :class:`SoliaEnsemble`,
+    ``metrics`` the ensemble's own validation losses, ``members`` each member's fit, and
+    ``best_epoch`` / ``history`` member 0's (a diagnostic of one member's fit)."""
+
+    model: SoliaTransformer | SoliaEnsemble
     best_epoch: int
     metrics: dict[str, float]
     history: list[dict[str, float]] = field(default_factory=list)
+    members: tuple[FitResult, ...] = ()
 
 
 def fit(
+    train_ds: SequenceDataset,
+    val_ds: SequenceDataset,
+    config: Mapping[str, Any],
+    *,
+    device: str | torch.device | None = None,
+    init_state: Mapping[str, Any] | None = None,
+    progress: ProgressFn | None = None,
+) -> FitResult:
+    """:func:`fit_one` — or, with ``model.ensemble_size`` N > 1, N members fit one after the
+    other on the same data under seeds ``training.seed + k``, returned as one
+    :class:`SoliaEnsemble` (its ``metrics``: the ensemble's validation losses). A warm start's
+    ``init_state`` is then an ensemble's state of the same size, member ``k`` seeding member ``k``
+    (:func:`solia_ai.candidate.warm_start_problems` checks the size first). Each member's epoch
+    events carry ``member`` / ``members``.
+    """
+    n = ensemble_size(config)
+    if n == 1:
+        return fit_one(
+            train_ds, val_ds, config, device=device, init_state=init_state, progress=progress
+        )
+    seed = int(config["training"]["seed"])
+    report = progress or _log_epoch
+    members: list[FitResult] = []
+    for k in range(n):
+        cfg = copy.deepcopy(dict(config))
+        cfg["training"] = {**cfg["training"], "seed": seed + k}
+
+        def tagged(event: dict[str, Any], k: int = k) -> None:
+            report({**event, "member": k + 1, "members": n})
+
+        members.append(
+            fit_one(
+                train_ds,
+                val_ds,
+                cfg,
+                device=device,
+                init_state=None if init_state is None else member_state(init_state, k),
+                progress=tagged,
+            )
+        )
+    ensemble = SoliaEnsemble([m.model for m in members]).eval()
+    device = torch.device(device) if device is not None else torch.device("cpu")
+    loader = LoaderSettings.from_config(config, device)
+    _, val_loader = make_loaders(
+        train_ds, val_ds, batch_size=int(config["training"]["batch_size"]), balanced=False,
+        loader=loader,
+    )  # fmt: skip
+    loss_fn = SoliaLoss.from_config(config, pos_weight=resolve_pos_weight(train_ds, config)).to(
+        device
+    )
+    val = _validate(ensemble, loss_fn, val_loader, device, loader.pin_memory)
+    return FitResult(
+        model=ensemble,
+        best_epoch=members[0].best_epoch,
+        metrics={f"val_{k}": v for k, v in val.items()},
+        history=members[0].history,
+        members=tuple(members),
+    )
+
+
+def fit_one(
     train_ds: SequenceDataset,
     val_ds: SequenceDataset,
     config: Mapping[str, Any],

@@ -1190,6 +1190,43 @@ the history while trusting yesterday more than four days ago.
 longest window #202 retains needs the GPU. It runs after #202's measurements, with the retrain scheduler and the
 bot off. Record the table and the decision here. `config.yaml` changes only if a half-life clears the margin.
 
+### Seed ensemble champion (#204)
+
+Scores vary noticeably from seed to seed. Pump/5m PR-AUC has a std of ~0.03 across runs, while the lifts we act on
+are ~0.02. Averaging models trained under different seeds reduces that variance, and the champion depends less on
+a lucky or unlucky seed.
+
+- `model.ensemble_size` (optional; default 1 = today's single model, bit for bit: same code path, no
+  `ensemble_size` in the checkpoint). With N > 1, `solia_ai.train.fit` trains N members one after the other on the
+  same data, under seeds `training.seed + k`. The members share the architecture and the feature mask; only the
+  seed differs. They are returned as one `SoliaEnsemble`, which has the single model's interface.
+- **Averaging: logit space.** The members' pump / rug logits are averaged (the expected return as is). The
+  ensemble is then **calibrated once, as one model**: Platt / temperature fit on the averaged logits by the same
+  `fit_calibration_window`. Logit averaging was chosen over probability averaging because it keeps calibration
+  unchanged: a fit on logits, applied to logits, in training, serving and ONNX alike.
+- **Artifact:** one checkpoint. Its `model_state` holds `members.<k>.*`, `ensemble_size` N is recorded beside it,
+  and `hyperparams.model.ensemble_size` too. `build_model` rebuilds an ensemble from it. The `Predictor`
+  (`/predict`), evaluation and the promotion gate score the ensemble as a whole. The ONNX export holds every
+  member in one graph (parity checked like a single model's).
+- **Compatibility:**
+  - a single-model champion keeps serving unchanged;
+  - a warm start from an ensemble of the same size seeds member k from champion member k;
+  - a size mismatch (single to ensemble, or another N) is an incompatibility, which `candidate.on_incompatible`
+    resolves (scratch or error);
+  - an ensemble state loaded into one `SoliaTransformer` raises `IncompatibleCheckpointError` naming the member
+    count, rather than a list of missing keys.
+- **Fit diagnostics:** the `metrics` are the ensemble's own validation losses. `best_epoch` / `history` (the fit
+  gap) are member 0's. Each member's epoch events carry `member` / `members`.
+- **Cost:** GPU training time and inference both scale ~linearly with N (N forward passes per batch). The retrain
+  scheduler holds its slot (and the orchestrator its advisory lock) for the whole run without a time budget. A
+  longer run only delays the next tick, which skips while a run holds the slot.
+- Searchable (`ensemble_size`; shipped grid `solia_ai/sweeps/ensemble.yaml`: 3 / 5 against the baseline 1).
+
+**Results & decision.** *Pending.* The paired comparison of sizes 1 / 3 / 5 (`mean − std > margin`, primary
+pump/5m PR-AUC) needs the GPU. It runs after #202, on its retained data settings, with the retrain scheduler and
+the bot off. Record here the table, the GPU training time per size and the inference latency per batch
+(`/predict`, PyTorch and ONNX). `config.yaml` changes only if the gain clears the margin at an acceptable cost.
+
 ## Files (ai-service, built in Sprints 2 & 7)
 
 | File | Role |

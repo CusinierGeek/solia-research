@@ -597,7 +597,13 @@ def test_main_reads_the_longest_lookback_and_prunes_on_request(
 
 
 @pytest.mark.parametrize(
-    "name", ["overfitting-data.yaml", "overfitting-regularization.yaml", "training-breadth.yaml"]
+    "name",
+    [
+        "overfitting-data.yaml",
+        "overfitting-regularization.yaml",
+        "training-breadth.yaml",
+        "ensemble.yaml",
+    ],
 )
 def test_the_shipped_sweep_spaces_are_valid(name):
     from pathlib import Path

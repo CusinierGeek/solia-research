@@ -320,7 +320,7 @@ def _validate(config: Any, source: str) -> None:
     model = section("model")
     for key in ("d_model", "n_heads", "n_layers", "seq_len"):
         number("model", key, positive=True, integer=True)
-    for key in ("ff_dim", "min_seq_len"):
+    for key in ("ff_dim", "min_seq_len", "ensemble_size"):
         if key in model:
             number("model", key, positive=True, integer=True)
     if problem := model_shape_error(

@@ -1,0 +1,5 @@
+# #204 — seed ensemble champion: N members trained under seeds seed, seed+1, ..., averaged in logit space and
+# calibrated as one model. python -m solia_ai.search --space ensemble --strategy grid --objective pr_auc
+# The baseline (trial "baseline") is the shipped single model (ensemble_size 1). GPU time scales with N.
+ensemble_size:
+  choices: [3, 5]

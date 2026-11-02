@@ -5,7 +5,8 @@ labels. This module tries a bounded number of configurations and reports the bes
 spread, never a single lucky run — as a *proposed* ``config.yaml`` diff. Nothing is applied,
 saved, registered or promoted.
 
-* **Search space** — ``seq_len``, ``d_model``, ``n_layers``, ``dropout``, ``learning_rate``,
+* **Search space** — ``seq_len``, ``d_model``, ``n_layers``, ``ensemble_size``, ``dropout``,
+  ``learning_rate``,
   ``weight_decay``, the recency half-life (``recency_half_life_hours``, ``training``), the
   training-window stride (``window_stride_seconds``, ``data``) and the labeling thresholds, as
   one multiplicative scale per head over every horizon (``pump_threshold_scale`` /
@@ -100,7 +101,7 @@ from .entry_selection import entry_keys
 from .evaluate import ReferencePolicy, default_policy_horizon, fmt, json_safe
 from .lift import PREDICTIVE_METRICS
 
-INT_PARAMS = ("seq_len", "d_model", "n_layers", "max_rows")
+INT_PARAMS = ("seq_len", "d_model", "n_layers", "ensemble_size", "max_rows")
 FLOAT_PARAMS = (
     "dropout",
     "learning_rate",
@@ -151,7 +152,7 @@ def _value_error(name: str, value: Any, base: Mapping[str, Any]) -> str | None:
         return f"must be >= the base min_seq_len ({_min_seq_len(model)}), got {value}"
     if name == "d_model" and (value <= 0 or value % model["n_heads"]):
         return f"must be a positive multiple of n_heads ({model['n_heads']}), got {value}"
-    if name in ("n_layers", "max_rows") and value < 1:
+    if name in ("n_layers", "ensemble_size", "max_rows") and value < 1:
         return f"must be >= 1, got {value}"
     if name == "dropout" and not 0 <= value < 1:
         return f"must be in [0, 1), got {value}"
@@ -282,7 +283,7 @@ def apply_params(base: Mapping[str, Any], params: Mapping[str, Any]) -> dict[str
     cfg = copy.deepcopy(dict(base))
     model, training, labeling = cfg["model"], cfg["training"], cfg["labeling"]
     model["min_seq_len"] = _min_seq_len(base["model"])
-    for name in ("seq_len", "d_model", "n_layers", "dropout"):
+    for name in ("seq_len", "d_model", "n_layers", "dropout", "ensemble_size"):
         if name in params:
             model[name] = params[name]
     if "d_model" in params and "ff_dim" in base["model"]:

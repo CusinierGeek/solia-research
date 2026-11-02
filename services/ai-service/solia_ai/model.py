@@ -216,6 +216,19 @@ class SoliaTransformer(nn.Module):
             raise IncompatibleCheckpointError(f"unknown return head {head!r} in checkpoint")
         self.bounded_return = head == BOUNDED_RETURN_HEAD
 
+    def load_state_dict(self, state_dict: Mapping[str, Any], *args: Any, **kwargs: Any) -> Any:
+        """:meth:`torch.nn.Module.load_state_dict`, refusing an ensemble's state (its keys are
+        ``members.<k>.*``) with a clear error rather than a list of missing / unexpected keys."""
+        if any(str(key).startswith("members.") for key in state_dict):
+            members = {
+                str(key).split(".")[1] for key in state_dict if str(key).startswith("members.")
+            }
+            raise IncompatibleCheckpointError(
+                f"this is a {len(members)}-member ensemble's state, not one model's: load it with "
+                "solia_ai.inference.build_model (or as a SoliaEnsemble)"
+            )
+        return super().load_state_dict(state_dict, *args, **kwargs)
+
     # --- forward ---
 
     def forward(
@@ -332,6 +345,10 @@ class SoliaTransformer(nn.Module):
     def n_params(self) -> int:
         return sum(p.numel() for p in self.parameters())
 
+    @property
+    def ensemble_size(self) -> int:
+        return 1
+
     @classmethod
     def from_config(
         cls,
@@ -357,3 +374,148 @@ class SoliaTransformer(nn.Module):
             feature_columns=columns,
             enabled_columns=[c for c in group_columns(groups) if c in columns],
         )
+
+
+# --------------------------------------------------------------------------- seed ensemble
+
+
+def ensemble_size(config: Mapping[str, Any]) -> int:
+    """``model.ensemble_size`` (default 1: a single model)."""
+    return int(config["model"].get("ensemble_size", 1))
+
+
+class SoliaEnsemble(nn.Module):
+    """``N`` :class:`SoliaTransformer` members — same architecture, feature mask and horizons,
+    trained under seeds ``seed, seed + 1, ...`` — served as one model (``model.ensemble_size``).
+
+    The members' outputs are **averaged in logit space** (pump / rug logits; the expected return is
+    averaged as is). The ensemble is then calibrated as one model: Platt / temperature fit once on
+    those averaged logits, exactly as on a single model's (:mod:`solia_ai.calibration`). Its
+    interface is the single model's (``forward``, ``encode_logits``, ``predict``, ``horizons``,
+    ``feature_columns``, ``seq_len``, ``n_features``), so evaluation, the promotion gate, the
+    :class:`~solia_ai.inference.Predictor` and the ONNX export (every member in one graph) score
+    the ensemble as a whole.
+    """
+
+    def __init__(self, members: Sequence[SoliaTransformer]) -> None:
+        super().__init__()
+        members = list(members)
+        if len(members) < 2:
+            raise ValueError(f"an ensemble needs at least 2 members, got {len(members)}")
+        first = members[0]
+        for k, member in enumerate(members[1:], start=1):
+            for name in ("horizons", "feature_columns", "seq_len", "n_features", "bounded_return"):
+                if getattr(member, name) != getattr(first, name):
+                    raise ValueError(f"ensemble member {k} differs from member 0 in {name}")
+            if not torch.equal(member.feature_mask.cpu(), first.feature_mask.cpu()):
+                raise ValueError(f"ensemble member {k} differs from member 0 in its feature mask")
+        self.members = nn.ModuleList(members)
+
+    # --- the single model's interface ---
+
+    @property
+    def ensemble_size(self) -> int:
+        return len(self.members)
+
+    @property
+    def horizons(self) -> tuple[str, ...]:
+        return self.members[0].horizons
+
+    @property
+    def n_horizons(self) -> int:
+        return self.members[0].n_horizons
+
+    @property
+    def feature_columns(self) -> tuple[str, ...]:
+        return self.members[0].feature_columns
+
+    @property
+    def n_features(self) -> int:
+        return self.members[0].n_features
+
+    @property
+    def seq_len(self) -> int:
+        return self.members[0].seq_len
+
+    @property
+    def feature_mask(self) -> torch.Tensor:
+        return self.members[0].feature_mask
+
+    @property
+    def bounded_return(self) -> bool:
+        return self.members[0].bounded_return
+
+    @property
+    def n_params(self) -> int:
+        return sum(p.numel() for p in self.parameters())
+
+    def mask_features(self, x: torch.Tensor) -> torch.Tensor:
+        return self.members[0].mask_features(x)
+
+    def get_extra_state(self) -> dict[str, Any]:
+        return {"ensemble_size": len(self.members)}
+
+    def set_extra_state(self, state: dict[str, Any]) -> None:
+        theirs = int(state.get("ensemble_size", -1))
+        if theirs != len(self.members):
+            raise IncompatibleCheckpointError(
+                f"checkpoint ensemble_size {theirs} doesn't match the model's {len(self.members)}"
+            )
+
+    @staticmethod
+    def _average(outputs: Sequence[Mapping[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
+        return {key: torch.stack([o[key] for o in outputs]).mean(dim=0) for key in outputs[0]}
+
+    def forward(
+        self, x: torch.Tensor, padding_mask: torch.Tensor | None = None
+    ) -> dict[str, torch.Tensor]:
+        """Every member's :meth:`SoliaTransformer.forward`, averaged (logits, return)."""
+        return self._average([member(x, padding_mask) for member in self.members])
+
+    def encode_logits(
+        self, x: torch.Tensor, padding_mask: torch.Tensor | None = None
+    ) -> dict[str, torch.Tensor]:
+        """Every member's :meth:`SoliaTransformer.encode_logits`, averaged (the ONNX graph)."""
+        return self._average([member.encode_logits(x, padding_mask) for member in self.members])
+
+    @torch.no_grad()
+    def predict(
+        self, x: torch.Tensor, padding_mask: torch.Tensor | None = None
+    ) -> dict[str, torch.Tensor]:
+        """As :meth:`SoliaTransformer.predict`, on the averaged logits."""
+        was_training = self.training
+        self.eval()
+        try:
+            out = self.forward(x, padding_mask)
+        finally:
+            self.train(was_training)
+        return {
+            "pump_prob": torch.sigmoid(out["pump_logits"]),
+            "rug_prob": torch.sigmoid(out["rug_logits"]),
+            "expected_return": out["expected_return"],
+        }
+
+    @classmethod
+    def from_config(
+        cls,
+        config: Mapping[str, Any],
+        *,
+        feature_columns: Sequence[str] | None = None,
+    ) -> SoliaEnsemble:
+        """``model.ensemble_size`` untrained members built from ``config``."""
+        n = ensemble_size(config)
+        return cls(
+            [
+                SoliaTransformer.from_config(config, feature_columns=feature_columns)
+                for _ in range(n)
+            ]
+        )
+
+
+def member_state(state: Mapping[str, Any], k: int) -> dict[str, Any]:
+    """Member ``k``'s state out of an ensemble's ``state_dict`` (``members.<k>.*``)."""
+    prefix = f"members.{k}."
+    out = {key[len(prefix) :]: value for key, value in state.items() if key.startswith(prefix)}
+    if not out:
+        raise IncompatibleCheckpointError(f"the state holds no ensemble member {k}")
+    return out
