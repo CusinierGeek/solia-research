@@ -40,6 +40,11 @@ namespace Solia.DataPipeline.Features;
 /// handed to <see cref="Snapshot"/>; the creator (signer of the create) and its dev buy, later buys and sells on
 /// this launch are kept for the token's lifetime.
 /// </para>
+/// <para>
+/// Wallet reputation (FE-T10): the token's first distinct buyers and first buys (with their block) are kept for its
+/// lifetime; the buyers' round-trip record, the creator's launch outcomes and the window traders' "smart" status are
+/// looked up in the same <see cref="WalletStore"/>.
+/// </para>
 /// </summary>
 internal sealed class TokenState
 {
@@ -92,6 +97,15 @@ internal sealed class TokenState
     private decimal _creatorSoldTokens;
     private DateTimeOffset? _creatorFirstSell;
 
+    // Wallet reputation (FE-T10): the first distinct buyers (one spare, so the creator can be left out once known)
+    // and the first buys with their block, both sorted by Ts.
+    private readonly int _earlyCount;
+    private readonly List<(DateTimeOffset Ts, string Wallet)> _earlyBuyers = [];
+    private readonly List<(DateTimeOffset Ts, long? Block)> _firstBuys = [];
+    private readonly HashSet<string> _smartTraders = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, bool> _smartCache = new(StringComparer.Ordinal);
+    private long? _createBlock;
+
     private DateTimeOffset? _prevSnapshotTs;
     private decimal _prevVolume;
     private int _prevHolders;
@@ -99,8 +113,9 @@ internal sealed class TokenState
     private double? _prevEma;
 
     public TokenState(string mint, int windowSeconds, int emaSpan, int rsiPeriod, DateTimeOffset firstSeen,
-        decimal largeBuySol = PipelineOptions.DefaultLargeBuySol, MomentumWindows? momentum = null)
+        decimal largeBuySol = PipelineOptions.DefaultLargeBuySol, MomentumWindows? momentum = null, int earlyBuyers = 20)
     {
+        _earlyCount = earlyBuyers;
         Mint = mint;
         _windowSeconds = windowSeconds;
         _emaSpan = emaSpan;
@@ -166,6 +181,7 @@ internal sealed class TokenState
         {
             _hasCreate = true;
             _createdAt = e.Timestamp;
+            _createBlock = e.Block ?? _createBlock;
             ApplyCreator(e);
         }
         else if (e.Kind is EventKind.Buy or EventKind.Sell && _creator is not null && e.Trader == _creator)
@@ -186,6 +202,15 @@ internal sealed class TokenState
         if (e.Kind is EventKind.Buy or EventKind.Sell)
         {
             Insert(new Observation(e.Timestamp, e.Kind, e.QuoteAmount, e.QuoteMint, e.Trader));
+        }
+
+        if (e.Kind == EventKind.Buy)
+        {
+            AddFirstBuy(e.Timestamp, e.Block);
+            if (e.Trader is { } buyer)
+            {
+                AddEarlyBuyer(e.Timestamp, buyer);
+            }
         }
 
         // A late event's facts are already stale: keep only what's newest.
@@ -446,6 +471,7 @@ internal sealed class TokenState
             NewTraderRatio = _concentration.NewTraderRatio,
             BurnedLiquidity = _burned,
             Wallet = wallets is null ? null : WalletFeatures(now, wallets),
+            Reputation = wallets is null ? null : ReputationFeatures(now, wallets),
             OnchainSignals = new Dictionary<string, object?>
             {
                 ["burnedLiquidityPercent"] = _burned,
@@ -526,6 +552,172 @@ internal sealed class TokenState
             CreatorSoldShare = _creatorBoughtTokens > 0 ? Math.Min(1, (double)(_creatorSoldTokens / _creatorBoughtTokens)) : null,
             CreatorFirstSellSec = _creatorFirstSell is { } sold ? (int)Math.Max(0, (now - sold).TotalSeconds) : null,
         };
+    }
+
+    /// <summary>Creator track record, early-buyer quality, smart-money flow over the window and launch bundling.</summary>
+    private ReputationFeatures ReputationFeatures(DateTimeOffset now, WalletStore wallets)
+    {
+        var buyers = new List<string>(_earlyCount);
+        foreach ((DateTimeOffset ts, string wallet) in _earlyBuyers)
+        {
+            if (ts <= now && wallet != _creator && buyers.Count < _earlyCount)
+            {
+                buyers.Add(wallet);
+            }
+        }
+
+        (double? knownShare, double? winRate, double? pnl) = wallets.EarlyBuyerStats(buyers, now);
+        (int? settled, double? rugShare, double? pumpShare) = _creator is null
+            ? (null, null, null)
+            : wallets.CreatorReputation(_creator, _createdAt, now);
+        (double? createShare, double? topShare) = Bundling(now);
+        var features = new ReputationFeatures
+        {
+            CreatorSettledLaunches = settled,
+            CreatorRugShare = rugShare,
+            CreatorPumpShare = pumpShare,
+            EarlyBuyers = buyers.Count,
+            EarlyKnownShare = knownShare,
+            EarlyWinRate = winRate,
+            EarlyPnlSol = pnl,
+            BundleCreateBlockShare = createShare,
+            BundleTopBlockShare = topShare,
+        };
+
+        return wallets.ReputationCovered(now) ? SmartFlow(now, wallets, features) : features;
+    }
+
+    /// <summary>The window's SOL-quoted volume from smart wallets (as buy_pressure: SOL-quoted, reported amounts only).</summary>
+    private ReputationFeatures SmartFlow(DateTimeOffset now, WalletStore wallets, ReputationFeatures features)
+    {
+        _smartCache.Clear();
+        _smartTraders.Clear();
+        decimal buySol = 0;
+        decimal smartBuySol = 0;
+        decimal smartNet = 0;
+        foreach (Observation o in _window)
+        {
+            if (o.Ts > now)
+            {
+                break;
+            }
+
+            if (o.QuoteMint != RawEvent.WrappedSolMint || o.QuoteAmount is not { } sol)
+            {
+                continue;
+            }
+
+            bool buy = o.Kind == EventKind.Buy;
+            buySol += buy ? sol : 0;
+            if (o.Trader is not { } trader)
+            {
+                continue;
+            }
+
+            if (!_smartCache.TryGetValue(trader, out bool smart))
+            {
+                smart = wallets.IsSmart(trader, now);
+                _smartCache[trader] = smart;
+            }
+
+            if (!smart)
+            {
+                continue;
+            }
+
+            _smartTraders.Add(trader);
+            smartBuySol += buy ? sol : 0;
+            smartNet += buy ? sol : -sol;
+        }
+
+        return features with
+        {
+            SmartBuyShare = buySol == 0 ? null : (double)(smartBuySol / buySol),
+            SmartNetFlowSol = (double)smartNet,
+            SmartTraders = _smartTraders.Count,
+        };
+    }
+
+    /// <summary>Shares of the first buys (those reporting a block) in the creation block, and in the busiest single block.</summary>
+    private (double? CreateBlockShare, double? TopBlockShare) Bundling(DateTimeOffset now)
+    {
+        var perBlock = new Dictionary<long, int>();
+        int withBlock = 0;
+        foreach ((DateTimeOffset ts, long? block) in _firstBuys)
+        {
+            if (ts > now)
+            {
+                break;
+            }
+
+            if (block is not { } b)
+            {
+                continue;
+            }
+
+            withBlock++;
+            perBlock[b] = perBlock.GetValueOrDefault(b) + 1;
+        }
+
+        if (withBlock == 0)
+        {
+            return (null, null);
+        }
+
+        double? inCreate = _createBlock is { } created ? (double)perBlock.GetValueOrDefault(created) / withBlock : null;
+        return (inCreate, (double)perBlock.Values.Max() / withBlock);
+    }
+
+    private void AddFirstBuy(DateTimeOffset ts, long? block)
+    {
+        if (_firstBuys.Count >= _earlyCount && ts >= _firstBuys[^1].Ts)
+        {
+            return;
+        }
+
+        int i = _firstBuys.Count;
+        while (i > 0 && _firstBuys[i - 1].Ts > ts)
+        {
+            i--;
+        }
+
+        _firstBuys.Insert(i, (ts, block));
+        if (_firstBuys.Count > _earlyCount)
+        {
+            _firstBuys.RemoveAt(_firstBuys.Count - 1);
+        }
+    }
+
+    /// <summary>Keeps the first <c>N + 1</c> distinct buyers by their first buy (late events included).</summary>
+    private void AddEarlyBuyer(DateTimeOffset ts, string wallet)
+    {
+        int capacity = _earlyCount + 1;
+        int existing = _earlyBuyers.FindIndex(b => b.Wallet == wallet);
+        if (existing >= 0)
+        {
+            if (_earlyBuyers[existing].Ts <= ts)
+            {
+                return;
+            }
+
+            _earlyBuyers.RemoveAt(existing);
+        }
+        else if (_earlyBuyers.Count >= capacity && ts >= _earlyBuyers[^1].Ts)
+        {
+            return;
+        }
+
+        int i = _earlyBuyers.Count;
+        while (i > 0 && _earlyBuyers[i - 1].Ts > ts)
+        {
+            i--;
+        }
+
+        _earlyBuyers.Insert(i, (ts, wallet));
+        if (_earlyBuyers.Count > capacity)
+        {
+            _earlyBuyers.RemoveAt(_earlyBuyers.Count - 1);
+        }
     }
 
     /// <summary>The price in force at <paramref name="ts"/>: the last one at or before it; null when the history starts later.</summary>

@@ -65,6 +65,9 @@ public sealed class PostgresTokenSink : ITokenSink
         "mkt_buy_sol_5m, mkt_buy_sol_1h, mkt_net_sol_flow_5m, mkt_net_sol_flow_1h, mkt_active_tokens_5m, mkt_active_tokens_1h, " +
         "wal_coverage_sec, wal_fresh_1h_share, wal_fresh_24h_share, wal_median_trader_age_sec, wal_creator_age_sec, " +
         "wal_creator_prev_launches, wal_creator_buy_sol, wal_creator_buy_supply_share, wal_creator_sold_share, wal_creator_first_sell_sec, " +
+        "rep_creator_settled_launches, rep_creator_rug_share, rep_creator_pump_share, rep_early_buyers, rep_early_known_share, " +
+        "rep_early_win_rate, rep_early_pnl_sol, rep_smart_buy_share, rep_smart_net_flow_sol, rep_smart_traders, " +
+        "rep_bundle_create_block_share, rep_bundle_top_block_share, " +
         "onchain_signals, behavioral_signals";
 
     private const string FeaturesInsertSql =
@@ -78,6 +81,9 @@ public sealed class PostgresTokenSink : ITokenSink
         "@mkt_buy_s, @mkt_buy_l, @mkt_flow_s, @mkt_flow_l, @mkt_active_s, @mkt_active_l, " +
         "@wal_cov, @wal_fresh_s, @wal_fresh_l, @wal_median_age, @wal_creator_age, " +
         "@wal_creator_launches, @wal_creator_buy, @wal_creator_buy_share, @wal_creator_sold, @wal_creator_sell_sec, " +
+        "@rep_launches, @rep_rug, @rep_pump, @rep_early, @rep_early_known, " +
+        "@rep_early_win, @rep_early_pnl, @rep_smart_buy, @rep_smart_flow, @rep_smart_traders, " +
+        "@rep_bundle_create, @rep_bundle_top, " +
         "@onchain, @behavioral) ";
 
     internal const string FeaturesInsertOnlySql = FeaturesInsertSql + "ON CONFLICT (mint, ts) DO NOTHING";
@@ -291,6 +297,18 @@ public sealed class PostgresTokenSink : ITokenSink
             Array("wal_creator_buy_share", NpgsqlDbType.Double, Column(s, x => x.Wallet?.CreatorBuySupplyShare)),
             Array("wal_creator_sold", NpgsqlDbType.Double, Column(s, x => x.Wallet?.CreatorSoldShare)),
             Array("wal_creator_sell_sec", NpgsqlDbType.Integer, Column(s, x => x.Wallet?.CreatorFirstSellSec)),
+            Array("rep_launches", NpgsqlDbType.Integer, Column(s, x => x.Reputation?.CreatorSettledLaunches)),
+            Array("rep_rug", NpgsqlDbType.Double, Column(s, x => x.Reputation?.CreatorRugShare)),
+            Array("rep_pump", NpgsqlDbType.Double, Column(s, x => x.Reputation?.CreatorPumpShare)),
+            Array("rep_early", NpgsqlDbType.Integer, Column(s, x => x.Reputation?.EarlyBuyers)),
+            Array("rep_early_known", NpgsqlDbType.Double, Column(s, x => x.Reputation?.EarlyKnownShare)),
+            Array("rep_early_win", NpgsqlDbType.Double, Column(s, x => x.Reputation?.EarlyWinRate)),
+            Array("rep_early_pnl", NpgsqlDbType.Double, Column(s, x => x.Reputation?.EarlyPnlSol)),
+            Array("rep_smart_buy", NpgsqlDbType.Double, Column(s, x => x.Reputation?.SmartBuyShare)),
+            Array("rep_smart_flow", NpgsqlDbType.Double, Column(s, x => x.Reputation?.SmartNetFlowSol)),
+            Array("rep_smart_traders", NpgsqlDbType.Integer, Column(s, x => x.Reputation?.SmartTraders)),
+            Array("rep_bundle_create", NpgsqlDbType.Double, Column(s, x => x.Reputation?.BundleCreateBlockShare)),
+            Array("rep_bundle_top", NpgsqlDbType.Double, Column(s, x => x.Reputation?.BundleTopBlockShare)),
             Array("onchain", NpgsqlDbType.Jsonb, Column(s, x => JsonSerializer.Serialize(x.OnchainSignals))),
             Array("behavioral", NpgsqlDbType.Jsonb, Column(s, x => JsonSerializer.Serialize(x.BehavioralSignals))));
     }

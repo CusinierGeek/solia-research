@@ -126,6 +126,14 @@ Time-series feature snapshots per token. The model's input unit.
 | wal_creator_buy_supply_share | DOUBLE PRECISION | dev buy tokens / supply; 0 without a dev buy; NULL when the creator or supply is unknown |
 | wal_creator_sold_share | DOUBLE PRECISION | tokens the creator sold / bought on this launch, [0, 1]; NULL when it bought none |
 | wal_creator_first_sell_sec | INT | seconds since the creator's first sell on this launch; NULL while it hasn't sold |
+| rep_creator_settled_launches | INT | wallet reputation (FE-T10, 0015): the creator's launches before this one (within the age cap) whose outcome is recorded (at most 16); 0 for an unknown creator; NULL without a create or before the age cap is covered |
+| rep_creator_rug_share, rep_creator_pump_share | DOUBLE PRECISION | share of those launches that rugged / pumped in their first hour, [0, 1]; NULL without one |
+| rep_early_buyers | INT | distinct first buyers seen (the creator excepted), at most `Pipeline:ReputationEarlyBuyers` (20); always written (NULL = row predates 0015) |
+| rep_early_known_share | DOUBLE PRECISION | share of them with at least `Pipeline:ReputationMinTrips` (3) closed round trips; NULL without a buyer or before the age cap is covered |
+| rep_early_win_rate, rep_early_pnl_sol | DOUBLE PRECISION | the rated early buyers' mean win rate, [0, 1], and mean realized P&L per round trip, SOL; NULL when none is rated |
+| rep_smart_buy_share | DOUBLE PRECISION | share of the window's SOL buy volume from smart wallets (rated, win rate > `Pipeline:ReputationSmartWinRate`, 0.6), [0, 1]; NULL without a SOL buy or before the age cap is covered |
+| rep_smart_net_flow_sol, rep_smart_traders | DOUBLE PRECISION, INT | smart wallets' net SOL flow (buys − sells) over the window, and how many traded in it; NULL before the age cap is covered |
+| rep_bundle_create_block_share, rep_bundle_top_block_share | DOUBLE PRECISION | share of the first buys (those reporting a block) landing in the creation block / in the busiest single block, [0, 1]; NULL without such a buy (the first also without a creation block) |
 | onchain_signals | JSONB | Pump.fun-specific signals |
 | behavioral_signals | JSONB | pump/rug pattern flags |
 | raw | JSONB | nullable debug payload |
@@ -138,7 +146,9 @@ seconds strictly before the second of `ts`) and NULL until their window has been
 
 The `wal_*` columns come from the pipeline's cross-token wallet memory: the wallet lookups of a row use only
 events strictly before its `ts`; the history-dependent ones stay NULL until `Pipeline:WalletAgeCapHours` of
-history has been observed (replay warm-up, see docs/DATA-PIPELINE.md "Cross-token wallet memory").
+history has been observed (replay warm-up, see docs/DATA-PIPELINE.md "Cross-token wallet memory"). The
+`rep_*` columns come from the same memory (see docs/DATA-PIPELINE.md "Wallet reputation"); a launch outcome is
+visible only once its first hour plus the label embargo is over.
 
 ### `wallet_state`, `wallet_state_meta`
 The live pipeline's cross-token wallet memory (FE-T9, 0014), so a restart doesn't reset every wallet to fresh.
@@ -154,6 +164,8 @@ every `Pipeline:WalletPersistSeconds`); replays keep theirs in memory and never 
 | tokens_traded | INT | distinct tokens traded (approximate: a token re-entered after 4 others counts again) |
 | tokens_created | INT | `Create` events signed |
 | recent_launches | TIMESTAMPTZ[] | latest creations, ascending, at most 16 |
+| trip_opened, trip_pnl_sol | TIMESTAMPTZ[], DOUBLE PRECISION[] | latest closed round trips (FE-T10, 0015), parallel arrays ascending by first buy, at most 32: when each opened, its realized SOL P&L |
+| outcome_launches, outcome_flags | TIMESTAMPTZ[], SMALLINT[] | latest recorded launch outcomes (FE-T10, 0015), parallel arrays ascending by launch, at most 16: launch time, flags (1 = rugged, 2 = pumped) |
 
 `wallet_state_meta` is one row (`id` = TRUE): `history_start` (start of the history behind the state — the
 features' coverage), `last_event_at` (newest event applied), `saved_at`. Bounded by the pipeline: a wallet

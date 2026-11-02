@@ -156,8 +156,57 @@ a retrain when wallets rotate.
   Every save logs the wallets held and the managed heap (`saved wallet state: … wallets in memory, managed heap
   … MB`): the bound on one day of live traffic (memory, `pg_total_relation_size('wallet_state')`) is recorded
   here once measured on the deployed pipeline.
-- **Out of scope here:** outcome-based reputation (creator rug rate, early buyers' win rate: #190, built on this
-  state) and funding links between wallets (need Solana RPC, which is paid).
+- **Out of scope here:** funding links between wallets (need Solana RPC, which is paid). Outcome-based
+  reputation is built on this state: see *Wallet reputation* below.
+
+### Wallet reputation (FE-T10, #190)
+
+Wallet age says a buyer is new, not whether it is *good*. The same `WalletStore` derives behaviour statistics
+from **outcomes** (never identities, so they stay valid as wallets rotate), and `TokenState` adds the launch's
+bundling from its own buys:
+
+| Column | Meaning |
+|---|---|
+| `rep_creator_settled_launches` | the creator's earlier launches (within the age cap) whose outcome is recorded |
+| `rep_creator_rug_share` / `_pump_share` | share of those that rugged / pumped in their first hour |
+| `rep_early_buyers` | the token's first distinct buyers seen (creator excepted, at most `Pipeline:ReputationEarlyBuyers` = 20; always written) |
+| `rep_early_known_share` | share of them with ≥ `Pipeline:ReputationMinTrips` (3) closed round trips ("known"; the rest are "unknown") |
+| `rep_early_win_rate` / `rep_early_pnl_sol` | the known early buyers' mean win rate and mean realized P&L per round trip (SOL) |
+| `rep_smart_buy_share` | share of the window's SOL buy volume from smart wallets (known, win rate > `Pipeline:ReputationSmartWinRate` = 0.6) |
+| `rep_smart_net_flow_sol` / `rep_smart_traders` | smart wallets' net SOL flow over the window, and how many traded in it — "good wallets are buying now", all along the token's life |
+| `rep_bundle_create_block_share` / `_top_block_share` | share of the first 20 buys (with a `RawEvent.Block`) landing in the creation block / in one single block |
+
+- **Round trips (realized P&L).** Per (wallet, token), SOL-quoted buys and sells only (as `buy_pressure`; the
+  create's dev buy counts as a buy): buys add tokens and SOL cost, a sell realizes `SOL received − average cost
+  of the tokens sold`, and the position closes — one round trip, a win when its P&L is > 0 — once ≥ 99 % of the
+  tokens held are sold. A sell without a known buy (bought before the history, or not in SOL) is ignored. **A
+  position that isn't closed counts as open, never as a loss.** Positions live in fixed UTC buckets of
+  `Pipeline:ReputationPositionMaxHours` (6 h, aligned on the Unix epoch): one still open at a boundary is dropped
+  (still never a loss). A wallet's record counts its trips **opened within the age cap minus one bucket (18 h)**,
+  at most its latest 32.
+- **Launch outcomes, label-safe.** A create starts tracking the token's SOL price over its first
+  `Pipeline:ReputationOutcomeHorizonSeconds` (3 600 s, the longest label horizon). *Pumped*: highest price ≥
+  (1 + `ReputationPumpThreshold` = 2.0) × first price (the 1 h pump label's threshold). *Rugged*: the price fell by
+  ≥ `ReputationRugThreshold` = 0.7 **from its running peak** (the 1 h rug threshold; measured from the peak since a
+  curve launch can't fall far below its launch price). A launch with no price in its hour is recorded as neither.
+  The outcome is recorded on the creator only once **the horizon plus the label embargo**
+  (`ReputationOutcomeEmbargoSeconds` = 3 600 s) is over, strictly before the snapshot: a snapshot never sees an
+  outcome that wasn't known at its `ts`, and the outcome can't leak a label. Unsigned trades still feed the price
+  track.
+- **Point-in-time and live = replay.** Everything goes through the store's queue (events strictly before the
+  snapshot, in timestamp order), so the snapshot cadence doesn't matter and a later event never changes an earlier
+  snapshot. The reputation columns are NULL until the age cap (24 h) is covered, like the wallet ages; with
+  `--warmup-hours 24` a replay reproduces the live values **exactly**: the outcomes counted are of launches created
+  within the age cap, and the trips counted all opened after a bucket boundary the warm-up covers, so nothing open
+  before the replay's start can change them (`WalletReputationTests` checks a 40 h stream against its last 24 h).
+- **Restarts.** Closed round trips and recorded outcomes are saved with the wallet in `wallet_state` (0015). Open
+  positions and launches still inside their hour are not: after a restart they start over (a few trips / outcomes
+  of the restart's hours are lost).
+- **Size.** Bounded like the rest of the memory: per wallet at most 32 trips (16 B each) and 16 outcomes; open
+  positions live at most 6 h; launches are tracked for 2 h.
+- **Overfitting watch.** A reputation feature can encode a handful of very active wallets, letting the model
+  memorize them. The combined ablation (#198) reports, for the `wallet_reputation` group, the number of distinct
+  creators and wallets behind the top-1 % entry selection before the group may be enabled.
 
 ### Granularity: aggregated snapshots, not raw trades
 
@@ -306,6 +355,9 @@ Cold start: a token's rolling window begins at the replay's first event, so the 
 - Wallet memory: state updates, TTL eviction, point-in-time ordering, restart persistence (engine + Postgres
   round trip), live/replay parity and the warm-up (`WalletStoreTests`, `WalletPersistenceTests`,
   `ReplayWalletTests`, `PostgresWalletStateStoreTests`).
+- Wallet reputation: round trips (P&L, open positions, buckets), label-safe launch outcomes, early buyers, smart
+  flow, bundling, unknown wallets, cadence independence and warm-up parity, persistence (`WalletReputationTests`,
+  `PostgresWalletStateStoreTests`, `PostgresTokenSinkTests`).
 
 ## Data retention
 

@@ -733,7 +733,13 @@ and seeds.
   `wallet` (FE-T9, #189) — `WALLET_COLUMNS`: freshness of the window's signers (share first seen < 1 h /
   < 24 h, median age), the creator's age and previous launches, and its behaviour on this launch (dev buy in
   SOL and / supply, share sold, time since first sell), plus `wal_coverage_sec` (see docs/DATA-PIPELINE.md
-  "Cross-token wallet memory").
+  "Cross-token wallet memory");
+  `wallet_reputation` (FE-T10, #190) — `REPUTATION_COLUMNS`: the creator's recorded launches and their rug /
+  pump shares (an outcome is visible only after its 1 h horizon plus the label embargo), the first buyers' share
+  of rated wallets, mean win rate and P&L per round trip, the smart wallets' share of the window's SOL buys, net
+  flow and count, and the launch's bundling (first buys in the creation block / one block); `rep_early_buyers`
+  is always written (see docs/DATA-PIPELINE.md "Wallet reputation"). Disabled by default; measured in the
+  combined ablation #198, which must also report the distinct creators / wallets behind its top-1 % entries.
 - **Venue one-hot is encoded at load time, not stored.** `features.py` derives `venue_<name>` from the
   raw `venue` column (training reads it from the DB, `/predict` rows carry it as a string), over a
   fixed category list (`VENUES`: `pumpfun`, `pumpswap`, `raydium-launchpad`, `raydium`,
@@ -836,6 +842,20 @@ Not measured yet. The `wallet` group is computed by the pipeline but **disabled*
   (`wal_coverage_sec` NULL).
 - **Variants**: the current defaults vs the same **+wallet**.
 - **Decision rule**: same margin as the other groups. `wallet` is enabled only if it clears it.
+
+#### Results: `wallet_reputation` (#190) — pending, measured in #198
+
+Not measured yet. The `wallet_reputation` group is computed by the pipeline but **disabled** until the combined
+ablation #198 measures it. Protocol specifics:
+
+- **Data**: migration 0015 applied, then the same combined re-replay with **`--warmup-hours 24`** (the
+  reputation look-backs fit in the age cap: launch outcomes need 1 h + 1 h embargo, round trips 18 h + one 6 h
+  bucket). Rows predating 0015 are refused for the group (`rep_early_buyers` NULL).
+- **Variants**: the current defaults vs the same **+wallet_reputation** (and +wallet +wallet_reputation, since
+  both read the same memory).
+- **Overfitting check**: report the number of distinct creators and wallets behind the top-1 % entry selection
+  (pump heads). A lift carried by a handful of very active wallets is memorization, not a gain.
+- **Decision rule**: same margin as the other groups. `wallet_reputation` is enabled only if it clears it.
 
 ```bash
 # from services/ai-service, database from SOLIA_DB_CONNECTION / POSTGRES_* (a replayed history)

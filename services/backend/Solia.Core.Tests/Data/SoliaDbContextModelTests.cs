@@ -73,6 +73,8 @@ public class SoliaDbContextModelTests
         Assert.Equal("mkt_active_tokens_1h", Column<Feature>(ctx, nameof(Feature.MktActiveTokens1h)));
         Assert.Equal("wal_coverage_sec", Column<Feature>(ctx, nameof(Feature.WalCoverageSec)));
         Assert.Equal("wal_creator_first_sell_sec", Column<Feature>(ctx, nameof(Feature.WalCreatorFirstSellSec)));
+        Assert.Equal("rep_creator_settled_launches", Column<Feature>(ctx, nameof(Feature.RepCreatorSettledLaunches)));
+        Assert.Equal("rep_bundle_top_block_share", Column<Feature>(ctx, nameof(Feature.RepBundleTopBlockShare)));
         Assert.Equal("pump_prob", Column<Prediction>(ctx, nameof(Prediction.PumpProb)));
         Assert.Equal("features_snapshot", Column<Trade>(ctx, nameof(Trade.FeaturesSnapshot)));
         Assert.Equal("candidate_model_id", Column<TrainingEvent>(ctx, nameof(TrainingEvent.CandidateModelId)));

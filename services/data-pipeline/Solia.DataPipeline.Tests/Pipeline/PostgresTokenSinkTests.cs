@@ -267,6 +267,46 @@ public sealed class PostgresTokenSinkTests(PostgresFixture db) : IClassFixture<P
     }
 
     [Fact]
+    public async Task Reputation_columns_are_persisted_and_null_when_not_computable()
+    {
+        var reputation = new ReputationFeatures
+        {
+            CreatorSettledLaunches = 4,
+            CreatorRugShare = 0.75,
+            CreatorPumpShare = 0.25,
+            EarlyBuyers = 20,
+            EarlyKnownShare = 0.4,
+            EarlyWinRate = 0.65,
+            EarlyPnlSol = -0.125,
+            SmartBuyShare = 0.3,
+            SmartNetFlowSol = -2.5,
+            SmartTraders = 3,
+            BundleCreateBlockShare = 0.55,
+            BundleTopBlockShare = 0.6,
+        };
+        FeatureSnapshot snap = Snap("REP1", T0, 1m) with { Reputation = reputation };
+        FeatureSnapshot warmUp = Snap("REP2", T0, 1m) with { Reputation = new ReputationFeatures { EarlyBuyers = 2 } };
+        await Sink.WriteAsync(Batch(T0, [snap, warmUp]), default);
+
+        Assert.Equal(4, await Feature<int>("rep_creator_settled_launches", "REP1"));
+        Assert.Equal(0.75, await Feature<double>("rep_creator_rug_share", "REP1"));
+        Assert.Equal(0.25, await Feature<double>("rep_creator_pump_share", "REP1"));
+        Assert.Equal(20, await Feature<int>("rep_early_buyers", "REP1"));
+        Assert.Equal(0.4, await Feature<double>("rep_early_known_share", "REP1"));
+        Assert.Equal(0.65, await Feature<double>("rep_early_win_rate", "REP1"));
+        Assert.Equal(-0.125, await Feature<double>("rep_early_pnl_sol", "REP1"));
+        Assert.Equal(0.3, await Feature<double>("rep_smart_buy_share", "REP1"));
+        Assert.Equal(-2.5, await Feature<double>("rep_smart_net_flow_sol", "REP1"));
+        Assert.Equal(3, await Feature<int>("rep_smart_traders", "REP1"));
+        Assert.Equal(0.55, await Feature<double>("rep_bundle_create_block_share", "REP1"));
+        Assert.Equal(0.6, await Feature<double>("rep_bundle_top_block_share", "REP1"));
+        Assert.Equal(1L, await db.ScalarAsync<long>(
+            "SELECT count(*) FROM features WHERE mint = 'REP2' AND rep_early_buyers = 2 " +
+            "AND rep_creator_settled_launches IS NULL AND rep_early_win_rate IS NULL AND rep_smart_traders IS NULL " +
+            "AND rep_bundle_top_block_share IS NULL"));
+    }
+
+    [Fact]
     public async Task Burned_liquidity_is_persisted_and_null_when_unknown()
     {
         FeatureSnapshot snap = Snap("BURN1", T0, 1m) with { BurnedLiquidity = 57.5 };

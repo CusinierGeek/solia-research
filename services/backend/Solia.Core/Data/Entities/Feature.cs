@@ -169,6 +169,44 @@ public sealed class Feature
     /// <summary>Seconds since the creator's first sell; null while it hasn't sold.</summary>
     public int? WalCreatorFirstSellSec { get; set; }
 
+    // Wallet reputation features (FE-T10, #190): creator track record, early-buyer quality, smart flow, bundling.
+
+    /// <summary>Creator's earlier launches (within the age cap) with a recorded outcome; null without a creator or during warm-up (FE-T10).</summary>
+    public int? RepCreatorSettledLaunches { get; set; }
+
+    /// <summary>Share of the creator's recorded launches that rugged.</summary>
+    public double? RepCreatorRugShare { get; set; }
+
+    /// <summary>Share of the creator's recorded launches that pumped.</summary>
+    public double? RepCreatorPumpShare { get; set; }
+
+    /// <summary>Distinct first buyers seen (creator excepted); always written since migration 0015.</summary>
+    public int? RepEarlyBuyers { get; set; }
+
+    /// <summary>Share of the early buyers with enough round trips to be rated.</summary>
+    public double? RepEarlyKnownShare { get; set; }
+
+    /// <summary>Mean win rate of the rated early buyers.</summary>
+    public double? RepEarlyWinRate { get; set; }
+
+    /// <summary>Mean realized P&amp;L per round trip of the rated early buyers, SOL.</summary>
+    public double? RepEarlyPnlSol { get; set; }
+
+    /// <summary>Share of the window's SOL buy volume from smart wallets.</summary>
+    public double? RepSmartBuyShare { get; set; }
+
+    /// <summary>Net SOL flow of smart wallets over the window.</summary>
+    public double? RepSmartNetFlowSol { get; set; }
+
+    /// <summary>Distinct smart wallets trading in the window.</summary>
+    public int? RepSmartTraders { get; set; }
+
+    /// <summary>Share of the first buys landing in the creation block.</summary>
+    public double? RepBundleCreateBlockShare { get; set; }
+
+    /// <summary>Share of the first buys landing in the busiest single block.</summary>
+    public double? RepBundleTopBlockShare { get; set; }
+
     /// <summary>Pump.fun-specific signals (JSONB).</summary>
     public string? OnchainSignals { get; set; }
 

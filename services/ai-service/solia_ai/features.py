@@ -72,6 +72,28 @@ WALLET_COLUMNS: tuple[str, ...] = (
     "wal_creator_first_sell_sec",
 )
 
+# FE-T10 (#190): wallet reputation — whether the wallets behind a token are *good*, from outcomes in
+# the same wallet memory (behaviour statistics, never identities): the creator's earlier launches
+# that rugged / pumped (an outcome is recorded only after its 1 h horizon plus the label embargo, so
+# it can't leak a label), the realized round-trip record (SOL-quoted buy -> sell) of the token's
+# first buyers and of the "smart" wallets trading it in the window, and whether its first buys
+# landed in one block (a bundle). The history-dependent ones are NULL until 24 h of history has
+# been observed; rep_early_buyers, always written, marks the rows computed since migration 0015.
+REPUTATION_COLUMNS: tuple[str, ...] = (
+    "rep_creator_settled_launches",
+    "rep_creator_rug_share",
+    "rep_creator_pump_share",
+    "rep_early_buyers",
+    "rep_early_known_share",
+    "rep_early_win_rate",
+    "rep_early_pnl_sol",
+    "rep_smart_buy_share",
+    "rep_smart_net_flow_sol",
+    "rep_smart_traders",
+    "rep_bundle_create_block_share",
+    "rep_bundle_top_block_share",
+)
+
 # Ordered model inputs: the numeric features plus the migrated flag, then the venue one-hot. Keep
 # the stored ones (DB_FEATURE_COLUMNS) and the `features` table (services/db/migrations) in
 # lockstep — see tests/test_features.py.
@@ -115,6 +137,7 @@ FEATURE_COLUMNS: list[str] = [
     "burned_liquidity",
     *MARKET_COLUMNS,
     *WALLET_COLUMNS,
+    *REPUTATION_COLUMNS,
     *VENUE_COLUMNS,
 ]
 
@@ -170,6 +193,8 @@ FEATURE_GROUPS: dict[str, tuple[str, ...]] = {
     "market": MARKET_COLUMNS,
     # FE-T9 (#189): wallet freshness and creator behaviour, from the cross-token wallet memory.
     "wallet": WALLET_COLUMNS,
+    # FE-T10 (#190): creator track record, early-buyer quality, smart-money flow, launch bundling.
+    "wallet_reputation": REPUTATION_COLUMNS,
     # FE-T5 (#114): trading venue (Pump.fun curve vs launchpads vs AMMs), one-hot.
     "venue": VENUE_COLUMNS,
 }
@@ -246,6 +271,14 @@ NULL_FILL: dict[str, float] = {
         if col not in ("mkt_coverage_sec", "mkt_net_sol_flow_5m", "mkt_net_sol_flow_1h")
     },
     **{col: -1.0 for col in WALLET_COLUMNS if col != "wal_coverage_sec"},
+    # Reputation columns are NULL when not computable (warm-up, no creator, no rated buyer, no SOL
+    # buy, no block): -1 for the never-negative ones, so it can't pass for a real 0 (a creator with
+    # no recorded launch, no smart volume, an unbundled launch). The signed P&L / net flow keep 0.
+    **{
+        col: -1.0
+        for col in REPUTATION_COLUMNS
+        if col not in ("rep_early_buyers", "rep_early_pnl_sol", "rep_smart_net_flow_sol")
+    },
 }
 
 # Per group, the columns the pipeline always writes since the group's migration: a NULL there
@@ -257,6 +290,9 @@ ALWAYS_WRITTEN: dict[str, tuple[str, ...]] = {
     "concentration": ("unique_traders",),  # migration 0007
     "market": ("mkt_coverage_sec",),  # migration 0013 (the aggregates are NULL during warm-up)
     "wallet": ("wal_coverage_sec",),  # migration 0014 (history-dependent ones NULL in warm-up)
+    "wallet_reputation": (
+        "rep_early_buyers",
+    ),  # migration 0015 (history-dependent ones NULL in warm-up)
     # `burn` has none: burned_liquidity is legitimately NULL (unknown), and the database keeps it
     # equal to onchain_signals.burnedLiquidityPercent (0008's insert trigger covers writers that
     # omit it, 0009 backfills earlier rows), so a NULL there is never a stale row. `venue` reads a

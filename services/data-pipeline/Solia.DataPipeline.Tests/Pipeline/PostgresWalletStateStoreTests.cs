@@ -3,7 +3,7 @@ using Solia.DataPipeline.Pipeline;
 
 namespace Solia.DataPipeline.Tests.Pipeline;
 
-/// <summary>FE-T9 (#189): the live wallet memory round-trips through <c>wallet_state</c> (migration 0014).</summary>
+/// <summary>FE-T9 (#189) / FE-T10 (#190): the live wallet memory round-trips through <c>wallet_state</c> (migrations 0014, 0015).</summary>
 [Trait(TestCategories.Key, TestCategories.Integration)]
 public sealed class PostgresWalletStateStoreTests(PostgresFixture db) : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
@@ -46,6 +46,26 @@ public sealed class PostgresWalletStateStoreTests(PostgresFixture db) : IClassFi
         Assert.Equal(2, dev.TokensCreated);
         Assert.Equal([S0 + 100, S0 + 200], dev.RecentLaunches);
         Assert.Empty(Assert.Single(loaded.Wallets, w => w.Wallet == "a").RecentLaunches);
+    }
+
+    [Fact]
+    public async Task Round_trips_and_launch_outcomes_load_back()
+    {
+        WalletRecord pro = Wallet("pro", S0) with
+        {
+            Trips = [new RoundTrip(S0 + 1, 0.5), new RoundTrip(S0 + 2, -0.25)],
+            Outcomes = [new LaunchOutcome(S0 + 3, Rugged: true, Pumped: false), new LaunchOutcome(S0 + 4, false, true)],
+        };
+        await Store.SaveAsync(new WalletStateChanges(T0, T0, [pro, Wallet("plain", S0)], []), default);
+
+        WalletStateSnapshot loaded = (await Store.LoadAsync(default))!;
+
+        WalletRecord back = loaded.Wallets.Single(w => w.Wallet == "pro");
+        Assert.Equal(pro.Trips, back.Trips!);
+        Assert.Equal(pro.Outcomes, back.Outcomes!);
+        WalletRecord plain = loaded.Wallets.Single(w => w.Wallet == "plain");
+        Assert.Null(plain.Trips);
+        Assert.Null(plain.Outcomes);
     }
 
     [Fact]

@@ -8,17 +8,26 @@ namespace Solia.DataPipeline.Pipeline;
 /// <see cref="IWalletStateStore"/> on PostgreSQL (<c>wallet_state</c> + the single-row <c>wallet_state_meta</c>,
 /// migration 0014), written with raw SQL like every pipeline table. Built for volume: a save streams the changed
 /// wallets with a binary <c>COPY</c> into a transaction-scoped staging table and upserts them in one statement, and
-/// a load reads the table back with a binary <c>COPY</c>, so neither costs a round trip per wallet.
+/// a load reads the table back with a binary <c>COPY</c>, so neither costs a round trip per wallet. The reputation
+/// (FE-T10, migration 0015) rides along as parallel arrays: round trips (first-buy time, P&amp;L) and launch outcomes
+/// (launch time, flags <see cref="RuggedFlag"/> / <see cref="PumpedFlag"/>).
 /// </summary>
 public sealed class PostgresWalletStateStore(NpgsqlDataSource dataSource) : IWalletStateStore
 {
-    private const string Columns = "wallet, first_seen_at, last_seen_at, trade_count, tokens_traded, tokens_created, recent_launches";
+    internal const short RuggedFlag = 1;
+    internal const short PumpedFlag = 2;
+
+    private const string Columns =
+        "wallet, first_seen_at, last_seen_at, trade_count, tokens_traded, tokens_created, recent_launches, " +
+        "trip_opened, trip_pnl_sol, outcome_launches, outcome_flags";
 
     private const string UpsertSql =
         "INSERT INTO wallet_state (" + Columns + ") SELECT " + Columns + " FROM wallet_state_stage " +
         "ON CONFLICT (wallet) DO UPDATE SET first_seen_at = EXCLUDED.first_seen_at, last_seen_at = EXCLUDED.last_seen_at, " +
         "trade_count = EXCLUDED.trade_count, tokens_traded = EXCLUDED.tokens_traded, " +
-        "tokens_created = EXCLUDED.tokens_created, recent_launches = EXCLUDED.recent_launches";
+        "tokens_created = EXCLUDED.tokens_created, recent_launches = EXCLUDED.recent_launches, " +
+        "trip_opened = EXCLUDED.trip_opened, trip_pnl_sol = EXCLUDED.trip_pnl_sol, " +
+        "outcome_launches = EXCLUDED.outcome_launches, outcome_flags = EXCLUDED.outcome_flags";
 
     private const string MetaSql =
         "INSERT INTO wallet_state_meta (id, history_start, last_event_at, saved_at) VALUES (TRUE, @start, @last, now()) " +
@@ -56,8 +65,15 @@ public sealed class PostgresWalletStateStore(NpgsqlDataSource dataSource) : IWal
                 int created = await export.ReadAsync<int>(NpgsqlDbType.Integer, cancellationToken);
                 DateTimeOffset[] launches = await export.ReadAsync<DateTimeOffset[]>(
                     NpgsqlDbType.Array | NpgsqlDbType.TimestampTz, cancellationToken);
+                DateTimeOffset[] tripOpened = await export.ReadAsync<DateTimeOffset[]>(
+                    NpgsqlDbType.Array | NpgsqlDbType.TimestampTz, cancellationToken);
+                double[] tripPnl = await export.ReadAsync<double[]>(NpgsqlDbType.Array | NpgsqlDbType.Double, cancellationToken);
+                DateTimeOffset[] outcomeLaunches = await export.ReadAsync<DateTimeOffset[]>(
+                    NpgsqlDbType.Array | NpgsqlDbType.TimestampTz, cancellationToken);
+                short[] outcomeFlags = await export.ReadAsync<short[]>(NpgsqlDbType.Array | NpgsqlDbType.Smallint, cancellationToken);
                 wallets.Add(new WalletRecord(wallet, first.ToUnixTimeSeconds(), seen.ToUnixTimeSeconds(), trades, tokens, created,
-                    launches.Select(l => l.ToUnixTimeSeconds()).ToArray()));
+                    launches.Select(l => l.ToUnixTimeSeconds()).ToArray(),
+                    ToTrips(tripOpened, tripPnl), ToOutcomes(outcomeLaunches, outcomeFlags)));
             }
         }
 
@@ -87,6 +103,16 @@ public sealed class PostgresWalletStateStore(NpgsqlDataSource dataSource) : IWal
                     await import.WriteAsync(w.TokensCreated, NpgsqlDbType.Integer, cancellationToken);
                     await import.WriteAsync(w.RecentLaunches.Select(Utc).ToArray(),
                         NpgsqlDbType.Array | NpgsqlDbType.TimestampTz, cancellationToken);
+                    RoundTrip[] trips = w.Trips ?? [];
+                    LaunchOutcome[] outcomes = w.Outcomes ?? [];
+                    await import.WriteAsync(trips.Select(t => Utc(t.Opened)).ToArray(),
+                        NpgsqlDbType.Array | NpgsqlDbType.TimestampTz, cancellationToken);
+                    await import.WriteAsync(trips.Select(t => t.PnlSol).ToArray(),
+                        NpgsqlDbType.Array | NpgsqlDbType.Double, cancellationToken);
+                    await import.WriteAsync(outcomes.Select(o => Utc(o.Launch)).ToArray(),
+                        NpgsqlDbType.Array | NpgsqlDbType.TimestampTz, cancellationToken);
+                    await import.WriteAsync(outcomes.Select(Flags).ToArray(),
+                        NpgsqlDbType.Array | NpgsqlDbType.Smallint, cancellationToken);
                 }
 
                 await import.CompleteAsync(cancellationToken);
@@ -120,4 +146,23 @@ public sealed class PostgresWalletStateStore(NpgsqlDataSource dataSource) : IWal
     }
 
     private static DateTimeOffset Utc(long unixSeconds) => DateTimeOffset.FromUnixTimeSeconds(unixSeconds);
+
+    internal static short Flags(LaunchOutcome o) => (short)((o.Rugged ? RuggedFlag : 0) | (o.Pumped ? PumpedFlag : 0));
+
+    /// <summary>Pairs the parallel arrays back (a length mismatch keeps the common prefix); null when empty.</summary>
+    internal static RoundTrip[]? ToTrips(DateTimeOffset[] opened, double[] pnl)
+    {
+        int n = Math.Min(opened.Length, pnl.Length);
+        return n == 0 ? null : Enumerable.Range(0, n).Select(i => new RoundTrip(opened[i].ToUnixTimeSeconds(), pnl[i])).ToArray();
+    }
+
+    internal static LaunchOutcome[]? ToOutcomes(DateTimeOffset[] launches, short[] flags)
+    {
+        int n = Math.Min(launches.Length, flags.Length);
+        return n == 0
+            ? null
+            : Enumerable.Range(0, n)
+                .Select(i => new LaunchOutcome(launches[i].ToUnixTimeSeconds(), (flags[i] & RuggedFlag) != 0, (flags[i] & PumpedFlag) != 0))
+                .ToArray();
+    }
 }

@@ -17,6 +17,8 @@ public static class PipelineOptionsRegistration
             .Validate(o => o.HasConsistentMomentumWindows(),
                 "Pipeline:MomentumShortSeconds < MomentumMediumSeconds < MomentumLongSeconds <= WindowSeconds, and 2 * MomentumShortSeconds <= WindowSeconds.")
             .Validate(o => o.HasConsistentWalletHorizon(), "Pipeline:WalletAgeCapHours must be <= Pipeline:WalletTtlHours.")
+            .Validate(o => o.HasConsistentReputationHorizon(),
+                "Pipeline:ReputationPositionMaxHours and ReputationOutcomeHorizonSeconds + ReputationOutcomeEmbargoSeconds must be shorter than Pipeline:WalletAgeCapHours.")
             .Validate(o => o.HasExclusiveLiveConsumer(),
                 "Pipeline:Ingest and Pipeline:StreamProbe (INGEST / STREAM_PROBE) can't both be enabled: each owns the single live connection.")
             .ValidateOnStart();

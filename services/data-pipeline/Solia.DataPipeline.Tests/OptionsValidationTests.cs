@@ -14,6 +14,7 @@ public class OptionsValidationTests
     public void Defaults_are_valid()
     {
         Assert.True(IsValid(new PipelineOptions()));
+        Assert.True(new PipelineOptions().HasConsistentReputationHorizon());
         Assert.True(new PumpApiOptions().HasValidUrls());
     }
 
@@ -138,6 +139,37 @@ public class OptionsValidationTests
     public void The_wallet_age_cap_fits_the_ttl(int ttl, int cap, bool valid)
     {
         Assert.Equal(valid, new PipelineOptions { WalletTtlHours = ttl, WalletAgeCapHours = cap }.HasConsistentWalletHorizon());
+    }
+
+    [Theory]
+    [InlineData(6, 3_600, 3_600, true)]
+    [InlineData(24, 3_600, 3_600, false)] // a position as old as the cap can't be replayed
+    [InlineData(6, 43_200, 43_200, false)] // an outcome delayed past the cap can't be replayed
+    public void The_reputation_look_backs_fit_the_age_cap(int positionHours, int horizon, int embargo, bool valid)
+    {
+        var o = new PipelineOptions
+        {
+            ReputationPositionMaxHours = positionHours,
+            ReputationOutcomeHorizonSeconds = horizon,
+            ReputationOutcomeEmbargoSeconds = embargo,
+        };
+        Assert.Equal(valid, o.HasConsistentReputationHorizon());
+    }
+
+    [Theory]
+    [InlineData(0, 3, 0.6, 20)]
+    [InlineData(6, 0, 0.6, 20)]
+    [InlineData(6, 3, 1.5, 20)]
+    [InlineData(6, 3, 0.6, 0)]
+    public void Out_of_range_reputation_settings_are_rejected(int positionHours, int minTrips, double smart, int early)
+    {
+        Assert.False(IsValid(new PipelineOptions
+        {
+            ReputationPositionMaxHours = positionHours,
+            ReputationMinTrips = minTrips,
+            ReputationSmartWinRate = smart,
+            ReputationEarlyBuyers = early,
+        }));
     }
 
     [Theory]

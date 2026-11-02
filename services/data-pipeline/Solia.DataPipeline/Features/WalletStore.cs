@@ -6,8 +6,11 @@ namespace Solia.DataPipeline.Features;
 
 /// <summary>One wallet's persisted state (<c>wallet_state</c> row). Times are Unix seconds.</summary>
 /// <param name="RecentLaunches">Seconds of the wallet's latest token creations, ascending, at most <see cref="WalletStore.MaxRecentLaunches"/>.</param>
+/// <param name="Trips">Its latest closed round trips (FE-T10), by opening time, at most <see cref="WalletStore.MaxRecentTrips"/>; null = none.</param>
+/// <param name="Outcomes">Its latest launches' recorded outcomes (FE-T10), by launch time, at most <see cref="WalletStore.MaxRecentLaunches"/>; null = none.</param>
 public sealed record WalletRecord(
-    string Wallet, long FirstSeen, long LastSeen, int TradeCount, int TokensTraded, int TokensCreated, long[] RecentLaunches);
+    string Wallet, long FirstSeen, long LastSeen, int TradeCount, int TokensTraded, int TokensCreated, long[] RecentLaunches,
+    RoundTrip[]? Trips = null, LaunchOutcome[]? Outcomes = null);
 
 /// <summary>The whole persisted wallet state, as loaded at startup.</summary>
 /// <param name="HistoryStart">Start of the wallet history behind the state (feature coverage).</param>
@@ -46,7 +49,7 @@ public sealed record WalletStateChanges(
 /// </para>
 /// Not thread-safe: fed and queried from the pipeline's single loop.
 /// </summary>
-public sealed class WalletStore
+public sealed partial class WalletStore
 {
     public static readonly TimeSpan FreshShort = TimeSpan.FromHours(1);
     public static readonly TimeSpan FreshLong = TimeSpan.FromHours(24);
@@ -68,9 +71,17 @@ public sealed class WalletStore
         public int TokensCreated;
         public int Mint0, Mint1, Mint2, Mint3; // stable hashes of the latest distinct mints traded (0 = empty)
         public long[]? Launches;
+        public RoundTrip[]? Trips;        // FE-T10, ascending by Opened
+        public LaunchOutcome[]? Outcomes; // FE-T10, ascending by Launch
     }
 
-    private readonly record struct Pending(DateTimeOffset Ts, string Wallet, string Mint, bool IsCreate);
+    // Wallet is null for an unsigned trade: it only feeds the launch outcomes (FE-T10).
+    // Price: SOL-series price (SOL or unreported quote); Sol / Tokens: SOL-quoted amounts only, as buy_pressure.
+    private readonly record struct Pending(
+        DateTimeOffset Ts, string? Wallet, string Mint, EventKind Kind, double? Price, double? Sol, double? Tokens)
+    {
+        public bool IsCreate => Kind == EventKind.Create;
+    }
 
     private readonly long _ttlSec;
     private readonly long _capSec;
@@ -89,6 +100,13 @@ public sealed class WalletStore
     {
         _ttlSec = options.WalletTtlHours * 3600L;
         _capSec = options.WalletAgeCapHours * 3600L;
+        _positionMaxSec = options.ReputationPositionMaxHours * 3600L;
+        _minTrips = options.ReputationMinTrips;
+        _smartWinRate = options.ReputationSmartWinRate;
+        _outcomeHorizonSec = options.ReputationOutcomeHorizonSeconds;
+        _outcomeEmbargoSec = options.ReputationOutcomeEmbargoSeconds;
+        _pumpMultiple = 1 + options.ReputationPumpThreshold;
+        _rugKeep = 1 - options.ReputationRugThreshold;
         if (trackChanges)
         {
             _dirty = new HashSet<string>(StringComparer.Ordinal);
@@ -106,13 +124,15 @@ public sealed class WalletStore
     public bool TracksChanges => _dirty is not null;
 
     /// <summary>
-    /// Queues a trade's or a create's signer; any other event (or an unsigned one) is ignored. An event dated more
-    /// than the TTL away from the last advance (a bogus timestamp) is dropped: ahead, it would sit in the queue for
-    /// that long; behind, it would only describe wallets already forgotten.
+    /// Queues a trade's or a create's signer; any other event is ignored, and an unsigned trade only feeds the launch
+    /// outcomes (an unsigned create is ignored). An event dated more than the TTL away from the last advance (a bogus
+    /// timestamp) is dropped: ahead, it would sit in the queue for that long; behind, it would only describe wallets
+    /// already forgotten.
     /// </summary>
     public void Apply(RawEvent e)
     {
-        if (e.Trader is not { } trader || e.Kind is not (EventKind.Buy or EventKind.Sell or EventKind.Create))
+        if (e.Kind is not (EventKind.Buy or EventKind.Sell or EventKind.Create)
+            || (e.Trader is null && (e.Kind == EventKind.Create || e.Price is null)))
         {
             return;
         }
@@ -123,7 +143,7 @@ public sealed class WalletStore
             return;
         }
 
-        var pending = new Pending(e.Timestamp, trader, e.Mint, e.Kind == EventKind.Create);
+        var pending = ToPending(e);
         if (_advancedTo is { } advanced && e.Timestamp < advanced)
         {
             ApplyNow(pending); // already in the past of every later snapshot
@@ -159,9 +179,11 @@ public sealed class WalletStore
         }
 
         long nowSec = Seconds(now);
+        SettleLaunches(nowSec);
         if (nowSec >= _nextSweep)
         {
             Sweep(nowSec);
+            SweepPositions(nowSec);
             _nextSweep = nowSec + SweepSec;
         }
     }
@@ -309,6 +331,10 @@ public sealed class WalletStore
                 TokensTraded = r.TokensTraded,
                 TokensCreated = r.TokensCreated,
                 Launches = launches.Length == 0 ? null : launches,
+                Trips = r.Trips is { Length: > 0 } trips ? trips.OrderBy(t => t.Opened).TakeLast(MaxRecentTrips).ToArray() : null,
+                Outcomes = r.Outcomes is { Length: > 0 } outcomes
+                    ? outcomes.OrderBy(o => o.Launch).TakeLast(MaxRecentLaunches).ToArray()
+                    : null,
             };
         }
 
@@ -320,6 +346,16 @@ public sealed class WalletStore
     private void ApplyNow(Pending p)
     {
         long sec = Seconds(p.Ts);
+        if (!p.IsCreate && p.Price is { } price)
+        {
+            UpdateLaunch(p.Mint, sec, price);
+        }
+
+        if (p.Wallet is null)
+        {
+            return; // an unsigned trade only feeds the launch outcomes
+        }
+
         if (_restored)
         {
             _restored = false;
@@ -335,7 +371,7 @@ public sealed class WalletStore
         ref Wallet w = ref CollectionsMarshal.GetValueRefOrAddDefault(_wallets, p.Wallet, out bool exists);
         if (!exists || w.LastSeen < sec - _ttlSec)
         {
-            w = new Wallet { FirstSeen = sec, LastSeen = sec }; // new, or forgotten after the TTL
+            w = new Wallet { FirstSeen = sec, LastSeen = sec }; // new, or forgotten after the TTL (reputation too)
         }
         else
         {
@@ -347,6 +383,7 @@ public sealed class WalletStore
         {
             w.TokensCreated++;
             w.Launches = AddLaunch(w.Launches, sec);
+            TrackLaunch(p.Mint, p.Wallet, sec, p.Price);
         }
         else
         {
@@ -357,6 +394,13 @@ public sealed class WalletStore
                 w.TokensTraded++;
                 (w.Mint3, w.Mint2, w.Mint1, w.Mint0) = (w.Mint2, w.Mint1, w.Mint0, h);
             }
+        }
+
+        // The create's dev buy opens the creator's position like any buy.
+        if (p.Sol is { } sol && p.Tokens is { } tokens
+            && UpdatePosition(p.Wallet, p.Mint, sec, p.Kind != EventKind.Sell, sol, tokens) is { } trip)
+        {
+            w.Trips = AddTrip(w.Trips, trip);
         }
 
         _dirty?.Add(p.Wallet);
@@ -403,7 +447,7 @@ public sealed class WalletStore
     }
 
     private static WalletRecord ToRecord(string wallet, Wallet w) =>
-        new(wallet, w.FirstSeen, w.LastSeen, w.TradeCount, w.TokensTraded, w.TokensCreated, w.Launches ?? []);
+        new(wallet, w.FirstSeen, w.LastSeen, w.TradeCount, w.TokensTraded, w.TokensCreated, w.Launches ?? [], w.Trips, w.Outcomes);
 
     /// <summary>FNV-1a, never 0 (0 marks an empty slot); stable across processes, unlike <see cref="string.GetHashCode()"/>.</summary>
     private static int StableHash(string s)

@@ -14,6 +14,7 @@ from solia_ai.features import (
     FEATURE_GROUPS,
     MARKET_COLUMNS,
     NON_FEATURE_COLUMNS,
+    REPUTATION_COLUMNS,
     VENUE_COLUMNS,
     VENUE_OTHER,
     VENUES,
@@ -463,6 +464,7 @@ def test_burn_and_venue_are_candidate_groups_outside_the_baseline():
         "burned_liquidity",
         *MARKET_COLUMNS,
         *WALLET_COLUMNS,
+        *REPUTATION_COLUMNS,
         *VENUE_COLUMNS,
     ]
 
@@ -688,5 +690,48 @@ def test_wallet_nulls_are_told_apart_from_real_zeros():
         j = FEATURE_COLUMNS.index(col)
         if col == "wal_coverage_sec":
             assert matrix[:, j].tolist() == [600.0, 86400.0]
+        else:
+            assert matrix[0, j] == -1.0 and matrix[1, j] == 0.0, col
+
+
+# --- FE-T10 (#190): wallet reputation features ---
+
+
+def test_wallet_reputation_is_a_candidate_group_outside_the_defaults():
+    # Disabled by default; its ablation is measured in the combined run #198.
+    assert "wallet_reputation" not in BASELINE_GROUPS
+    assert FEATURE_GROUPS["wallet_reputation"] == REPUTATION_COLUMNS
+    assert len(REPUTATION_COLUMNS) == 12 and all(c.startswith("rep_") for c in REPUTATION_COLUMNS)
+    assert group_columns(["wallet_reputation"]) == list(REPUTATION_COLUMNS)
+
+
+def test_rows_predating_the_wallet_reputation_group_are_refused_when_it_is_enabled():
+    df = pd.concat([_frame(rep_early_buyers=3.0), _frame(rep_early_buyers=None)], ignore_index=True)
+
+    with pytest.raises(
+        ValueError, match="1 of 2 feature rows predate the 'wallet_reputation' group"
+    ):
+        check_group_coverage(df, [*BASELINE_GROUPS, "wallet_reputation"])
+    check_group_coverage(df, BASELINE_GROUPS)  # disabled: no error
+
+
+def test_wallet_reputation_nulls_are_told_apart_from_real_zeros():
+    # Warm-up / no rated buyer / no block: NULL. No recorded launch, no smart volume: real zeros.
+    signed = {"rep_early_pnl_sol", "rep_smart_net_flow_sol"}
+    unknown = {col: None for col in REPUTATION_COLUMNS if col != "rep_early_buyers"}
+    zeros = {col: 0.0 for col in REPUTATION_COLUMNS if col != "rep_early_buyers"}
+    df = pd.concat(
+        [_frame(rep_early_buyers=0.0, **unknown), _frame(rep_early_buyers=20.0, **zeros)],
+        ignore_index=True,
+    )
+
+    check_group_coverage(df, ["wallet_reputation"])  # warm-up rows are computed rows
+    matrix = build_feature_matrix(df)
+    for col in REPUTATION_COLUMNS:
+        j = FEATURE_COLUMNS.index(col)
+        if col == "rep_early_buyers":
+            assert matrix[:, j].tolist() == [0.0, 20.0]
+        elif col in signed:
+            assert matrix[0, j] == 0.0 and matrix[1, j] == 0.0, col  # signed: 0 is neutral
         else:
             assert matrix[0, j] == -1.0 and matrix[1, j] == 0.0, col

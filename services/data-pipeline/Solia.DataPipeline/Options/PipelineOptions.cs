@@ -76,6 +76,54 @@ public sealed class PipelineOptions
     public bool HasConsistentWalletHorizon() => WalletAgeCapHours <= WalletTtlHours;
 
     /// <summary>
+    /// Wallet reputation (FE-T10, <see cref="WalletStore"/>): buy → sell positions live in fixed UTC buckets of this
+    /// many hours; one still open at a bucket boundary is dropped (it stays open: never a loss). Round trips are
+    /// counted when they opened within <see cref="WalletAgeCapHours"/> minus this, so a replay with the age cap as
+    /// warm-up reproduces them exactly.
+    /// </summary>
+    [Range(1, 8_760)]
+    public int ReputationPositionMaxHours { get; set; } = 6;
+
+    /// <summary>A wallet with fewer closed round trips than this counts as "unknown" (no win rate, no P&amp;L).</summary>
+    [Range(1, 1_000)]
+    public int ReputationMinTrips { get; set; } = 3;
+
+    /// <summary>A known wallet whose win rate is above this is "smart money" (smart-flow features).</summary>
+    [Range(0.0, 1.0)]
+    public double ReputationSmartWinRate { get; set; } = 0.6;
+
+    /// <summary>How many first buyers (early-buyer quality) and first buys (launch bundling) of a token are looked at.</summary>
+    [Range(1, 1_000)]
+    public int ReputationEarlyBuyers { get; set; } = 20;
+
+    /// <summary>
+    /// A launch's outcome covers its first this-many seconds (the longest label horizon, 1 h) and is recorded only
+    /// <see cref="ReputationOutcomeEmbargoSeconds"/> later, so it can never leak a label.
+    /// </summary>
+    [Range(60, 86_400)]
+    public int ReputationOutcomeHorizonSeconds { get; set; } = 3_600;
+
+    /// <summary>The label embargo added after the outcome horizon before a launch's outcome is recorded.</summary>
+    [Range(0, 86_400)]
+    public int ReputationOutcomeEmbargoSeconds { get; set; } = 3_600;
+
+    /// <summary>A launch "pumped" when its highest price in the outcome horizon is at least (1 + this) × its first price (mirrors the 1 h pump label).</summary>
+    [Range(0.01, 1_000)]
+    public double ReputationPumpThreshold { get; set; } = 2.0;
+
+    /// <summary>A launch "rugged" when its price fell by at least this fraction from its running peak within the outcome horizon.</summary>
+    [Range(0.01, 1.0)]
+    public double ReputationRugThreshold { get; set; } = 0.7;
+
+    /// <summary>
+    /// The reputation look-backs fit in the age cap (a position's life, an outcome's delay), so a replay with the age
+    /// cap as warm-up reproduces them.
+    /// </summary>
+    public bool HasConsistentReputationHorizon() =>
+        ReputationPositionMaxHours < WalletAgeCapHours
+        && ReputationOutcomeHorizonSeconds + ReputationOutcomeEmbargoSeconds < WalletAgeCapHours * 3600L;
+
+    /// <summary>
     /// When false (default), holders are approximated from unique traders seen in the
     /// stream (free). When true, a paid Get Token Info enrichment may be used.
     /// </summary>

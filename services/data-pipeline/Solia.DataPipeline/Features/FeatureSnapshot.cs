@@ -124,6 +124,12 @@ public sealed record FeatureSnapshot
     /// </summary>
     public WalletFeatures? Wallet { get; init; }
 
+    /// <summary>
+    /// Wallet reputation features (FE-T10): creator track record, early-buyer quality, smart-money flow, launch
+    /// bundling. Null only for snapshots taken without a <see cref="WalletStore"/>, like <see cref="Wallet"/>.
+    /// </summary>
+    public ReputationFeatures? Reputation { get; init; }
+
     public IReadOnlyDictionary<string, object?> OnchainSignals { get; init; } =
         new Dictionary<string, object?>();
 
