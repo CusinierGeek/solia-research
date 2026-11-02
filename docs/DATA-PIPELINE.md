@@ -420,6 +420,8 @@ SOLIA_COMPOSE_ARGS="-p solia --env-file ../Solia/.env" \
 - Concurrent writers are safe because the sink takes its row locks in one fixed order (`tokens_history`
   by mint, then the flush's `tokens_live` rows by mint). Before that, slices sharing long-lived mints
   (migrated tokens trade for days) deadlocked (`40P01`) and dropped batches once their retries ran out.
+  The token rows are also committed in a short transaction of their own before the `features` insert, so
+  a slice holds those locks for milliseconds, not for its whole flush (otherwise slices run one at a time).
 - The gain stops when Postgres or the disk saturates: watch each slice's rate (max `ts` written per
   minute) and `docker stats` in the first 15 minutes.
 - The script waits for every slice, prints each summary and exits with the highest exit code; re-run a

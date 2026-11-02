@@ -8,8 +8,9 @@ using static Solia.Shared.Data.NpgsqlParameters;
 namespace Solia.DataPipeline.Pipeline;
 
 /// <summary>
-/// Persists a flush to PostgreSQL in one transaction of at most four set-based statements (one
-/// array parameter per column, expanded with <c>unnest</c>), however many tokens it carries:
+/// Persists a flush to PostgreSQL in a few set-based statements (one array parameter per column, expanded
+/// with <c>unnest</c>), however many tokens it carries — the token rows in one short transaction, then the
+/// <c>features</c> rows (see <see cref="WriteAsync"/>):
 /// <list type="number">
 /// <item>mark deactivated mints inactive in <c>tokens_live</c>;</item>
 /// <item>upsert <c>tokens_history</c> (FK target), only ever widening <c>first_seen_at</c> /
@@ -147,14 +148,16 @@ public sealed class PostgresTokenSink : ITokenSink
         }
 
         await using NpgsqlConnection connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
-        await using var commands = new NpgsqlBatch(connection, transaction);
+        await using var commands = new NpgsqlBatch(connection);
+        await using var featureCommands = new NpgsqlBatch(connection);
         var features = new List<NpgsqlBatchCommand>(2);
 
         // Row locks are taken in one fixed order — tokens_history by mint, then every tokens_live row the flush
         // touches (deactivated or upserted) by mint, then the new rows — so concurrent writers sharing long-lived
         // mints (live + replay, or several replays) wait for each other instead of deadlocking (40P01, which
-        // drops the batch once its retries run out).
+        // drops the batch once its retries run out). The shared token rows are written and committed in a short
+        // transaction of their own, before the (much heavier) features insert, so a writer holds those locks for
+        // milliseconds rather than for its whole flush — otherwise concurrent replays run one at a time.
         IReadOnlyList<FeatureSnapshot> s = InLockOrder(Bound(batch, out int outOfRange));
         string[] mints = Column(s, x => x.Mint);
         DateTimeOffset[] ts = Column(s, x => x.Ts);
@@ -208,8 +211,22 @@ public sealed class PostgresTokenSink : ITokenSink
             }
         }
 
-        await commands.ExecuteNonQueryAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        // Two transactions: tokens first (features reference tokens_history), then features. A failure in between
+        // is retried as a whole; both steps are idempotent (history only widens, live keeps the newest snapshot,
+        // features insert DO NOTHING / refresh the same values).
+        if (commands.BatchCommands.Count > 0)
+        {
+            await using NpgsqlTransaction tokens = await connection.BeginTransactionAsync(cancellationToken);
+            commands.Transaction = tokens;
+            await commands.ExecuteNonQueryAsync(cancellationToken);
+            await tokens.CommitAsync(cancellationToken);
+        }
+
+        if (featureCommands.BatchCommands.Count > 0)
+        {
+            await featureCommands.ExecuteNonQueryAsync(cancellationToken);
+        }
+
         Interlocked.Add(ref _featureRowsWritten, features.Sum(f => (long)f.RecordsAffected));
         Interlocked.Add(ref _outOfRangeValues, outOfRange);
 
@@ -219,7 +236,7 @@ public sealed class PostgresTokenSink : ITokenSink
             {
                 NpgsqlBatchCommand command = FeaturesCommand(rows, sql);
                 features.Add(command);
-                commands.BatchCommands.Add(command);
+                featureCommands.BatchCommands.Add(command);
             }
         }
     }

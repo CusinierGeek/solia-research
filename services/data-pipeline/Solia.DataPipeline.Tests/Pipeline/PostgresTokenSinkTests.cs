@@ -549,4 +549,34 @@ public sealed class PostgresTokenSinkTests(PostgresFixture db) : IClassFixture<P
         Assert.Equal(T0, ordered[1].Ts);
         Assert.Equal(["B", "a", "b"], PostgresTokenSink.InLockOrder(["b", "a", "B", "a"]));
     }
+    [Fact]
+    public async Task Token_rows_are_committed_before_the_features_insert_so_their_locks_are_not_held_through_it()
+    {
+        // Block every features insert, then flush: the token rows must already be committed (visible to another
+        // session) while the features insert waits — a concurrent writer sharing these mints is not held up.
+        await using Npgsql.NpgsqlConnection blocker = await db.DataSource.OpenConnectionAsync();
+        await using Npgsql.NpgsqlTransaction hold = await blocker.BeginTransactionAsync();
+        await using (var lockCmd = new Npgsql.NpgsqlCommand("LOCK TABLE features IN SHARE MODE", blocker, hold))
+        {
+            await lockCmd.ExecuteNonQueryAsync();
+        }
+
+        Task write = Sink.WriteAsync(Batch(T0, [Snap("EARLY1", T0, 1m)]), default);
+
+        long history = 0;
+        for (int i = 0; i < 100 && history == 0; i++)
+        {
+            await Task.Delay(50);
+            history = await db.ScalarAsync<long>("SELECT count(*) FROM tokens_history WHERE mint = 'EARLY1'");
+        }
+
+        Assert.Equal(1, history);
+        Assert.Equal(1, await db.ScalarAsync<long>("SELECT count(*) FROM tokens_live WHERE mint = 'EARLY1'"));
+        Assert.False(write.IsCompleted); // the features insert is still waiting on the lock
+
+        await hold.RollbackAsync();
+        await write;
+        Assert.Equal(1, await db.ScalarAsync<long>("SELECT count(*) FROM features WHERE mint = 'EARLY1'"));
+    }
+
 }
