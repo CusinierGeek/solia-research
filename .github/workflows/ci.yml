@@ -26,8 +26,9 @@ jobs:
         working-directory: services/ai-service
         run: |
           python -m pip install --upgrade pip
-          # Pinned runtime + dev tools from pyproject.toml; the CPU index avoids multi-GB CUDA wheels.
-          pip install --extra-index-url https://download.pytorch.org/whl/cpu -e ".[dev]"
+          # Pinned runtime + dev tools (+ the GBDT benchmark extra, so its tests run) from
+          # pyproject.toml; the CPU index avoids multi-GB CUDA wheels.
+          pip install --extra-index-url https://download.pytorch.org/whl/cpu -e ".[dev,benchmark]"
       - name: Lint (ruff)
         working-directory: services/ai-service
         run: ruff check .

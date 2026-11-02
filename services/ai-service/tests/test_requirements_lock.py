@@ -92,3 +92,9 @@ def test_gpu_lock_matches_the_cpu_lock_except_torch_and_its_cuda_wheels():
 @pytest.mark.parametrize("dependency", PROJECT["optional-dependencies"]["dev"])
 def test_no_dev_dependency_is_locked(file, dependency):
     assert canonicalize_name(Requirement(dependency).name) not in lock(file)
+
+
+@pytest.mark.parametrize("file", LOCK_FILES)
+@pytest.mark.parametrize("dependency", PROJECT["optional-dependencies"]["benchmark"])
+def test_the_benchmark_extra_stays_out_of_the_serving_image(file, dependency):
+    assert canonicalize_name(Requirement(dependency).name) not in lock(file)

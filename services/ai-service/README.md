@@ -18,6 +18,8 @@ retraining (`retrain.py` + `/model/retrain` + the background trigger, see below)
 cd services/ai-service
 python -m venv .venv && . .venv/Scripts/activate   # or .venv/bin/activate on Linux/macOS
 pip install --extra-index-url https://download.pytorch.org/whl/cpu -e ".[dev]"
+# optional: the GBDT benchmark (python -m solia_ai.benchmark_gbdt) and its tests
+pip install -e ".[benchmark]"
 
 ruff check .
 black --check .

@@ -1227,6 +1227,43 @@ pump/5m PR-AUC) needs the GPU. It runs after #202, on its retained data settings
 the bot off. Record here the table, the GPU training time per size and the inference latency per batch
 (`/predict`, PyTorch and ONNX). `config.yaml` changes only if the gain clears the margin at an acceptable cost.
 
+### GBDT benchmark (#205)
+
+Is the Transformer near what these features allow? #172 stage 2 found it insensitive to its own regularization and
+size. A gradient-boosted-trees model trained on the **same windows, labels and splits** answers that. If GBDT ≈
+Transformer, the ceiling is the data: put the effort into data and features (#198, #202). If GBDT is clearly
+below, the sequence model earns its complexity. If GBDT is clearly above, the model side needs work.
+**Measurement only**: nothing is saved, registered, served or promoted.
+
+`python -m solia_ai.benchmark_gbdt [--windows 3] [--seeds 0 1 2] [--lookback-days …] [--max-rows …]
+[--prune-columns] [--gbdt-device cpu|gpu] [--gbdt-jobs 6] --out reports/gbdt-205.json`
+
+- **Same slices.** It uses the bounded read, `config_samples` and `walk_forward_windows` (embargo included) of the
+  ablation / search. Every (slice, seed) runs the Transformer through `train_and_score` itself, and the GBDT on the
+  same indices, so the lifts are paired run for run.
+- **Tabular inputs** (`tabular_features`). For each enabled group's column (`features.groups`): the window's last
+  row, its mean / min / max over the real rows (padding excluded) and last − first; plus the window length. That
+  gives 5 × 31 + 1 = 156 columns for today's groups. The values are the raw inputs as served (trees don't need
+  normalization).
+- **One LightGBM classifier per head × horizon**, trained on the slice's training windows labeled at that horizon.
+  It early-stops on binary log-loss (100 rounds patience, up to 2 000 trees, `num_leaves` 63, `min_child_samples`
+  100, 0.8 row / column subsampling, seeded per run) on the **Transformer's own validation split**, never the
+  scored slice. It is scored with the ablation's ROC-AUC / PR-AUC / ECE. Its probabilities are LightGBM's own,
+  while the Transformer's are Platt-calibrated on the validation split, as served. A head × horizon whose training
+  or validation windows hold a single class scores n/a.
+- **Report** (JSON + `.txt`): each model's mean ± std per metric, and the paired GBDT − Transformer lift with the
+  ablation's verdict (`mean − std > margin`). It also gives the GBDT's best iterations and the **top columns by
+  gain**, summed over every head × horizon, which tells where feature work pays.
+- `lightgbm` is an optional extra (`pip install -e ".[benchmark]"`). The default install and the serving image
+  locks don't carry it (`tests/test_requirements_lock.py`). Without it, the command exits with that hint before
+  reading anything.
+
+**Results & interpretation.** *Pending.* The run needs the GPU (Transformer side) and the database read. It goes
+after the official post-#172 retrain, with the retrain scheduler and the bot off, on the champion's settings.
+Estimate the runtime first: the Transformer side costs what an ablation of the same windows × seeds costs; the GBDT
+side, 2 heads × 5 horizons classifiers per run on 6 CPU cores. Record the table and the interpretation here, with
+the report under `docs/reports/`.
+
 ## Files (ai-service, built in Sprints 2 & 7)
 
 | File | Role |
