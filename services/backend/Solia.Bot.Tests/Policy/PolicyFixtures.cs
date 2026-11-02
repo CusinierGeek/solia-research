@@ -7,15 +7,28 @@ namespace Solia.Bot.Tests.Policy;
 public static class PolicyFixtures
 {
     /// <summary>
-    /// Options with the production defaults (MinConfidence 60, MinPumpProb 0.25, MaxRugProb 0.2, …) but idealized
+    /// Options with the production defaults but the fixtures' entry gates (<see cref="WithFixtureGates"/>), idealized
     /// fills (<see cref="BotOptions.RealisticFills"/> off: at the mark, no pool) and no execution realism (see
     /// <see cref="WithoutExecution"/>), so policy scenarios keep round numbers. <see cref="ProductionOptions"/> is the
     /// production default.
     /// </summary>
-    internal static BotOptions Options() => WithoutExecution(new() { RealisticFills = false });
+    internal static BotOptions Options() => WithoutExecution(WithFixtureGates(new() { RealisticFills = false }));
 
     /// <summary>The production pool fills (#165) without the execution realism of #175 (see <see cref="WithoutExecution"/>).</summary>
-    internal static BotOptions RealisticOptions() => WithoutExecution(new());
+    internal static BotOptions RealisticOptions() => WithoutExecution(WithFixtureGates(new()));
+
+    /// <summary>
+    /// The entry gates the policy scenarios are written against — MinConfidence 60, MinPumpProb 0.25, MaxRugProb 0.2 —
+    /// pinned so they exercise the confidence gate, the rug gate and the rug exit whatever the swept production rule is
+    /// (since 2026-11-02 it has no rug gate and no confidence gate, see <see cref="BotOptions.MaxRugProb"/>).
+    /// </summary>
+    internal static BotOptions WithFixtureGates(BotOptions options)
+    {
+        options.MinConfidence = 60;
+        options.MinPumpProb = 0.25;
+        options.MaxRugProb = 0.2;
+        return options;
+    }
 
     /// <summary>The production defaults, every realism knob included.</summary>
     internal static BotOptions ProductionOptions() => new();

@@ -24,7 +24,7 @@ public static class ReplayFixtures
     /// stop once it is silent. Fills are idealized (at the mark, no pool): the scenario pins the engine's
     /// bookkeeping, the realistic fills are covered by <c>FillsTests</c> and the engine's realistic-fill tests.
     /// </summary>
-    public static BotOptions Options() => PolicyFixtures.WithoutExecution(new()
+    public static BotOptions Options() => PolicyFixtures.WithoutExecution(PolicyFixtures.WithFixtureGates(new()
     {
         RealisticFills = false,
         StartingBalance = 10m,
@@ -33,7 +33,7 @@ public static class ReplayFixtures
         MaxMarkAgeSeconds = 60,
         MaxFeedSilenceSeconds = 60,
         MaxEventLagSeconds = 5,
-    });
+    }));
 
     /// <summary>The replay clock's origin; every event timestamp is an offset from it.</summary>
     public static readonly DateTimeOffset T0 = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);

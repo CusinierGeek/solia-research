@@ -444,38 +444,45 @@ threshold) — n_trades, **precision** (share of real pumps) and its lift over t
 rate, mean / median realized return, total P&L and a 95 % bootstrap CI of the mean, against the
 buy-everything baseline. Read-only: nothing is written but the report.
 
-**Current rule** (champion `solia-20261030T012910179875Z`, 886 797 held-out windows; report in
-[`reports/entry-sweep-solia-20261030T012910179875Z.txt`](reports/entry-sweep-solia-20261030T012910179875Z.txt)):
-**horizon 15m, `pump_prob ≥ 0.25`, `rug_prob ≤ 0.2`** — the bot's `Bot:Horizon` / `MinPumpProb` /
-`MaxRugProb` defaults and the `ReferencePolicy` defaults (`evaluate.py`), kept in step.
+**Current rule** (champion `solia-20261102T151927246570Z`, promoted by retrain #5 on 2026-11-02; 288 780
+held-out windows; report in
+[`reports/entry-sweep-solia-20261102T151927246570Z.txt`](reports/entry-sweep-solia-20261102T151927246570Z.txt)):
+**horizon 15m, `pump_prob ≥ 0.4`, no rug gate (`MaxRugProb` 1), no confidence gate (`MinConfidence`
+0)**. These are the bot's `Bot:Horizon` / `MinPumpProb` / `MaxRugProb` / `MinConfidence` defaults
+and the `ReferencePolicy` defaults (`evaluate.py`), kept in step.
 
 | 15m rule | trades | precision (lift) | win rate | mean / median return | mean CI |
 |---|---:|---:|---:|---:|---:|
-| buy everything | 534 039 | 0.016 (1×) | 0.45 | +0.018 / 0.000 | [+0.017, +0.020] |
-| `pump ≥ 0.25, rug ≤ 0.2` (**chosen**) | 672 | 0.384 (24.7×) | 0.59 | +0.504 / +0.094 | [+0.41, +0.60] |
-| `pump ≥ 0.3, rug ≤ 0.2` | 186 | 0.500 (32.1×) | 0.60 | +0.574 / +0.112 | [+0.42, +0.73] |
-| `pump ≥ 0.25, rug ≤ 0.3` | 1 429 | 0.300 (19.3×) | 0.57 | +0.445 / +0.028 | [+0.37, +0.52] |
-| `pump ≥ 0.25`, no rug gate | 4 161 | 0.336 (21.5×) | 0.54 | +0.458 / +0.026 | [+0.41, +0.51] |
+| buy everything | 162 336 | 0.041 (1×) | 0.47 | +0.018 / 0.000 | [+0.016, +0.020] |
+| `pump ≥ 0.25, rug ≤ 0.2` (previous rule) | < 100 (below `min_trades`) | — | — | — | — |
+| `pump ≥ 0.15, rug ≤ 0.2` (its loosest neighbour) | 144 | 0.125 (3.0×) | 0.50 | +0.094 / 0.000 | [+0.005, +0.21] |
+| `pump ≥ 0.25, rug ≤ 0.5` | 1 170 | 0.468 (11.4×) | 0.64 | +0.534 / +0.146 | [+0.45, +0.61] |
+| `pump ≥ 0.3`, no rug gate | 2 846 | 0.490 (11.9×) | 0.66 | +0.865 / +0.225 | [+0.80, +0.94] |
+| **`pump ≥ 0.4`, no rug gate (chosen)** | **1 113** | **0.605 (14.7×)** | **0.71** | **+1.124 / +0.302** | **[+1.00, +1.24]** |
+| `pump ≥ 0.5`, no rug gate | 382 | 0.631 (15.4×) | 0.71 | +1.286 / +0.289 | [+1.05, +1.53] |
 
-Why this one — **predictive quality first, P&L second**:
+Why this one (predictive quality first, P&L second):
 
-- **Precision.** 15m has the highest precision among rules with hundreds of trades (38 % of entries
-  are real pumps, i.e. a ≥ +100 % move within 15 min); the 1m rules top out at ~22 % and the 5m ones
-  at ~32 %. 1h is unusable as is (`pump_prob` max 0.16, rug gates collapse precision).
-- **Enough trades.** `pump ≥ 0.3` is more precise (0.50) but on 186 windows — consecutive windows of
-  the same token overlap, so the independent events are far fewer; 0.25 keeps 3.6× the trades for
-  a precision still 25× the base rate. Its neighbours (rug ≤ 0.3, no rug gate) stay close, so the
-  choice is not a lucky grid point.
-- **P&L, heavy tails.** The mean is driven by a few large winners (labels capped at +1000 %), hence
-  the median (+9 %) and the CI are read alongside it; both clear the baseline by far.
-- **Rug gate.** At 15m a *tight* rug gate (≤ 0.1) destroys precision (0.9×): the tokens with almost
-  no rug risk are mostly dead ones that don't pump either. 0.2 is the sweet spot.
+- **The previous rule broke on the new champion.** Its rug head sits on a higher scale, so `rug ≤ 0.2`
+  left almost nothing, and what it kept was poor. That is why retrain #5's reference-policy P&L lift
+  was negative (−3.7) despite pump/5m PR-AUC +0.116.
+- **Every rug gate hurts at 15m.**
+  - At equal pump threshold, removing the gate raises the precision, the win rate *and* the median return.
+  - The tokens about to pump carry high rug probabilities too: volatile tokens pump, then dump.
+  - The labeled return already includes the rugs (it is realized at the horizon, floored at −100 %).
+- **Precision vs breadth.** `pump ≥ 0.4` is 15× the base rate on 1 113 windows. `pump ≥ 0.5` is barely
+  more precise (0.63) on a third of the trades, and `pump ≥ 0.3` gives up 11 points of precision. The
+  neighbours stay close, so the choice is not a lucky grid point.
+- **P&L, heavy tails.** The mean is driven by a few large winners (labels capped at +1000 %), so the
+  median (+30 %) and the CI are read alongside it; both clear the baseline by far.
 - **Horizon = position timeout.** 15m is the span of the bot's default 900 s position timeout.
+- **No rug exit.** `MaxRugProb` is also the bot's rug exit. At 1 it never fires, which matches the
+  sweep's hold-to-horizon returns. The stop-loss and the 900 s timeout still close positions.
 
-**Confidence.** `confidence = 200 · max(|pump − 0.5|, |rug − 0.5|)` is a margin, not a hit rate: with
-both heads mostly near 0 it is mostly high. `rug ≤ 0.2` alone implies `confidence ≥ 60`, so the
-bot's `MinConfidence` 60 never blocks an entry the rug gate allows; loosen `MaxRugProb` above 0.2 and
-it starts blocking entries whose heads both sit near 0.5 — lower it then.
+**Confidence.** `confidence = 200 · max(|pump − 0.5|, |rug − 0.5|)` is a margin, not a hit rate.
+`rug ≤ 0.2` used to imply `confidence ≥ 60`. Without a rug gate, the chosen entries often have both
+heads near 0.5 (confidence near 0), so `MinConfidence` is 0 (off). Raise it again only together with
+a rug gate ≤ 0.2.
 
 **Caveats.** The bootstrap treats windows as independent; overlapping windows of one token are not,
 so the CIs are optimistic — weigh trade counts accordingly. The returns are realized at the horizon

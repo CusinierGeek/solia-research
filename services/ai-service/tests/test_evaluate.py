@@ -154,11 +154,16 @@ def test_reference_policy_reports_none_when_no_window_qualifies():
 
 
 def test_reference_policy_defaults_are_the_swept_entry_rule():
-    # The bot's defaults (BotOptions / BotHostOptions) are the same rule: 15m, pump >= 0.25,
-    # rug <= 0.2 (docs/ML-MODEL.md "Choosing the entry rule").
+    # The bot's defaults (BotOptions / BotHostOptions) are the same rule: 15m, pump >= 0.4, no rug
+    # gate (docs/ML-MODEL.md "Choosing the entry rule", 2026-11-02 sweep).
     policy = ReferencePolicy(horizon=DEFAULT_POLICY_HORIZON)
 
-    assert (policy.horizon, policy.pump_threshold, policy.rug_threshold) == ("15m", 0.25, 0.2)
+    assert (policy.horizon, policy.pump_threshold, policy.rug_threshold) == ("15m", 0.4, 1.0)
+
+
+def test_the_default_reference_policy_enters_whatever_the_rug_head_says():
+    policy = ReferencePolicy(horizon=DEFAULT_POLICY_HORIZON)
+    assert policy.rug_threshold == 1.0  # rug_prob <= 1 always holds: no rug gate
 
 
 def test_default_policy_horizon_falls_back_to_the_first_served_horizon():

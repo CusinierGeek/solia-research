@@ -234,8 +234,9 @@ def regression_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, Any]
 # Bot:MinPumpProb, Bot:MaxRugProb) are the same values. Re-run the sweep after a promotion: a new
 # champion can shift the probability scale.
 DEFAULT_POLICY_HORIZON = "15m"
-DEFAULT_PUMP_THRESHOLD = 0.25
-DEFAULT_RUG_THRESHOLD = 0.2
+# 2026-11-02 sweep (champion solia-20261102T151927246570Z): pump >= 0.4 with no rug gate (1.0).
+DEFAULT_PUMP_THRESHOLD = 0.4
+DEFAULT_RUG_THRESHOLD = 1.0
 
 
 def default_policy_horizon(horizons: Any) -> str:

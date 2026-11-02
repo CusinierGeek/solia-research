@@ -72,26 +72,28 @@ public class BotOptionsValidationTests
     public void Default_entry_rule_is_the_swept_one()
     {
         // The entry-rule sweep's choice on the champion's held-out windows (docs/ML-MODEL.md
-        // "Choosing the entry rule"); the ai-service's ReferencePolicy defaults are the same values.
+        // "Choosing the entry rule"): pump ≥ 0.4 at 15m, no rug gate, no confidence gate; the
+        // ai-service's ReferencePolicy defaults are the same values.
         var options = new BotOptions();
 
-        Assert.Equal(0.25, options.MinPumpProb);
-        Assert.Equal(0.2, options.MaxRugProb);
-        Assert.Equal(60, options.MinConfidence);
+        Assert.Equal(0.4, options.MinPumpProb);
+        Assert.Equal(1.0, options.MaxRugProb);
+        Assert.Equal(0, options.MinConfidence);
         Assert.True(IsValid(options));
     }
 
     [Theory]
-    [InlineData(0.25, 0.0)]
-    [InlineData(0.25, 0.1)]
-    [InlineData(0.25, 0.2)]
-    [InlineData(0.9, 0.2)]
-    public void Default_confidence_gate_never_blocks_an_entry_the_default_rug_gate_allows(double pump, double rug)
+    [InlineData(0.4, 0.0)]
+    [InlineData(0.4, 0.5)]
+    [InlineData(0.5, 0.5)]
+    [InlineData(0.9, 1.0)]
+    public void Default_gates_admit_any_rug_prob_once_pump_clears_the_threshold(double pump, double rug)
     {
-        // Confidence = 200 · max(|pump − 0.5|, |rug − 0.5|): rug ≤ 0.2 alone guarantees ≥ 60.
+        // No rug gate and no confidence gate: even pump and rug both at 0.5 (confidence 0) enter.
         var options = new BotOptions();
         double confidence = 200 * Math.Max(Math.Abs(pump - 0.5), Math.Abs(rug - 0.5));
 
+        Assert.True(pump >= options.MinPumpProb);
         Assert.True(rug <= options.MaxRugProb);
         Assert.True(confidence >= options.MinConfidence);
     }
