@@ -3,8 +3,8 @@
 # The baseline (trial "baseline") is the current config: data.lookback_days, --max-rows (8 M), its stride.
 # lookback_days in the space widens the read to 3.5 d; every trial (baseline too) trains, per walk-forward
 # slice, on what a read at that slice's cutoff would keep, and all are scored on the same held-out slices.
-# max_rows 1e9 = every whole token of the lookback. The read must fit in memory: measure first
-# (python -m solia_ai.throughput --prune-columns --lookback-days 3.5 --max-rows ...).
+# max_rows 1e9 = every whole token of the lookback: 26 M rows for 3.5 d, 9.2 GB peak RSS with --prune-columns
+# (the compact read, solia_ai.rows; measured 2026-11-03, docs/ML-MODEL.md). Cap the container at ~14 GB.
 lookback_days:
   choices: [2.0, 3.5]
 window_stride_seconds:

@@ -7,12 +7,21 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, datetime, timedelta
 
+import numpy as np
 import pandas as pd
 import pytest
 from sqlalchemy import create_engine, text
 
-from solia_ai.db import REQUIRED_COLUMNS, DataSettings, read_training_features
-from solia_ai.features import DB_FEATURE_COLUMNS
+from solia_ai.db import (
+    REQUIRED_COLUMNS,
+    DataSettings,
+    read_training_data,
+    read_training_features,
+    read_training_rows,
+    training_columns,
+)
+from solia_ai.features import DB_FEATURE_COLUMNS, group_columns
+from solia_ai.rows import TrainingRows, always_written_columns
 
 NEWEST = datetime(2026, 1, 10, tzinfo=UTC)
 CONFIG = {"horizons": ["1m", "1h"], "promotion": {"windows": 3}}  # lookback floor: 4 h
@@ -203,3 +212,67 @@ def test_a_pinned_end_rereads_the_same_window_after_new_rows_arrive(engine, seed
     assert a == b and b.window_end == NEWEST
     _, moved = read_training_features(engine, settings())  # unpinned: the window moved on
     assert moved.window_end > NEWEST
+
+
+# --- the compact read (#202 step 2: solia_ai.db.read_training_rows) ---
+
+GROUPS = ["price", "liquidity", "flow"]
+PRUNED = {**CONFIG, "data": {"prune_columns": True}, "features": {"groups": GROUPS}}
+
+
+def compact(engine, data: DataSettings, **kwargs):
+    return read_training_rows(
+        engine, data, read_columns=training_columns(PRUNED),
+        matrix_columns=group_columns(GROUPS), **kwargs,
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize("max_rows", [1_000_000, 20])
+def test_the_compact_read_holds_the_frame_reads_rows(engine, seeded, max_rows):
+    df, a = read_training_features(
+        engine, settings(max_rows=max_rows), columns=training_columns(PRUNED)
+    )
+    # Several slices (the newest row on the last one's inclusive end) and chunks per slice.
+    rows, b = compact(engine, settings(max_rows=max_rows), chunksize=3, slice_hours=0.25)
+
+    reference = TrainingRows.from_frame(df, group_columns(GROUPS))
+    assert a == b and len(rows) == b.rows_read == len(df)
+    pd.testing.assert_frame_equal(rows.frame, reference.frame)
+    np.testing.assert_array_equal(rows.features, reference.features)
+    assert rows.nulls == reference.nulls and rows.columns == tuple(group_columns(GROUPS))
+
+
+def test_the_compact_read_counts_the_nulls_of_always_written_columns(engine, seeded):
+    rows, _ = compact(engine, settings())
+    written = always_written_columns(training_columns(PRUNED))
+
+    assert written == ["unique_traders"] and set(rows.nulls) == set(written)
+    # The fixture writes price / volume / liquidity / holders / events only: never unique_traders.
+    assert rows.nulls["unique_traders"] == len(rows) > 0
+
+
+def test_the_compact_read_refuses_bad_settings(engine, seeded):
+    with pytest.raises(ValueError, match="chunksize"):
+        compact(engine, settings(), chunksize=0)
+    with pytest.raises(ValueError, match="slice_hours"):
+        compact(engine, settings(), slice_hours=0)
+    with pytest.raises(ValueError, match="not stored feature column"):
+        read_training_rows(engine, settings(), read_columns=["raw"], matrix_columns=["price"])
+
+
+def test_the_compact_read_follows_a_pinned_end(engine, seeded):
+    first, a = compact(engine, settings())
+    insert(engine, history("NEW", NEWEST + timedelta(hours=1), 3))
+
+    again, b = compact(engine, settings(), end=a.window_end)
+
+    assert a == b
+    pd.testing.assert_frame_equal(first.frame, again.frame)
+
+
+def test_the_research_read_is_compact_only_when_pruning(engine, seeded):
+    rows, a = read_training_data(engine, settings(), PRUNED)
+    df, b = read_training_data(engine, settings(), CONFIG)
+
+    assert isinstance(rows, TrainingRows) and isinstance(df, pd.DataFrame)
+    assert a == b and list(df.columns) == ["mint", "ts", "venue", *DB_FEATURE_COLUMNS]

@@ -40,6 +40,7 @@ from .dataset import (
 )
 from .loss import SoliaLoss
 from .model import SoliaTransformer
+from .rows import TrainingRows
 
 
 def process_memory(pid: int | str = "self") -> dict[str, int] | None:
@@ -167,7 +168,7 @@ def measure_loader(
 
 
 def run(
-    df: pd.DataFrame,
+    df: pd.DataFrame | TrainingRows,
     config: Mapping[str, Any],
     *,
     workers: Sequence[int],
@@ -175,13 +176,15 @@ def run(
     device: str | torch.device,
     per_item: bool = False,
 ) -> dict[str, Any]:
-    """Build the samples and measure each loader setting (module doc)."""
+    """Build the samples and measure each loader setting (module doc). ``df`` may be the compact
+    :class:`solia_ai.rows.TrainingRows` of a ``--prune-columns`` read."""
     device = torch.device(device)
     started = time.perf_counter()
     samples = config_samples(df, config)
     report: dict[str, Any] = {
         "rows": len(df),
-        "tokens": int(df["mint"].nunique()),
+        "tokens": df.n_tokens if isinstance(df, TrainingRows) else int(df["mint"].nunique()),
+        "rows_mb": df.nbytes / 2**20 if isinstance(df, TrainingRows) else None,
         "samples": len(samples),
         "build_seconds": time.perf_counter() - started,
         "rss_after_build_mb": (process_memory() or {}).get("rss_kb", 0) / 1024 or None,
@@ -191,7 +194,11 @@ def run(
     training = config["training"]
     batch_size, seed = int(training["batch_size"]), int(training["seed"])
     model = SoliaTransformer.from_config(config).to(device)
-    model.fit_normalizer(samples.features, columns=samples.columns)
+    if samples.shared_rows:  # streamed: never copies the shared matrix
+        keep = np.ones(len(samples.features), bool)
+        model.fit_normalizer_rows(samples.features, keep, columns=samples.columns)
+    else:
+        model.fit_normalizer(samples.features, columns=samples.columns)
     loss_fn = SoliaLoss.from_config(config).to(device)
     pin = device.type == "cuda"
 
@@ -219,8 +226,7 @@ def main(argv: list[str] | None = None) -> None:
         add_data_bounds_arguments,
         add_prune_columns_argument,
         make_engine,
-        read_training_features,
-        training_columns,
+        read_training_data,
         with_prune_columns,
     )
 
@@ -240,16 +246,17 @@ def main(argv: list[str] | None = None) -> None:
         config, lookback_days=args.lookback_days, max_rows=args.max_rows
     )
     started = time.monotonic()
-    df, bounds = read_training_features(make_engine(), data, columns=training_columns(config))
+    df, bounds = read_training_data(make_engine(), data, config)
     read_seconds = time.monotonic() - started
+    rss_after_read = (process_memory() or {}).get("rss_kb", 0) / 1024 or None
     print(bounds.describe(), flush=True)
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     report = run(
         df, config, workers=args.workers, batches=args.batches, device=device,
         per_item=args.per_item,
     )  # fmt: skip
-    print(json.dumps({"read_seconds": read_seconds, "device": device, "cpus": os.cpu_count(),
-                      **report}, indent=2))  # fmt: skip
+    print(json.dumps({"read_seconds": read_seconds, "rss_after_read_mb": rss_after_read,
+                      "device": device, "cpus": os.cpu_count(), **report}, indent=2))  # fmt: skip
 
 
 if __name__ == "__main__":

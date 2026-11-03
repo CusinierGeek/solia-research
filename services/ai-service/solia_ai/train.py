@@ -189,11 +189,30 @@ def training_feature_rows(dataset: SequenceDataset) -> np.ndarray:
     Only rows reachable from a training window are kept, so validation-only rows (later in time)
     never contribute to the normalization statistics.
     """
+    return dataset.samples.features[training_row_mask(dataset)]
+
+
+def training_row_mask(dataset: SequenceDataset) -> np.ndarray:
+    """``[R]`` bool over ``dataset.samples.features``: the rows some training window covers."""
     samples = dataset.samples
-    keep = np.zeros(len(samples.features), dtype=bool)
-    for i in dataset.indices:
-        keep[int(samples.start_row[i]) : int(samples.end_row[i]) + 1] = True
-    return samples.features[keep]
+    indices = np.asarray(dataset.indices, np.int64)
+    # +1 at each window's first row, -1 after its last: covered rows have a positive running sum.
+    edges = np.zeros(len(samples.features) + 1, np.int64)
+    np.add.at(edges, samples.start_row[indices], 1)
+    np.add.at(edges, samples.end_row[indices] + 1, -1)
+    return np.cumsum(edges[:-1]) > 0
+
+
+def fit_model_normalizer(model: SoliaTransformer, dataset: SequenceDataset) -> None:
+    """Fit ``model``'s normalizer on the rows ``dataset``'s training windows cover: streamed over a
+    shared :class:`solia_ai.rows.TrainingRows` matrix (no copy of the rows), else in one pass."""
+    samples = dataset.samples
+    if samples.shared_rows:
+        model.fit_normalizer_rows(
+            samples.features, training_row_mask(dataset), columns=samples.columns
+        )
+    else:
+        model.fit_normalizer(training_feature_rows(dataset), columns=samples.columns)
 
 
 def _cosine_warmup(optimizer: AdamW, warmup_steps: int, total_steps: int) -> LambdaLR:
@@ -450,7 +469,7 @@ def fit_one(
     model = SoliaTransformer.from_config(cfg).to(device)
     if init_state is not None:
         model.load_state_dict(init_state)
-    model.fit_normalizer(training_feature_rows(train_ds), columns=train_ds.samples.columns)
+    fit_model_normalizer(model, train_ds)
     pos_weight = resolve_pos_weight(train_ds, cfg)
     loss_fn = SoliaLoss.from_config(cfg, pos_weight=pos_weight).to(device)
 

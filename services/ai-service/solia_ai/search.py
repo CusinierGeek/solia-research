@@ -100,6 +100,7 @@ from .dataset import SequenceDataset, config_samples, embargo_seconds, window_st
 from .entry_selection import entry_keys
 from .evaluate import ReferencePolicy, default_policy_horizon, fmt, json_safe
 from .lift import PREDICTIVE_METRICS
+from .rows import TrainingRows
 
 INT_PARAMS = ("seq_len", "d_model", "n_layers", "ensemble_size", "max_rows")
 FLOAT_PARAMS = (
@@ -614,7 +615,7 @@ class TrialLog:
 
 
 def run_search(
-    df: pd.DataFrame,
+    df: pd.DataFrame | TrainingRows,
     config: Mapping[str, Any],
     *,
     space: Mapping[str, Any] | None = None,
@@ -655,8 +656,10 @@ def run_search(
     policy = policy or ReferencePolicy(horizon=default_policy_horizon(horizons))
     policy.horizon_index(horizons)
     embargo = embargo_seconds(horizons)
+    # The rows' mint / ts (the compact frame of a --prune-columns read: solia_ai.rows).
+    frame = df.frame if isinstance(df, TrainingRows) else df
     # lookback_days searched: every trial trains on its own lookback per slice (module doc).
-    lookback_tokens = LookbackTokens(df) if "lookback_days" in space else None
+    lookback_tokens = LookbackTokens(frame) if "lookback_days" in space else None
 
     def run_trial(name: str, params: Mapping[str, Any]) -> tuple[Trial, list[dict[str, Any]]]:
         started = clock()
@@ -692,8 +695,8 @@ def run_search(
         if lookback_tokens is not None:
             lookback = cfg.get("data", {}).get("lookback_days", DATA_DEFAULTS["lookback_days"])
             codes, uniques = pd.factorize(pd.Series(train_samples.mint, dtype=object))
-        elif budget is not None and budget < df["mint"].notna().sum():
-            trained = np.isin(train_samples.mint, list(budget_tokens(df["mint"], budget)))
+        elif budget is not None and budget < frame["mint"].notna().sum():
+            trained = np.isin(train_samples.mint, list(budget_tokens(frame["mint"], budget)))
         runs = []
         for window in windows:
             train_idx, val_idx = window.train_idx, window.val_idx
@@ -913,8 +916,7 @@ def main(argv: list[str] | None = None) -> None:
         add_data_bounds_arguments,
         add_prune_columns_argument,
         make_engine,
-        read_training_features,
-        training_columns,
+        read_training_data,
         with_prune_columns,
     )
 
@@ -1010,9 +1012,7 @@ def main(argv: list[str] | None = None) -> None:
             end = datetime.fromisoformat(header["data"]["window_end"])
             print(f"resuming {checkpoint} (window ending {end.isoformat()})", file=sys.stderr)
 
-    df, bounds = read_training_features(
-        make_engine(), data, end=end, columns=training_columns(config)
-    )
+    df, bounds = read_training_data(make_engine(), data, config, end=end)
     print(bounds.describe(), file=sys.stderr)
     try:
         report = run_search(

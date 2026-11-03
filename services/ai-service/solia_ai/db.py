@@ -30,7 +30,14 @@ from sqlalchemy.sql.elements import TextClause
 
 from .config import DATA_DEFAULTS, ConfigError, data_bounds_error, database_url
 from .eligibility import INPUT_COLUMNS as ELIGIBILITY_INPUTS
-from .features import BASELINE_GROUPS, DB_FEATURE_COLUMNS, VENUE_COLUMNS, group_columns
+from .features import (
+    BASELINE_GROUPS,
+    DB_FEATURE_COLUMNS,
+    VENUE_COLUMNS,
+    build_feature_matrix,
+    group_columns,
+)
+from .rows import FRAME_FLOAT_COLUMNS, TrainingRows, always_written_columns, epoch_ns
 
 logger = logging.getLogger(__name__)
 
@@ -287,6 +294,33 @@ def read_training_features(
     """
     _check_positive("chunksize", chunksize)
     selected = list(DB_FEATURE_COLUMNS) if columns is None else _check_columns(columns)
+    tokens, kept, bounds = _select_tokens(engine, settings, end)
+
+    query = text(
+        f"SELECT {_select_list(selected)} FROM features WHERE mint = ANY(:mints) "
+        "AND ts >= :start AND ts <= :end ORDER BY mint, ts"
+    )
+    params = {**bounds, "mints": kept["mint"].tolist()}
+    chunks = [_compact(chunk) for chunk in _stream(engine, query, params, chunksize)]
+    for col in _TEXT_COLUMNS:  # one category set, so the concat stays categorical
+        categories = union_categoricals([chunk[col] for chunk in chunks]).categories
+        for chunk in chunks:
+            chunk[col] = chunk[col].cat.set_categories(categories)
+    df = pd.concat(chunks, ignore_index=True)
+    del chunks
+    for col in _TEXT_COLUMNS:  # back to plain object columns, sharing one str per distinct value
+        df[col] = df[col].astype(object)
+    result = _data_bounds(settings, bounds, tokens, kept, len(df))
+    logger.info(result.describe())
+    return df, result
+
+
+def _select_tokens(
+    engine: Engine, settings: DataSettings, end: datetime | None
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, datetime]]:
+    """The bounded read's token selection (:func:`read_training_features` steps 1-3): every token
+    of the window with its row count, the kept ones (whole, ``md5(mint)`` order, within
+    ``max_rows``), and the window ``{"start", "end"}``."""
     with engine.connect() as conn:
         newest = end or conn.execute(text("SELECT max(ts) FROM features")).scalar()
         if newest is None:
@@ -311,35 +345,130 @@ def read_training_features(
             f"fits (data.max_rows {settings.max_rows}; {len(whole)} whole of {len(tokens)} "
             "tokens): widen data.lookback_days or raise data.max_rows"
         )
+    return tokens, kept, bounds
 
-    query = text(
-        f"SELECT {_select_list(selected)} FROM features WHERE mint = ANY(:mints) "
-        "AND ts >= :start AND ts <= :end ORDER BY mint, ts"
-    )
-    params = {**bounds, "mints": kept["mint"].tolist()}
-    chunks = [_compact(chunk) for chunk in _stream(engine, query, params, chunksize)]
-    for col in _TEXT_COLUMNS:  # one category set, so the concat stays categorical
-        categories = union_categoricals([chunk[col] for chunk in chunks]).categories
-        for chunk in chunks:
-            chunk[col] = chunk[col].cat.set_categories(categories)
-    df = pd.concat(chunks, ignore_index=True)
-    del chunks
-    for col in _TEXT_COLUMNS:  # back to plain object columns, sharing one str per distinct value
-        df[col] = df[col].astype(object)
-    result = DataBounds(
+
+def _data_bounds(
+    settings: DataSettings,
+    bounds: Mapping[str, datetime],
+    tokens: pd.DataFrame,
+    kept: pd.DataFrame,
+    rows_read: int,
+) -> DataBounds:
+    n_whole = int((~tokens["partial"].astype(bool)).sum())
+    return DataBounds(
         lookback_days=settings.lookback_days,
         max_rows=settings.max_rows,
-        window_start=start,
-        window_end=end,
+        window_start=bounds["start"],
+        window_end=bounds["end"],
         rows_in_window=int(tokens["n"].sum()),
         tokens_in_window=len(tokens),
-        tokens_partial=len(tokens) - len(whole),
-        tokens_capped=len(whole) - len(kept),
+        tokens_partial=len(tokens) - n_whole,
+        tokens_capped=n_whole - len(kept),
         tokens_kept=len(kept),
-        rows_read=len(df),
+        rows_read=rows_read,
     )
+
+
+# Hours of features per query of :func:`read_training_rows`: short enough that PostgreSQL walks
+# the ts index in order (a whole multi-day window gets a parallel scan + an on-disk sort).
+ROWS_SLICE_HOURS = 1.0
+
+
+def read_training_rows(
+    engine: Engine,
+    settings: DataSettings,
+    *,
+    read_columns: Sequence[str],
+    matrix_columns: Sequence[str],
+    chunksize: int = TRAINING_CHUNKSIZE,
+    end: datetime | None = None,
+    slice_hours: float = ROWS_SLICE_HOURS,
+) -> tuple[TrainingRows, DataBounds]:
+    """The rows :func:`read_training_features` reads (same window, tokens and values), held as
+    :class:`solia_ai.rows.TrainingRows` and never as a frame of every row: each streamed chunk goes
+    straight to its final place in a preallocated narrow ``float32`` matrix (``matrix_columns``,
+    an ordered subset of FEATURE_COLUMNS) and a slim frame. Research reads only (#202).
+
+    The window is read in ``slice_hours`` slices, each in ``ts`` order, so every token's rows
+    arrive in time order and its row count (from the token selection) gives each row its slot.
+
+    Raises:
+        ValueError: as :func:`read_training_features`; or the kept tokens gained or lost rows inside
+            the window during the read (retry, or pin ``end`` to an older time).
+    """
+    _check_positive("chunksize", chunksize)
+    if not slice_hours > 0:
+        raise ValueError(f"slice_hours must be > 0, got {slice_hours}")
+    selected = _check_columns(read_columns)
+    matrix_columns = tuple(matrix_columns)
+    tokens, kept, bounds = _select_tokens(engine, settings, end)
+
+    mints = np.sort(kept["mint"].to_numpy(dtype=object))  # the build's mint order
+    dtype = pd.CategoricalDtype(pd.Index(mints, dtype=object))
+    counts = kept.set_index("mint")["n"].reindex(mints).to_numpy(np.int64)
+    offset = np.r_[0, np.cumsum(counts)[:-1]].astype(np.int64)
+    filled = np.zeros(len(mints), np.int64)
+    n_rows = int(counts.sum())
+    features = np.empty((n_rows, len(matrix_columns)), np.float32)
+    ts = np.empty(n_rows, np.int64)
+    venue = np.full(n_rows, np.nan, object)  # a NULL venue reads as NaN, as in the frame read
+    floats = {c: np.empty(n_rows, np.float64) for c in FRAME_FLOAT_COLUMNS if c in selected}
+    nulls = dict.fromkeys(always_written_columns(selected), 0)
+
+    query = text(
+        f"SELECT {_select_list(selected)} FROM features "
+        "WHERE ts >= :lo AND (ts < :hi OR (:last AND ts = :hi)) ORDER BY ts"
+    )
+    step = timedelta(hours=slice_hours)
+    lo = bounds["start"]
+    while True:
+        hi = min(lo + step, bounds["end"])
+        last = hi == bounds["end"]
+        for chunk in _stream(engine, query, {"lo": lo, "hi": hi, "last": last}, chunksize):
+            codes = chunk["mint"].astype(dtype).cat.codes.to_numpy(np.int64)
+            ours = codes >= 0
+            if not ours.any():
+                continue
+            chunk, codes = chunk[ours], codes[ours]
+            rank = pd.Series(codes).groupby(codes, sort=False).cumcount().to_numpy(np.int64)
+            rank = rank + filled[codes]
+            if (rank >= counts[codes]).any():
+                raise ValueError(
+                    "the kept tokens gained rows in the window during the read: retry, or pin "
+                    "the window's end to an older time"
+                )
+            slots = offset[codes] + rank
+            filled += np.bincount(codes, minlength=len(mints))
+            features[slots] = build_feature_matrix(chunk, columns=matrix_columns)
+            ts[slots] = epoch_ns(chunk["ts"])
+            venues = chunk["venue"].to_numpy(dtype=object)
+            venue[slots] = np.where(pd.isna(venues), np.nan, venues)
+            for col, values in floats.items():
+                values[slots] = pd.to_numeric(chunk[col], errors="coerce").to_numpy(np.float64)
+            for col in nulls:
+                nulls[col] += int(chunk[col].isna().sum())
+        if last:
+            break
+        lo = hi
+    if not np.array_equal(filled, counts):
+        raise ValueError(
+            f"read {int(filled.sum())} of the {n_rows} rows counted for the kept tokens: the "
+            "window changed during the read; retry"
+        )
+    codes = np.repeat(np.arange(len(mints)), counts)
+    frame = pd.DataFrame(
+        {
+            "mint": pd.Categorical.from_codes(codes, dtype=dtype),
+            "ts": pd.to_datetime(ts, utc=True),
+            "venue": venue,
+            **floats,
+        }
+    )
+    rows = TrainingRows(frame, features, matrix_columns, nulls)
+    result = _data_bounds(settings, bounds, tokens, kept, n_rows)
     logger.info(result.describe())
-    return df, result
+    return rows, result
 
 
 def _read(
@@ -405,3 +534,22 @@ def _utc(name: str, value: datetime) -> datetime:
 def _check_positive(name: str, value: int | None) -> None:
     if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 1):
         raise ValueError(f"{name} must be a positive integer, got {value!r}")
+
+
+def read_training_data(
+    engine: Engine,
+    settings: DataSettings,
+    config: Mapping[str, Any],
+    *,
+    end: datetime | None = None,
+) -> tuple[pd.DataFrame | TrainingRows, DataBounds]:
+    """A research CLI's read under ``config``: with ``data.prune_columns``, the compact
+    :func:`read_training_rows` (the enabled groups' matrix only); else the default
+    :func:`read_training_features` frame, unchanged."""
+    columns = training_columns(config)
+    if columns is None:
+        return read_training_features(engine, settings, end=end)
+    groups = config.get("features", {}).get("groups", BASELINE_GROUPS)
+    return read_training_rows(
+        engine, settings, read_columns=columns, matrix_columns=group_columns(groups), end=end
+    )

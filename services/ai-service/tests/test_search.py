@@ -17,6 +17,7 @@ import solia_ai.registry
 import solia_ai.search as search
 from solia_ai.config import load_config
 from solia_ai.dataset import config_samples
+from solia_ai.rows import TrainingRows
 from solia_ai.search import (
     DEFAULT_SPACE,
     SearchReport,
@@ -580,7 +581,14 @@ def test_main_reads_the_longest_lookback_and_prunes_on_request(
         read.append((settings.lookback_days, columns))
         return fake_bounded_read(engine, settings, end)
 
+    def recording_rows(engine, settings, *, read_columns, matrix_columns, end=None):
+        # --prune-columns: the compact read (solia_ai.rows), never a frame of every row
+        read.append((settings.lookback_days, read_columns))
+        df, bounds = fake_bounded_read(engine, settings, end)
+        return TrainingRows.from_frame(df, matrix_columns), bounds
+
     monkeypatch.setattr(solia_ai.db, "read_training_features", recording_read)
+    monkeypatch.setattr(solia_ai.db, "read_training_rows", recording_rows)
     space = tmp_path / "space.yaml"
     space.write_text("lookback_days:\n  choices: [1.0, 3.5]\n", encoding="utf-8")
 

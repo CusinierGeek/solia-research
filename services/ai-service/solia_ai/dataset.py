@@ -58,7 +58,7 @@ import math
 import multiprocessing
 import os
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 import numpy as np
@@ -86,6 +86,7 @@ from .features import (
     is_ordered_subset,
 )
 from .liquidity import LiquidityFloor
+from .rows import TrainingRows
 
 DEFAULT_MAX_GAP_FRACTION = 0.25
 DEFAULT_MIN_GAP_SECONDS = 20  # two pipeline snapshot cadences: normal spacing is never a "gap"
@@ -120,6 +121,9 @@ class Samples:
     # FEATURE_COLUMNS-wide, the other columns 0, which is what the model's feature mask makes of
     # them anyway. Only ``features`` (the bulk of the memory) is narrow.
     columns: tuple[str, ...] | None = None
+    # True: ``features`` is a :class:`solia_ai.rows.TrainingRows` matrix shared with other Samples
+    # (every row read, not only the windows' tokens; :func:`rows_samples`). Never copy or mutate it.
+    shared_rows: bool = False
 
     def __len__(self) -> int:
         return len(self.end_row)
@@ -208,6 +212,8 @@ def build_samples(
     window_stride_seconds: float = 0,
     liquidity_floor: LiquidityFloor | None = None,
     feature_columns: Sequence[str] | None = None,
+    features_matrix: np.ndarray | None = None,
+    row_offset: int = 0,
 ) -> Samples:
     """Slide windows per mint and label each by the realized future trajectory (module doc).
 
@@ -221,6 +227,11 @@ def build_samples(
 
     ``feature_columns`` (an ordered subset of FEATURE_COLUMNS) stores a narrow matrix of only those
     columns (:attr:`Samples.columns`); the windows, labels and served inputs are otherwise the same.
+
+    ``features_matrix`` (with ``feature_columns``): the matrix is already built, ``df``'s row
+    ``i`` being its row ``row_offset + i`` (:class:`solia_ai.rows.TrainingRows`). The Samples then
+    index into it instead of copying their rows (:attr:`Samples.shared_rows`). ``df`` must hold
+    each token's rows contiguous and in time order, as :class:`~solia_ai.rows.TrainingRows` does.
     """
     rule = EligibilityRule() if eligibility is None else eligibility
     rule.check_columns(df)
@@ -254,6 +265,17 @@ def build_samples(
         raise ValueError(
             f"feature_columns must be a non-empty ordered subset of FEATURE_COLUMNS, got {columns}"
         )
+    shared = features_matrix is not None
+    if shared and (
+        columns is None
+        or features_matrix.ndim != 2
+        or features_matrix.shape[1] != len(columns)
+        or not 0 <= row_offset <= len(features_matrix) - len(df)
+    ):
+        raise ValueError(
+            "features_matrix must be [>= row_offset + len(df), len(feature_columns)], got "
+            f"{features_matrix.shape} at row_offset {row_offset} for {len(df)} rows"
+        )
 
     horizon_s = np.array([horizon_seconds(h) for h in horizons], np.int64)
     pump_thr = np.array([pump_thresholds[h] for h in horizons], np.float64)
@@ -276,6 +298,10 @@ def build_samples(
     if "id" in df.columns:
         keys.insert(0, df["id"].to_numpy()[rows])
     order = rows[np.lexsort(keys)]
+    if shared and not np.array_equal(order, rows):
+        raise ValueError(
+            "a shared features_matrix needs each token's rows contiguous and in time order"
+        )
 
     token_codes = codes[order]
     token = np.r_[0, np.cumsum(token_codes[1:] != token_codes[:-1])].astype(np.int64)
@@ -310,16 +336,21 @@ def build_samples(
         return _empty_samples(seq_len, horizons, n_feat, columns)
     ends = window_ends[keep]
 
-    # Only the rows of tokens holding a sample are stored; renumber rows over them.
-    has_sample = np.zeros(int(token[-1]) + 1, bool)
-    has_sample[token[ends]] = True
-    stored = has_sample[token]
-    new_row = np.cumsum(stored) - 1
-    end_row = new_row[ends]
+    if shared:  # rows index the shared matrix directly (order is df's own row order)
+        matrix = features_matrix
+        end_row = row_offset + order[ends]
+    else:
+        # Only the rows of tokens holding a sample are stored; renumber rows over them.
+        has_sample = np.zeros(int(token[-1]) + 1, bool)
+        has_sample[token[ends]] = True
+        stored = has_sample[token]
+        new_row = np.cumsum(stored) - 1
+        end_row = new_row[ends]
+        matrix = build_feature_matrix(df, rows=order[stored], columns=columns)  # [R, F] float32
     start_row = end_row - np.minimum(pos[ends], seq_len - 1)
 
     return Samples(
-        build_feature_matrix(df, rows=order[stored], columns=columns),  # [R, F] float32
+        matrix,
         start_row.astype(np.int64),
         end_row.astype(np.int64),
         seq_len,
@@ -334,6 +365,7 @@ def build_samples(
         liquidity[ends].astype(np.float32),
         np.full(len(ends), None, object) if venue is None else venue[ends],
         columns,
+        shared,
     )
 
 
@@ -803,17 +835,88 @@ def embargo_seconds(horizons: Sequence[str]) -> int:
     return max(horizon_seconds(h) for h in horizons)
 
 
-def config_samples(df: pd.DataFrame, cfg: Mapping[str, Any]) -> Samples:
+def config_samples(df: pd.DataFrame | TrainingRows, cfg: Mapping[str, Any]) -> Samples:
     """The windows of ``df`` per ``cfg`` (anchored on rows its ``eligibility`` rule accepts,
     labeled under its ``labeling.liquidity_floor``);
     refuses rows predating an enabled feature group. With ``data.prune_columns`` the matrix holds
-    only the enabled groups' columns (:attr:`Samples.columns`)."""
+    only the enabled groups' columns (:attr:`Samples.columns`). ``df`` may be
+    :class:`solia_ai.rows.TrainingRows` (:func:`rows_samples`)."""
+    if isinstance(df, TrainingRows):
+        return rows_samples(df, cfg)
     groups = cfg.get("features", {}).get("groups", BASELINE_GROUPS)
     check_group_coverage(df, groups)
-    labeling = cfg["labeling"]
     prune = cfg.get("data", {}).get("prune_columns", DATA_DEFAULTS["prune_columns"])
     return build_samples(
-        df,
+        df, **_build_settings(cfg), feature_columns=group_columns(groups) if prune else None
+    )
+
+
+# Rows per token block of :func:`rows_samples`: bounds the build's temporaries (~150 B/row).
+ROWS_BLOCK = 4_000_000
+
+
+def rows_samples(
+    rows: TrainingRows, cfg: Mapping[str, Any], *, block_rows: int = ROWS_BLOCK
+) -> Samples:
+    """:func:`config_samples` on :class:`solia_ai.rows.TrainingRows`: the same windows, labels and
+    served inputs, built token block by token block over the shared matrix (no row copied).
+
+    Raises:
+        ValueError: the matrix doesn't hold exactly ``cfg``'s enabled groups' columns, or rows
+            predate an enabled group.
+    """
+    groups = cfg.get("features", {}).get("groups", BASELINE_GROUPS)
+    expected = tuple(group_columns(groups))
+    if rows.columns != expected:
+        raise ValueError(
+            f"the training rows hold columns {rows.columns}, the config's enabled groups need "
+            f"{expected}"
+        )
+    rows.check_groups(groups)
+    settings = _build_settings(cfg)
+    parts = [
+        build_samples(
+            rows.frame.iloc[lo:hi], **settings, feature_columns=rows.columns,
+            features_matrix=rows.features, row_offset=lo,
+        )  # fmt: skip
+        for lo, hi in rows.token_blocks(block_rows)
+    ]
+    parts = [p for p in parts if len(p)]
+    horizons = tuple(cfg["horizons"])
+    if not parts:
+        return replace(
+            _empty_samples(settings["seq_len"], horizons, len(rows.columns), rows.columns),
+            features=rows.features,
+            shared_rows=True,
+        )
+
+    def cat(name: str) -> np.ndarray:
+        return np.concatenate([getattr(p, name) for p in parts])
+
+    return Samples(
+        rows.features,
+        cat("start_row"),
+        cat("end_row"),
+        settings["seq_len"],
+        cat("pump"),
+        cat("rug"),
+        cat("expected_return"),
+        cat("mask"),
+        cat("end_ts"),
+        cat("mint"),
+        parts[0].horizons,
+        cat("eligibility_inputs"),
+        cat("anchor_liquidity"),
+        cat("anchor_venue"),
+        rows.columns,
+        True,
+    )
+
+
+def _build_settings(cfg: Mapping[str, Any]) -> dict[str, Any]:
+    """:func:`build_samples` keyword arguments per ``cfg`` (all but the feature columns)."""
+    labeling = cfg["labeling"]
+    return dict(
         seq_len=cfg["model"]["seq_len"],
         min_seq_len=cfg["model"].get("min_seq_len"),
         horizons=tuple(cfg["horizons"]),
@@ -825,7 +928,6 @@ def config_samples(df: pd.DataFrame, cfg: Mapping[str, Any]) -> Samples:
         eligibility=EligibilityRule.from_config(cfg),
         window_stride_seconds=window_stride(cfg),
         liquidity_floor=LiquidityFloor.from_config(cfg),
-        feature_columns=group_columns(groups) if prune else None,
     )
 
 

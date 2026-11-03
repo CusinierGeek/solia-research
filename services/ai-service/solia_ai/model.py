@@ -126,6 +126,36 @@ class FeatureNormalizer(nn.Module):
         self.fitted.fill_(True)
         return self
 
+    @torch.no_grad()
+    def set_statistics(
+        self,
+        mean: torch.Tensor | np.ndarray,
+        std: torch.Tensor | np.ndarray,
+        *,
+        index: Sequence[int] | None = None,
+    ) -> FeatureNormalizer:
+        """Store statistics computed elsewhere (e.g. streamed over chunks) on the log scale, with
+        :meth:`fit`'s rules: ``std`` <= 1e-6 is left unscaled (1), and with ``index`` only those
+        features are set (the others mean 0, std 1). Moved to the buffers' device."""
+        device = self.mean.device
+        mean = torch.as_tensor(mean, dtype=torch.float32).to(device)
+        std = torch.as_tensor(std, dtype=torch.float32).to(device)
+        width = self.mean.numel() if index is None else len(index)
+        if mean.shape != (width,) or std.shape != (width,):
+            raise ValueError(f"expected [{width}] statistics, got {tuple(mean.shape)}")
+        if not (torch.isfinite(mean).all() and torch.isfinite(std).all()):
+            raise ValueError("normalizer statistics contain non-finite values")
+        std = torch.where(std > 1e-6, std, torch.ones_like(std))
+        if index is None:
+            self.mean.copy_(mean)
+            self.std.copy_(std)
+        else:
+            at = torch.as_tensor(list(index), dtype=torch.long, device=device)
+            self.mean.zero_().index_copy_(0, at, mean)
+            self.std.fill_(1.0).index_copy_(0, at, std)
+        self.fitted.fill_(True)
+        return self
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return (signed_log1p(x) - self.mean) / self.std
 
@@ -336,6 +366,61 @@ class SoliaTransformer(nn.Module):
         mask = self.feature_mask[torch.as_tensor(index, dtype=torch.long)].to(data.device)
         masked = torch.where(mask, data, torch.zeros((), dtype=data.dtype, device=data.device))
         self.normalizer.fit(masked, index=index)
+        return self
+
+    @torch.no_grad()
+    def fit_normalizer_rows(
+        self,
+        features: np.ndarray,
+        keep: np.ndarray,
+        *,
+        columns: Sequence[str],
+        chunk_rows: int = 1 << 20,
+    ) -> SoliaTransformer:
+        """:meth:`fit_normalizer` on ``features[keep]`` (a narrow ``[R, len(columns)]`` matrix and
+        an ``[R]`` row mask), streamed ``chunk_rows`` rows at a time: never copies the kept rows
+        (a shared :class:`solia_ai.rows.TrainingRows` matrix can be tens of GB). Mean and variance
+        are merged per chunk in float64 (Chan et al.), so they equal the one-pass fit up to float
+        rounding (~1e-6 relative), not bit for bit.
+
+        Raises:
+            ValueError: bad shapes, unknown columns, no kept row, or non-finite inputs.
+        """
+        if features.ndim != 2 or features.shape[1] != len(columns):
+            raise ValueError(f"expected [R, {len(columns)}] rows, got {tuple(features.shape)}")
+        if keep.shape != (len(features),):
+            raise ValueError(f"keep must be [{len(features)}], got {tuple(keep.shape)}")
+        if chunk_rows < 1:
+            raise ValueError(f"chunk_rows must be >= 1, got {chunk_rows}")
+        unknown = [c for c in columns if c not in self.feature_columns]
+        if unknown:
+            raise ValueError(f"column(s) not among the model's features: {', '.join(unknown)}")
+        index = [self.feature_columns.index(c) for c in columns]
+        enabled = self.feature_mask.cpu()[torch.as_tensor(index, dtype=torch.long)]
+        n = 0
+        mean = torch.zeros(len(index), dtype=torch.float64)
+        m2 = torch.zeros_like(mean)
+        for lo in range(0, len(features), chunk_rows):
+            picked = keep[lo : lo + chunk_rows]
+            if not picked.any():
+                continue
+            x = torch.from_numpy(np.ascontiguousarray(features[lo : lo + chunk_rows][picked]))
+            x = torch.where(enabled, x.to(torch.float32), torch.zeros((), dtype=torch.float32))
+            logged = signed_log1p(x)
+            if not torch.isfinite(logged).all():
+                raise ValueError("normalizer rows contain non-finite values")
+            logged = logged.to(torch.float64)
+            count = len(logged)
+            chunk_mean = logged.mean(dim=0)
+            chunk_m2 = ((logged - chunk_mean) ** 2).sum(dim=0)
+            delta = chunk_mean - mean
+            total = n + count
+            mean = mean + delta * (count / total)
+            m2 = m2 + chunk_m2 + delta**2 * (n * count / total)
+            n = total
+        if n == 0:
+            raise ValueError("no row to fit the normalizer on")
+        self.normalizer.set_statistics(mean, torch.sqrt(m2 / n), index=index)
         return self
 
     def mask_features(self, x: torch.Tensor) -> torch.Tensor:

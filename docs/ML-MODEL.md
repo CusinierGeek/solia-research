@@ -1143,7 +1143,7 @@ has ~8 GB left beside Postgres (15.6 GB, ~7 GB for Postgres). The windows' float
 can't help either: at `seq_len` 64 × ~10 s snapshots, a window's history (~640 s) is longer than the strides
 studied (120–240 s), so almost every row belongs to some kept window.
 
-**Step 1 (this change): read and hold only the enabled groups.** Opt-in, research CLIs only:
+**Step 1: read and hold only the enabled groups.** Opt-in, research CLIs only:
 
 - `--prune-columns` (`solia_ai.search`, `solia_ai.throughput`; sets `data.prune_columns`). The read selects only
   the enabled groups' stored columns, plus what labels and eligibility need (`price`, `liquidity`,
@@ -1158,12 +1158,52 @@ studied (120–240 s), so almost every row belongs to some kept window.
 - The candidate / retrain refuse `data.prune_columns`, because the champion scored on the same windows may use
   groups the config doesn't enable. Without the flag, nothing changes: same columns, rows, windows and matrix.
 
-Expected effect: ≈ 2.5–3× fewer bytes per row (frame and matrix), so ~2 d of every token, or a partial 3.5 d,
-within today's budget. It must be **measured** before a run relies on it:
-`python -m solia_ai.throughput --prune-columns --lookback-days 3.5 --max-rows …` (peak RSS). Holding every token
-of 3.5 d probably also needs a token-chunked build that never holds the whole frame, and windows pre-built per
-stride for the search (it rebuilds them per trial from the frame). That is step 2, only if step 1's measurement
-falls short.
+Expected effect: ≈ 2.5–3× fewer bytes per row. **Measured (2026-11-03, GPU container, `throughput
+--prune-columns --lookback-days 3.5 --max-rows 8000000`): only −12 %**, i.e. 7.06 GB peak RSS for 8.0 M rows
+(≈ 880 B/row; RSS after the build 3.99 GB), and 1 006 s of read (≈ 8 k rows/s: `mint = ANY(…) ORDER BY mint, ts`
+reads every token's rows at random places of the heap). The peak is the read itself (chunk frames + `concat`) and the
+build's temporaries, not the stored columns. Step 1 falls short, hence step 2. That first run also exposed a CUDA
+bug in the narrow normalizer fit (#227).
+
+**Step 2: compact training rows** (`solia_ai.rows.TrainingRows`, used by `--prune-columns` in `solia_ai.search` and
+`solia_ai.throughput`; `solia_ai.db.read_training_data` picks the reader). The default path is unchanged.
+
+- **The rows are held once**: a narrow `float32` matrix of the enabled columns (124 B/row for the 31 current ones),
+  plus a slim frame aligned with it (`mint` as a category, `ts`, `venue`, and float64 `price`, `liquidity` and the
+  eligibility inputs, as in the frame read). Rows are sorted by `(mint, ts)`. Measured: **176 B/row** held.
+- **The read never holds a frame of every row** (`solia_ai.db.read_training_rows`). The token selection is the same
+  as the bounded read's (whole tokens, `md5(mint)` order, `max_rows`), and it gives each kept token's row count. The
+  window is then streamed in 1-hour slices, each `ORDER BY ts`. A whole window gets a parallel scan and an on-disk
+  sort; an hour walks the `ts` index. Rows of other tokens are dropped on the client. Each chunk goes straight to
+  its final rows of the preallocated arrays (token offset + rank in time). NULL counts of the always-written columns
+  are kept, so a group whose rows predate it is still refused. A token that gains or loses rows in the window during
+  the read is an error.
+- **Every Samples shares the matrix** (`Samples.shared_rows`): `build_samples(..., features_matrix=)` indexes it
+  instead of copying the windows' rows. A search's reference windows (base stride) and each trial's (its stride) cost
+  only their indices and labels. The build runs per block of whole tokens (`dataset.rows_samples`, 4 M rows), so its
+  temporaries follow the block, not the read.
+- **Streamed normalizer fit** (`SoliaTransformer.fit_normalizer_rows`). Mean and variance are merged per 1 M-row
+  chunk in float64 over the rows the training windows cover (`train.training_row_mask`), and the shared matrix is
+  never copied. The statistics equal the one-pass fit up to float rounding (tests: `rtol` 1e-5), not bit for bit.
+- Same windows, labels and served inputs as the frame path. This holds with and without stride, eligibility and the
+  liquidity floor, for any block size (`tests/test_training_rows.py`). The read returns the same frame, matrix and
+  bounds as `TrainingRows.from_frame` of the frame read (`tests/test_training_read.py`).
+
+Measured (2026-11-03, same container, live pipeline running, bot and retrain scheduler off):
+
+| read | rows / tokens | read | held | RSS after read | peak RSS | samples (stride 60) |
+|---|---:|---:|---:|---:|---:|---:|
+| step 1, 3.5 d, `max_rows` 8 M | 8.00 M / 59 k | 1 006 s | — | — | 7.06 GB | 775 k |
+| step 2, 3.5 d, `max_rows` 8 M | 8.00 M / 59 k | 1 741 s | 1.41 GB | 3.07 GB | **4.36 GB** | 778 k |
+| step 2, 3.5 d, **every token** | **26.0 M / 192 k** | 1 783 s | 4.57 GB | 7.32 GB | **9.21 GB** | 2.52 M |
+
+- **Every whole token of 3.5 d is 26 M rows, not the 60–70 M estimated.** The window holds 75.9 M rows of 242 k
+  tokens, but the 49.9 k tokens that started before it (long-lived, mostly migrated) hold two thirds of the rows.
+  They are dropped, never cut. With the frame read, those 26 M rows would need ≈ 23 GB.
+- The compact read costs ~30 min whatever `max_rows` is, because it parses every row of the window (≈ 43 k rows/s,
+  CPU-bound). That is slower than the frame read for a small budget, and ~4× faster for every token.
+- The RSS beyond the held rows (≈ 2.7 GB after the read) is the interpreter, the chunk churn and the build's
+  windows. The peak adds the CUDA context and a training step.
 
 **Searchable lookback.** `lookback_days` is a search parameter (`data`). When it is in the space, the read covers
 its largest value. Every trial, the baseline included with the base `data.lookback_days`, then trains per
@@ -1174,10 +1214,11 @@ paired. Without `lookback_days` in the space, nothing changes. The shipped grid 
 (lookback 2 / 3.5 d × stride 120 / 240 s, every token). Its baseline is the current config (`--max-rows 8000000`,
 stride 60, momentum + concentration).
 
-**Results & decision.** *Pending.* The memory measurement and the comparison need the GPU and a large read. They
-run after the official post-#172 retrain, with the retrain scheduler and the bot off (~4–6 h). Record here the
-peak RSS per variant, the paired table (`mean − std > margin`, primary pump/5m PR-AUC), the decision and its cost,
-with the report under `docs/reports/`. `config.yaml` `data.*` changes only if a variant clears the margin.
+**Results & decision.** *Pending.* The memory measurement is above (every token of 3.5 d fits: 9.2 GB peak). The
+comparison (`python -m solia_ai.search --space training-breadth --strategy grid --objective pr_auc
+--prune-columns`, ~4–6 h of GPU) runs with the retrain scheduler and the bot off, in a container capped at ~14 GB.
+Record here the paired table (`mean − std > margin`, primary pump/5m PR-AUC), the decision and its cost, with the
+report under `docs/reports/`. `config.yaml` `data.*` changes only if a variant clears the margin.
 
 ### Overfitting: recency-weighted loss (#203)
 
