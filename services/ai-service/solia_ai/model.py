@@ -117,9 +117,12 @@ class FeatureNormalizer(nn.Module):
             self.mean.copy_(mean)
             self.std.copy_(std)
         else:
-            at = torch.as_tensor(list(index), dtype=torch.long)
-            self.mean.zero_().index_copy_(0, at, mean)
-            self.std.fill_(1.0).index_copy_(0, at, std)
+            # index_copy_ needs index and source on the buffers' device (the rows may be elsewhere:
+            # a CUDA model fit on CPU rows).
+            device = self.mean.device
+            at = torch.as_tensor(list(index), dtype=torch.long, device=device)
+            self.mean.zero_().index_copy_(0, at, mean.to(device))
+            self.std.fill_(1.0).index_copy_(0, at, std.to(device))
         self.fitted.fill_(True)
         return self
 

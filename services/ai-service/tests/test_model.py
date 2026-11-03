@@ -155,6 +155,20 @@ def test_normalizer_fits_on_rows_from_another_device():
     assert bool(model.normalizer.fitted)
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA device")
+def test_narrow_normalizer_fit_on_a_cuda_model_from_cpu_rows():
+    # The training / throughput path: model moved to CUDA, then fit on the narrow numpy matrix
+    # (data.prune_columns). The index must follow the buffers, and the fit equals the CPU one.
+    columns = group_columns(BASELINE_GROUPS)
+    rows = np.random.default_rng(0).normal(size=(32, len(columns))).astype("f4")
+    on_cpu = baseline_only().fit_normalizer(rows, columns=columns)
+    on_cuda = baseline_only().to("cuda").fit_normalizer(rows, columns=columns)
+
+    assert on_cuda.normalizer.mean.device.type == "cuda"
+    torch.testing.assert_close(on_cuda.normalizer.mean.cpu(), on_cpu.normalizer.mean)
+    torch.testing.assert_close(on_cuda.normalizer.std.cpu(), on_cpu.normalizer.std)
+
+
 def test_feature_mask_follows_the_input_device():
     model = baseline_only()
     x = torch.randn(2, N_FEATURES, dtype=torch.float64)
