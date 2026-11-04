@@ -1,0 +1,74 @@
+Search (grid) — 5 trial(s) [stopped by space], 2 window(s) x 2 seed(s); objective = mean pr_auc over heads x horizons, scored on the base labels; rank by mean - std
+generated 2026-11-04T05:13:44.093488+00:00
+
+     trial |    pr_auc mean ± std |    score | best ep | val-train gap | params
+  trial-04 |      0.5079 ± 0.0084 |   0.4995 |  5.5000 |       -0.0862 | lookback_days=3.5, window_stride_seconds=240, max_rows=1000000000
+  trial-01 |      0.5097 ± 0.0105 |   0.4992 |  4.5000 |       -0.0825 | lookback_days=3.5, window_stride_seconds=120, max_rows=1000000000
+  trial-02 |      0.5016 ± 0.0187 |   0.4829 |  2.7500 |       -0.0936 | lookback_days=2.0, window_stride_seconds=120, max_rows=1000000000
+  trial-03 |      0.4954 ± 0.0157 |   0.4797 |  5.5000 |       -0.0774 | lookback_days=2.0, window_stride_seconds=240, max_rows=1000000000
+  baseline |      0.4948 ± 0.0173 |   0.4775 |  2.5000 |       -0.0686 | (base config)
+
+Rug drift — baseline: roc_auc / pr_auc per held-out slice
+            slice |           30s |            1m |            5m |           15m |            1h
+11-02T20:47..07:28 | 0.9122/0.4845 | 0.9010/0.5165 | 0.8986/0.7171 | 0.9215/0.8669 | 0.9318/0.9253
+11-03T07:28..17:34 | 0.9091/0.4000 | 0.8984/0.4486 | 0.9000/0.6853 | 0.9204/0.8541 | 0.9309/0.9295
+
+Rug drift — trial-04: roc_auc / pr_auc per held-out slice
+            slice |           30s |            1m |            5m |           15m |            1h
+11-02T20:47..07:28 | 0.9126/0.4890 | 0.9020/0.5166 | 0.9028/0.7210 | 0.9257/0.8725 | 0.9365/0.9305
+11-03T07:28..17:34 | 0.9146/0.4159 | 0.9050/0.4608 | 0.9072/0.6979 | 0.9306/0.8706 | 0.9398/0.9377
+
+Best: trial-04 vs baseline — objective lift 0.0131 ± 0.0091 (margin 0.01): not significant
+                metric |              lift | verdict
+      pump/30s/roc_auc |   0.0016 ± 0.0006 | not significant
+       pump/30s/pr_auc |   0.0166 ± 0.0117 | not significant
+          pump/30s/ece |   0.0015 ± 0.0020 | not significant
+       pump/1m/roc_auc |   0.0026 ± 0.0011 | not significant
+        pump/1m/pr_auc |   0.0227 ± 0.0232 | not significant
+           pump/1m/ece |   0.0006 ± 0.0011 | not significant
+       pump/5m/roc_auc |   0.0016 ± 0.0017 | not significant
+        pump/5m/pr_auc |   0.0180 ± 0.0130 | not significant
+           pump/5m/ece |   0.0004 ± 0.0010 | not significant
+      pump/15m/roc_auc |   0.0009 ± 0.0026 | not significant
+       pump/15m/pr_auc |   0.0116 ± 0.0095 | not significant
+          pump/15m/ece |   0.0021 ± 0.0009 | not significant
+       pump/1h/roc_auc |   0.0069 ± 0.0035 | not significant
+        pump/1h/pr_auc |   0.0200 ± 0.0132 | not significant
+           pump/1h/ece |   0.0025 ± 0.0012 | not significant
+       rug/30s/roc_auc |   0.0030 ± 0.0030 | not significant
+        rug/30s/pr_auc |   0.0102 ± 0.0081 | not significant
+           rug/30s/ece |  -0.0023 ± 0.0013 | not significant
+        rug/1m/roc_auc |   0.0038 ± 0.0033 | not significant
+         rug/1m/pr_auc |   0.0062 ± 0.0073 | not significant
+            rug/1m/ece |  -0.0029 ± 0.0009 | not significant
+        rug/5m/roc_auc |   0.0056 ± 0.0021 | not significant
+         rug/5m/pr_auc |   0.0082 ± 0.0057 | not significant
+            rug/5m/ece |  -0.0026 ± 0.0044 | not significant
+       rug/15m/roc_auc |   0.0072 ± 0.0035 | not significant
+        rug/15m/pr_auc |   0.0110 ± 0.0064 | not significant
+           rug/15m/ece |  -0.0033 ± 0.0062 | not significant
+        rug/1h/roc_auc |   0.0068 ± 0.0025 | not significant
+         rug/1h/pr_auc |   0.0067 ± 0.0023 | not significant
+            rug/1h/ece |   0.0028 ± 0.0044 | not significant
+      policy/total_pnl | 69.5015 ± 807.4433 | not significant
+        policy/avg_pnl |   0.0757 ± 0.0752 | better
+
+Proposed config.yaml diff (NOT applied):
+--- config.yaml
++++ config.yaml (proposed)
+@@ -71,9 +71,9 @@
+   keep_candidates: 5
+   rollback_depth: 2
+ data:
+-  lookback_days: 2.0
+-  max_rows: 8000000
+-  window_stride_seconds: 60
++  lookback_days: 3.5
++  max_rows: 1000000000
++  window_stride_seconds: 240
+   prune_columns: true
+ eligibility:
+   min_unique_traders: 0
+
+report written to /app/models/reports/training-breadth-202.json
+proposed diff written to /app/models/reports/training-breadth-202.diff

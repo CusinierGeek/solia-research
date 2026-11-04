@@ -1214,11 +1214,38 @@ paired. Without `lookback_days` in the space, nothing changes. The shipped grid 
 (lookback 2 / 3.5 d × stride 120 / 240 s, every token). Its baseline is the current config (`--max-rows 8000000`,
 stride 60, momentum + concentration).
 
-**Results & decision.** *Pending.* The memory measurement is above (every token of 3.5 d fits: 9.2 GB peak). The
-comparison (`python -m solia_ai.search --space training-breadth --strategy grid --objective pr_auc
---prune-columns`, ~4–6 h of GPU) runs with the retrain scheduler and the bot off, in a container capped at ~14 GB.
-Record here the paired table (`mean − std > margin`, primary pump/5m PR-AUC), the decision and its cost, with the
-report under `docs/reports/`. `config.yaml` `data.*` changes only if a variant clears the margin.
+**Results & decision.** Grid run 2026-11-03 17:34 → 11-04 05:13 UTC (11.7 h of GPU), 2 walk-forward windows × 2
+seeds, `--prune-columns`, a container capped at 14 GB, retrain scheduler and bot off. Report:
+`docs/reports/training-breadth-202.{txt,json,trials.jsonl,diff}`.
+
+| trial | lookback | stride | rows | objective (mean ± std) | score | pump/5m PR-AUC | paired objective lift | paired pump/5m lift | time |
+|---|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| baseline | 2 d | 60 s | 8 M cap | 0.4948 ± 0.0173 | 0.4775 | 0.3726 ± 0.0111 | — | — | 118 min |
+| trial-01 | 3.5 d | 120 s | every token | 0.5097 ± 0.0105 | 0.4992 | 0.3846 ± 0.0047 | +0.0149 ± 0.0091 | +0.0120 ± 0.0126 | 178 min |
+| trial-02 | 2 d | 120 s | every token | 0.5016 ± 0.0187 | 0.4829 | 0.3806 ± 0.0067 | +0.0068 ± 0.0052 | +0.0080 ± 0.0090 | 125 min |
+| trial-03 | 2 d | 240 s | every token | 0.4954 ± 0.0157 | 0.4797 | 0.3703 ± 0.0076 | +0.0006 ± 0.0078 | −0.0023 ± 0.0169 | 107 min |
+| **trial-04** | **3.5 d** | **240 s** | every token | 0.5079 ± 0.0084 | **0.4995** | **0.3907 ± 0.0037** | +0.0131 ± 0.0091 | +0.0180 ± 0.0130 | 140 min |
+
+(Times include the ~30 min compact read per trial.)
+
+- **No variant clears the margin.** The best (trial-04) lifts the objective by 0.0131 ± 0.0091, so mean − std =
+  0.004 < 0.01. Trial-01 is at 0.006. With 4 paired runs, the bar is strict.
+- **The direction is consistent, though.** Trial-04 lifts every pump and rug ROC-AUC and PR-AUC at every horizon
+  (20/20 positive), and the rug drift table is better on both held-out slices. Its seed/window spread is
+  half the baseline's (0.0084 vs 0.0173), so the ranking score is the best of the grid. `policy/avg_pnl` is better
+  (+0.076 ± 0.075). `policy/total_pnl` is noise.
+- **The period carries the gain, not the stride.** On 2 d, every token at stride 120 gives a small lift (trial-02).
+  Thinning to 240 loses it (trial-03 ≈ baseline). On 3.5 d, stride 240 is as good as 120 (score 0.4995 vs 0.4992)
+  and ~40 min cheaper.
+- **Cost.** 3.5 d / every token / stride 240 reads 26 M rows (~30 min, 9.2 GB peak) and trains in about the same
+  time as the baseline. It fits the 14 GB research cap but not the production retrain, which still uses the frame
+  read.
+
+**Decision.** `config.yaml` `data.*` is **unchanged** (no lift clears the margin, and the production retrain cannot
+do the compact read yet). The research setting `lookback_days 3.5`, `window_stride_seconds 240`, every token,
+`--prune-columns` is the data setting carried forward: #203 (recency × lookback 3.5 / 5 d) uses it as its base, and
+the #198 Transformer confirmation re-runs at 3.5 d. Changing production waits for two things: a follow-up that moves
+the retrain to the compact read, and a confirmation with more windows that clears the margin.
 
 ### Overfitting: recency-weighted loss (#203)
 
