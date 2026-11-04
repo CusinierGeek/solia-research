@@ -669,7 +669,11 @@ def _ordered(
 
 
 def main(argv: list[str] | None = None) -> None:
-    from .db import add_data_bounds_arguments, add_prune_columns_argument
+    from .db import (
+        add_data_bounds_arguments,
+        add_prune_columns_argument,
+        add_window_stride_argument,
+    )
 
     parser = argparse.ArgumentParser(
         description="Measure per-feature-group lift over walk-forward windows and seeds. "
@@ -719,28 +723,25 @@ def main(argv: list[str] | None = None) -> None:
         help="discard <out>.runs.jsonl and start over (default: resume the runs it holds)",
     )
     parser.add_argument("--device", help="torch device (default: cuda if available, else cpu)")
-    parser.add_argument(
-        "--window-stride-seconds", type=float,
-        help="keep at most one training window per token per N seconds "
-        "(default: data.window_stride_seconds)",
-    )  # fmt: skip
     add_data_bounds_arguments(parser)
     add_prune_columns_argument(parser)
+    add_window_stride_argument(parser)
     args = parser.parse_args(argv)
 
     import torch
 
-    from .config import load_config, window_stride_error
-    from .db import DataSettings, make_engine, read_training_data, with_prune_columns
+    from .config import load_config
+    from .db import (
+        DataSettings,
+        make_engine,
+        read_training_data,
+        with_prune_columns,
+        with_window_stride,
+    )
 
     config = with_prune_columns(load_config(), args.prune_columns)
     try:
-        if args.window_stride_seconds is not None:
-            error = window_stride_error(args.window_stride_seconds)
-            if error:
-                raise ValueError(error)
-            stride = args.window_stride_seconds
-            config = {**config, "data": {**config.get("data", {}), "window_stride_seconds": stride}}
+        config = with_window_stride(config, args.window_stride_seconds)
         variants = plan_variants(args.groups)
         variants += [combined_variant(groups) for groups in args.combine]
         check_variants(variants)

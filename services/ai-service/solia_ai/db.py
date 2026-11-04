@@ -28,7 +28,13 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.sql.elements import TextClause
 
-from .config import DATA_DEFAULTS, ConfigError, data_bounds_error, database_url
+from .config import (
+    DATA_DEFAULTS,
+    ConfigError,
+    data_bounds_error,
+    database_url,
+    window_stride_error,
+)
 from .eligibility import INPUT_COLUMNS as ELIGIBILITY_INPUTS
 from .features import (
     BASELINE_GROUPS,
@@ -183,6 +189,30 @@ def add_prune_columns_argument(parser: argparse.ArgumentParser) -> None:
 def with_prune_columns(config: Mapping[str, Any], prune: bool) -> dict[str, Any]:
     """``config`` with ``data.prune_columns`` set to ``prune`` (a copy; ``config`` unchanged)."""
     return {**config, "data": {**config.get("data", {}), "prune_columns": bool(prune)}}
+
+
+def add_window_stride_argument(parser: argparse.ArgumentParser) -> None:
+    """``--window-stride-seconds``: override ``data.window_stride_seconds`` (research CLIs)."""
+    parser.add_argument(
+        "--window-stride-seconds", type=float,
+        help="keep at most one window per token per N seconds "
+        "(default: data.window_stride_seconds)",
+    )  # fmt: skip
+
+
+def with_window_stride(config: Mapping[str, Any], stride: float | None) -> dict[str, Any]:
+    """``config`` with ``data.window_stride_seconds`` set to ``stride`` (a copy; ``config``
+    unchanged), or a plain copy when ``stride`` is ``None``.
+
+    Raises:
+        ValueError: ``stride`` isn't a finite number >= 0.
+    """
+    if stride is None:
+        return dict(config)
+    error = window_stride_error(stride)
+    if error:
+        raise ValueError(error)
+    return {**config, "data": {**config.get("data", {}), "window_stride_seconds": stride}}
 
 
 def add_data_bounds_arguments(parser: argparse.ArgumentParser) -> None:

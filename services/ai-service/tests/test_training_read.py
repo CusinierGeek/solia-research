@@ -276,3 +276,16 @@ def test_the_research_read_is_compact_only_when_pruning(engine, seeded):
 
     assert isinstance(rows, TrainingRows) and isinstance(df, pd.DataFrame)
     assert a == b and list(df.columns) == ["mint", "ts", "venue", *DB_FEATURE_COLUMNS]
+
+
+def test_with_window_stride_copies_the_config_and_validates():
+    from solia_ai.db import with_window_stride
+
+    config = {"data": {"max_rows": 5, "window_stride_seconds": 60}, "horizons": ["1m"]}
+
+    assert with_window_stride(config, None) == config
+    updated = with_window_stride(config, 240.0)["data"]
+    assert updated == {"max_rows": 5, "window_stride_seconds": 240.0}
+    assert config["data"]["window_stride_seconds"] == 60  # unchanged
+    with pytest.raises(ValueError, match="window_stride_seconds"):
+        with_window_stride(config, -1.0)

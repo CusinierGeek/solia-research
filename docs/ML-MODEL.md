@@ -1280,6 +1280,9 @@ the history while trusting yesterday more than four days ago.
   unweighted. The reported `train_loss` (and so the fit `gap`) is the weighted mean.
 - Validation rejects a non-numeric, non-positive or non-finite value, naming the key. The value is searchable
   (`recency_half_life_hours`, shipped grid `solia_ai/sweeps/recency.yaml`: 12 / 24 / 48 h).
+- The combined grid `solia_ai/sweeps/recency-lookback.yaml` crosses 12 / 24 / 48 h with a 3.5 or 5 d period, on the
+  #202 research setting. `search --window-stride-seconds 240` sets the baseline's stride, and so the held-out windows
+  every trial is scored on. Its baseline is 3.5 d without weighting, and no trial runs 5 d without weighting.
 
 **Results & decision.** *Pending.* A paired comparison (`mean − std > margin`, primary pump/5m PR-AUC) on the
 longest window #202 retains needs the GPU. It runs after #202's measurements, with the retrain scheduler and the

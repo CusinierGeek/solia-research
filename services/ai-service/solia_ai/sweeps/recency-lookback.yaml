@@ -1,0 +1,9 @@
+# #203 - recency half-life x training period, as one grid on the #202 research setting: every token, stride 240.
+# python -m solia_ai.search --space recency-lookback --strategy grid --objective pr_auc --prune-columns \
+#   --lookback-days 3.5 --max-rows 1000000000 --window-stride-seconds 240 --windows 2 --seeds 0 1
+# The baseline (trial "baseline") is that base: 3.5 d, no recency weighting. Every trial is scored on the same
+# held-out windows (stride 240). Cap the container at 14 GB: 5 d holds more rows than the 26 M measured at 3.5 d.
+lookback_days:
+  choices: [3.5, 5.0]
+recency_half_life_hours:
+  choices: [12, 24, 48]

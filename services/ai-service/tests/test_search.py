@@ -610,6 +610,7 @@ def test_main_reads_the_longest_lookback_and_prunes_on_request(
         "overfitting-data.yaml",
         "overfitting-regularization.yaml",
         "training-breadth.yaml",
+        "recency-lookback.yaml",
         "ensemble.yaml",
     ],
 )
@@ -830,3 +831,44 @@ def test_main_refuses_a_foreign_checkpoint_before_reading(offline_cli, tmp_path,
     monkeypatch.setattr(solia_ai.db, "read_training_features", None)  # must not be called
     with pytest.raises(SystemExit, match="not a search trials file"):
         search.main(["--trials", "1", "--out", str(out)])
+
+
+def test_main_passes_the_stride_override_to_the_search(
+    offline_cli, no_registry, tmp_path, monkeypatch
+):
+    seen: list[float] = []
+    real_run = search.run_search
+
+    def spy(df, config, **kwargs):
+        seen.append(config["data"]["window_stride_seconds"])
+        return real_run(df, config, **kwargs)
+
+    monkeypatch.setattr(search, "run_search", spy)
+    space = tmp_path / "space.yaml"
+    space.write_text("recency_half_life_hours:\n  choices: [24]\n", encoding="utf-8")
+
+    search.main(["--space", str(space), "--strategy", "grid", "--trials", "2", "--windows", "1",
+                 "--seeds", "0", "--window-stride-seconds", "20", "--device", "cpu"])  # fmt: skip
+
+    assert seen == [20.0]
+
+
+@pytest.mark.parametrize("stride", ["-1", "nan", "inf"])
+def test_main_rejects_a_bad_stride_before_reading_data(monkeypatch, stride):
+    monkeypatch.setattr(solia_ai.config, "load_config", lambda *a, **k: small_config())
+
+    def no_db(*_a, **_k):
+        raise AssertionError("must fail before touching the database")
+
+    monkeypatch.setattr(solia_ai.db, "make_engine", no_db)
+    with pytest.raises(SystemExit, match="window_stride_seconds"):
+        search.main(["--window-stride-seconds", stride])
+
+
+def test_the_combined_recency_grid_is_the_six_points_of_two_periods_and_three_half_lives():
+    space = search.load_space("recency-lookback")
+
+    assert space == {
+        "lookback_days": {"choices": [3.5, 5.0]},
+        "recency_half_life_hours": {"choices": [12, 24, 48]},
+    }

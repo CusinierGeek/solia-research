@@ -915,9 +915,11 @@ def main(argv: list[str] | None = None) -> None:
         DataSettings,
         add_data_bounds_arguments,
         add_prune_columns_argument,
+        add_window_stride_argument,
         make_engine,
         read_training_data,
         with_prune_columns,
+        with_window_stride,
     )
 
     parser = argparse.ArgumentParser(
@@ -946,6 +948,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--rug-threshold", type=float, default=ReferencePolicy.rug_threshold)
     add_data_bounds_arguments(parser)  # the retrain's bounded read (config.yaml `data`)
     add_prune_columns_argument(parser)
+    add_window_stride_argument(parser)
     parser.add_argument(
         "--out",
         help="write the JSON report to this path; each finished trial also goes to "
@@ -965,6 +968,8 @@ def main(argv: list[str] | None = None) -> None:
     config = with_prune_columns(load_config(), args.prune_columns)
     max_seconds = None if args.max_minutes is None else args.max_minutes * 60
     try:
+        # The baseline's stride, and so the held-out windows every trial is scored on.
+        config = with_window_stride(config, args.window_stride_seconds)
         space = load_space(args.space) if args.space else DEFAULT_SPACE
         # fail before reading anything
         normalized = check_space(space, config, strategy=args.strategy)
