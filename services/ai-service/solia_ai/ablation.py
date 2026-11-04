@@ -62,6 +62,7 @@ from .evaluate import (
 )
 from .features import BASELINE_GROUPS, FEATURE_GROUPS, check_group_coverage
 from .lift import PREDICTIVE_METRICS, lift, summarize
+from .rows import TrainingRows
 from .train import fit, fit_calibration_window
 
 HEADS = ("pump", "rug")
@@ -407,8 +408,19 @@ def _iso(ts: int) -> str:
 # --------------------------------------------------------------------------- orchestration
 
 
+def variant_groups(variants: Iterable[Variant]) -> list[str]:
+    """Every group some variant enables, once each in first-seen order: what the read must hold
+    (each variant's model then masks the groups it doesn't enable)."""
+    return list(dict.fromkeys(g for v in variants for g in v.groups))
+
+
+def with_groups(config: Mapping[str, Any], groups: Sequence[str]) -> dict[str, Any]:
+    """``config`` with ``features.groups`` set to ``groups`` (a copy; ``config`` unchanged)."""
+    return {**config, "features": {**config.get("features", {}), "groups": list(groups)}}
+
+
 def run_ablation(
-    df: pd.DataFrame,
+    df: pd.DataFrame | TrainingRows,
     config: Mapping[str, Any],
     *,
     variants: Sequence[Variant] | None = None,
@@ -446,8 +458,14 @@ def run_ablation(
     check_variants(variants)
 
     # Every variant's groups, not just the config's: a candidate group needs re-replayed rows too.
-    check_group_coverage(df, [g for v in variants for g in v.groups])
-    samples = config_samples(df, config)
+    # The windows hold all of them (a narrow matrix of their union with data.prune_columns or
+    # compact rows); each variant's model masks the groups it doesn't enable.
+    groups = variant_groups(variants)
+    if isinstance(df, TrainingRows):
+        df.check_groups(groups)
+    else:
+        check_group_coverage(df, groups)
+    samples = config_samples(df, with_groups(config, groups))
     horizons = list(samples.horizons)
     policy = policy or ReferencePolicy(horizon=default_policy_horizon(horizons))
     policy.horizon_index(horizons)
@@ -651,7 +669,7 @@ def _ordered(
 
 
 def main(argv: list[str] | None = None) -> None:
-    from .db import add_data_bounds_arguments
+    from .db import add_data_bounds_arguments, add_prune_columns_argument
 
     parser = argparse.ArgumentParser(
         description="Measure per-feature-group lift over walk-forward windows and seeds. "
@@ -701,16 +719,28 @@ def main(argv: list[str] | None = None) -> None:
         help="discard <out>.runs.jsonl and start over (default: resume the runs it holds)",
     )
     parser.add_argument("--device", help="torch device (default: cuda if available, else cpu)")
+    parser.add_argument(
+        "--window-stride-seconds", type=float,
+        help="keep at most one training window per token per N seconds "
+        "(default: data.window_stride_seconds)",
+    )  # fmt: skip
     add_data_bounds_arguments(parser)
+    add_prune_columns_argument(parser)
     args = parser.parse_args(argv)
 
     import torch
 
-    from .config import load_config
-    from .db import DataSettings, make_engine, read_training_features
+    from .config import load_config, window_stride_error
+    from .db import DataSettings, make_engine, read_training_data, with_prune_columns
 
-    config = load_config()
+    config = with_prune_columns(load_config(), args.prune_columns)
     try:
+        if args.window_stride_seconds is not None:
+            error = window_stride_error(args.window_stride_seconds)
+            if error:
+                raise ValueError(error)
+            stride = args.window_stride_seconds
+            config = {**config, "data": {**config.get("data", {}), "window_stride_seconds": stride}}
         variants = plan_variants(args.groups)
         variants += [combined_variant(groups) for groups in args.combine]
         check_variants(variants)
@@ -744,10 +774,13 @@ def main(argv: list[str] | None = None) -> None:
     except ValueError as exc:
         raise SystemExit(str(exc)) from None
     # The bounded training read (lookback window, whole tokens, row cap): the same rows a retrain
-    # trains on, never the whole table.
+    # trains on, never the whole table. With --prune-columns, the compact rows of every variant's
+    # groups (solia_ai.rows): what makes every token of a long window fit in memory.
     config = {**config, "data": {**config.get("data", {}), "max_rows": data.max_rows}}
     try:
-        df, bounds = read_training_features(make_engine(), data, end=end)
+        df, bounds = read_training_data(
+            make_engine(), data, with_groups(config, variant_groups(variants)), end=end
+        )
     except ValueError as exc:
         raise SystemExit(str(exc)) from None
     print(bounds.describe(), file=sys.stderr)

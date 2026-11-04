@@ -901,6 +901,11 @@ python -m solia_ai.ablation --groups flow holders --windows 4 --seeds 0 1 2 3 \
 # unattended, in the GPU container (resumable: rerun the same command after a reboot)
 python -u -m solia_ai.ablation --groups momentum concentration --combine momentum concentration \
     --windows 3 --seeds 0 1 2 --out /app/models/reports/ablation.json
+# every token of a long window (#202 research setting): compact rows of the union of every
+# variant's groups (each variant's model masks the groups it doesn't enable)
+python -u -m solia_ai.ablation --groups holders_supply --windows 2 --seeds 0 1 \
+    --prune-columns --lookback-days 3.5 --max-rows 1000000000 --window-stride-seconds 240 \
+    --out /app/models/reports/ablation-198-confirm.json
 ```
 
 #### Results: `holders_supply` (#197) — pending, measured in #198

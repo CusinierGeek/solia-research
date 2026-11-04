@@ -25,7 +25,7 @@ from solia_ai.ablation import (
     walk_forward_windows,
 )
 from solia_ai.evaluate import EvaluationReport, ReferencePolicy
-from solia_ai.features import BASELINE_GROUPS, FEATURE_COLUMNS, FEATURE_GROUPS
+from solia_ai.features import ALWAYS_WRITTEN, BASELINE_GROUPS, FEATURE_COLUMNS, FEATURE_GROUPS
 
 # --- variants & masking ---
 
@@ -508,3 +508,155 @@ def test_fit_metrics_are_undefined_without_a_usable_history(history, best):
 def test_a_non_finite_loss_leaves_the_gap_undefined():
     metrics = ablation.fit_metrics([{"train_loss": float("nan"), "val_total": 0.2}], 0)
     assert metrics["fit/train_loss"] is None and metrics["fit/gap"] is None
+
+
+# --- compact rows (--prune-columns) ---
+
+
+def _rows(df, groups):
+    from solia_ai.features import group_columns
+    from solia_ai.rows import TrainingRows
+
+    return TrainingRows.from_frame(df, group_columns(groups))
+
+
+def test_ablation_on_compact_rows_scores_like_on_the_frame(no_registry):
+    df = make_features_df()
+    variants = plan_variants(["buy_pressure"])
+    groups = ablation.variant_groups(variants)
+    pruned = solia_ai.db.with_prune_columns(small_config(), True)
+
+    on_frame = run_ablation(df, small_config(), variants=variants, n_windows=1, seeds=[0])
+    on_rows = run_ablation(_rows(df, groups), pruned, variants=variants, n_windows=1, seeds=[0])
+
+    assert on_rows.windows == on_frame.windows
+    assert [(r.variant, r.window, r.seed) for r in on_rows.runs] == [
+        (r.variant, r.window, r.seed) for r in on_frame.runs
+    ]
+    for a, b in zip(on_rows.runs, on_frame.runs, strict=True):
+        for key in ablation.metric_keys(["30s", "1m"]):
+            if b.metrics[key] is None:
+                assert a.metrics[key] is None, key
+            else:  # the streamed normalizer fit equals the one-pass fit up to float rounding
+                assert a.metrics[key] == pytest.approx(b.metrics[key], abs=1e-3), key
+
+
+def test_a_pruned_ablation_holds_every_variants_groups_and_masks_per_variant(
+    no_registry, monkeypatch
+):
+    seen: dict[tuple[str, ...], tuple[tuple[str, ...], list[float]]] = {}
+    real_fit = ablation.fit
+
+    def spy(train_ds, val_ds, cfg, **kwargs):
+        fitted = real_fit(train_ds, val_ds, cfg, **kwargs)
+        seen[tuple(cfg["features"]["groups"])] = (
+            tuple(train_ds.samples.columns),
+            fitted.model.feature_mask.tolist(),
+        )
+        return fitted
+
+    monkeypatch.setattr(ablation, "fit", spy)
+    variants = plan_variants(["buy_pressure"])
+    groups = ablation.variant_groups(variants)
+    run_ablation(
+        _rows(make_features_df(), groups),
+        solia_ai.db.with_prune_columns(small_config(), True),
+        variants=variants,
+        n_windows=1,
+        seeds=[0],
+    )
+
+    from solia_ai.features import group_columns
+
+    union = tuple(group_columns(groups))
+    assert set(seen) == {BASELINE_GROUPS, (*BASELINE_GROUPS, "buy_pressure")}
+    for variant_groups, (columns, mask) in seen.items():
+        assert columns == union  # one matrix: the candidate's columns are there for every variant
+        enabled = {c for g in variant_groups for c in FEATURE_GROUPS[g]}
+        assert mask == [float(c in enabled) for c in FEATURE_COLUMNS]
+
+
+def test_variant_groups_are_the_union_once_each():
+    variants = [*plan_variants(["buy_pressure"]), *plan_variants(["holders"])[1:]]
+    groups = ablation.variant_groups(variants)
+
+    assert groups == [*BASELINE_GROUPS, "buy_pressure"]
+
+
+def test_compact_rows_without_a_candidates_columns_are_refused(no_registry):
+    with pytest.raises(ValueError, match="columns"):
+        run_ablation(
+            _rows(make_features_df(), BASELINE_GROUPS),
+            solia_ai.db.with_prune_columns(small_config(), True),
+            variants=plan_variants(["buy_pressure"]),
+            n_windows=1,
+            seeds=[0],
+        )
+
+
+def test_compact_rows_predating_a_candidate_group_are_refused(no_registry):
+    variants = plan_variants(["buy_pressure"])
+    rows = _rows(make_features_df(), ablation.variant_groups(variants))
+    missing = ALWAYS_WRITTEN["buy_pressure"][0]
+    rows.nulls[missing] = 3
+
+    with pytest.raises(ValueError, match="predate the 'buy_pressure'"):
+        run_ablation(
+            rows,
+            solia_ai.db.with_prune_columns(small_config(), True),
+            variants=variants,
+            n_windows=1,
+            seeds=[0],
+        )
+
+
+def test_main_prunes_to_every_variants_groups_and_sets_the_stride(
+    offline_cli, no_registry, tmp_path, monkeypatch
+):
+    from solia_ai.features import group_columns
+    from solia_ai.rows import TrainingRows
+
+    calls: list[tuple[list[str], list[str]]] = []
+    strides: list[float] = []
+
+    def recording_rows(engine, settings, *, read_columns, matrix_columns, end=None):
+        calls.append((list(read_columns), list(matrix_columns)))
+        df, bounds = fake_bounded_read(engine, settings, end)
+        return TrainingRows.from_frame(df, matrix_columns), bounds
+
+    def no_frame(*_a, **_k):
+        raise AssertionError("--prune-columns must use the compact read")
+
+    real_run = ablation.run_ablation
+
+    def spy_run(df, config, **kwargs):
+        strides.append(config["data"]["window_stride_seconds"])
+        return real_run(df, config, **kwargs)
+
+    monkeypatch.setattr(solia_ai.db, "read_training_rows", recording_rows)
+    monkeypatch.setattr(solia_ai.db, "read_training_features", no_frame)
+    monkeypatch.setattr(ablation, "run_ablation", spy_run)
+
+    ablation.main(["--groups", "buy_pressure", "--windows", "1", "--seeds", "0",
+                   "--prune-columns", "--window-stride-seconds", "20", "--device", "cpu",
+                   "--out", str(tmp_path / "a.json")])  # fmt: skip
+
+    groups = [*BASELINE_GROUPS, "buy_pressure"]
+    ((read_columns, matrix_columns),) = calls
+    assert matrix_columns == group_columns(groups)
+    assert set(matrix_columns) <= set(read_columns)
+    assert strides == [20.0]
+    payload = json.loads((tmp_path / "a.json").read_text(encoding="utf-8"))
+    assert [v["name"] for v in payload["variants"]] == ["baseline", "+buy_pressure"]
+
+
+@pytest.mark.parametrize("stride", ["-1", "nan"])
+def test_main_rejects_a_bad_stride_before_reading_data(monkeypatch, stride):
+    monkeypatch.setattr(solia_ai.config, "load_config", lambda *a, **k: small_config())
+
+    def no_db(*_a, **_k):
+        raise AssertionError("must fail before touching the database")
+
+    monkeypatch.setattr(solia_ai.db, "make_engine", no_db)
+    with pytest.raises(SystemExit, match="window_stride_seconds"):
+        ablation.main(["--window-stride-seconds", stride])
