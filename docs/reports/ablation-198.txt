@@ -1,0 +1,214 @@
+Ablation — 2 window(s) x 2 seed(s), margin 0.01 (P&L 0.0); lift = with group - without, positive = better (ECE negated)
+generated 2026-11-04T10:10:34.971093+00:00
+  window 0: eval 2026-11-03T18:25:46+00:00 -> 2026-11-03T23:41:56+00:00 (94175 scored, 324525 train, 84228 early-stop val)
+  window 1: eval 2026-11-03T23:41:56+00:00 -> 2026-11-04T05:47:48+00:00 (94198 scored, 393662 train, 103209 early-stop val)
+
++market  (add group 'market' vs baseline)
+                metric |          baseline |           +market |              lift | verdict
+      pump/30s/roc_auc |   0.9476 ± 0.0006 |   0.9471 ± 0.0010 |  -0.0005 ± 0.0014 | not significant
+       pump/30s/pr_auc |   0.2819 ± 0.0077 |   0.2782 ± 0.0147 |  -0.0037 ± 0.0078 | not significant
+          pump/30s/ece |   0.0019 ± 0.0008 |   0.0020 ± 0.0005 |  -0.0001 ± 0.0005 | not significant
+       pump/1m/roc_auc |   0.9445 ± 0.0011 |   0.9435 ± 0.0015 |  -0.0010 ± 0.0011 | not significant
+        pump/1m/pr_auc |   0.2935 ± 0.0063 |   0.2895 ± 0.0065 |  -0.0040 ± 0.0046 | not significant
+           pump/1m/ece |   0.0019 ± 0.0008 |   0.0021 ± 0.0006 |  -0.0002 ± 0.0005 | not significant
+       pump/5m/roc_auc |   0.9114 ± 0.0059 |   0.9106 ± 0.0053 |  -0.0008 ± 0.0020 | not significant
+        pump/5m/pr_auc |   0.3369 ± 0.0179 |   0.3295 ± 0.0254 |  -0.0074 ± 0.0131 | not significant
+           pump/5m/ece |   0.0035 ± 0.0006 |   0.0039 ± 0.0019 |  -0.0004 ± 0.0013 | not significant
+      pump/15m/roc_auc |   0.8836 ± 0.0134 |   0.8827 ± 0.0138 |  -0.0009 ± 0.0033 | not significant
+       pump/15m/pr_auc |   0.2645 ± 0.0284 |   0.2556 ± 0.0408 |  -0.0089 ± 0.0133 | not significant
+          pump/15m/ece |   0.0049 ± 0.0013 |   0.0079 ± 0.0019 |  -0.0030 ± 0.0016 | not significant
+       pump/1h/roc_auc |   0.8636 ± 0.0142 |   0.8551 ± 0.0102 |  -0.0085 ± 0.0051 | not significant
+        pump/1h/pr_auc |   0.1878 ± 0.0028 |   0.1697 ± 0.0160 |  -0.0181 ± 0.0167 | not significant
+           pump/1h/ece |   0.0050 ± 0.0008 |   0.0070 ± 0.0054 |  -0.0019 ± 0.0053 | not significant
+       rug/30s/roc_auc |   0.9136 ± 0.0027 |   0.9116 ± 0.0025 |  -0.0021 ± 0.0010 | not significant
+        rug/30s/pr_auc |   0.4547 ± 0.0227 |   0.4522 ± 0.0252 |  -0.0026 ± 0.0064 | not significant
+           rug/30s/ece |   0.0040 ± 0.0022 |   0.0035 ± 0.0024 |   0.0005 ± 0.0002 | not significant
+        rug/1m/roc_auc |   0.9028 ± 0.0017 |   0.9002 ± 0.0019 |  -0.0025 ± 0.0009 | not significant
+         rug/1m/pr_auc |   0.4939 ± 0.0325 |   0.4888 ± 0.0331 |  -0.0051 ± 0.0029 | not significant
+            rug/1m/ece |   0.0060 ± 0.0034 |   0.0058 ± 0.0043 |   0.0003 ± 0.0013 | not significant
+        rug/5m/roc_auc |   0.9003 ± 0.0039 |   0.8986 ± 0.0045 |  -0.0017 ± 0.0019 | not significant
+         rug/5m/pr_auc |   0.7066 ± 0.0110 |   0.7015 ± 0.0089 |  -0.0051 ± 0.0031 | not significant
+            rug/5m/ece |   0.0087 ± 0.0029 |   0.0112 ± 0.0062 |  -0.0026 ± 0.0035 | not significant
+       rug/15m/roc_auc |   0.9216 ± 0.0071 |   0.9182 ± 0.0088 |  -0.0034 ± 0.0031 | not significant
+        rug/15m/pr_auc |   0.8606 ± 0.0096 |   0.8538 ± 0.0128 |  -0.0068 ± 0.0043 | not significant
+           rug/15m/ece |   0.0145 ± 0.0040 |   0.0211 ± 0.0042 |  -0.0066 ± 0.0052 | not significant
+        rug/1h/roc_auc |   0.9386 ± 0.0019 |   0.9360 ± 0.0027 |  -0.0026 ± 0.0010 | not significant
+         rug/1h/pr_auc |   0.9367 ± 0.0051 |   0.9330 ± 0.0060 |  -0.0037 ± 0.0018 | not significant
+            rug/1h/ece |   0.0246 ± 0.0037 |   0.0310 ± 0.0088 |  -0.0064 ± 0.0053 | not significant
+      policy/total_pnl | 222.4396 ± 261.2388 | 155.4393 ± 205.2125 | -67.0003 ± 59.3378 | worse
+        policy/avg_pnl |   1.1049 ± 0.4581 |   1.1745 ± 0.5992 |   0.0696 ± 0.2536 | not significant
+
++wallet  (add group 'wallet' vs baseline)
+                metric |          baseline |           +wallet |              lift | verdict
+      pump/30s/roc_auc |   0.9476 ± 0.0006 |   0.9488 ± 0.0010 |   0.0012 ± 0.0009 | not significant
+       pump/30s/pr_auc |   0.2819 ± 0.0077 |   0.2847 ± 0.0128 |   0.0028 ± 0.0110 | not significant
+          pump/30s/ece |   0.0019 ± 0.0008 |   0.0017 ± 0.0006 |   0.0002 ± 0.0009 | not significant
+       pump/1m/roc_auc |   0.9445 ± 0.0011 |   0.9454 ± 0.0009 |   0.0009 ± 0.0011 | not significant
+        pump/1m/pr_auc |   0.2935 ± 0.0063 |   0.2967 ± 0.0065 |   0.0032 ± 0.0092 | not significant
+           pump/1m/ece |   0.0019 ± 0.0008 |   0.0016 ± 0.0005 |   0.0002 ± 0.0010 | not significant
+       pump/5m/roc_auc |   0.9114 ± 0.0059 |   0.9124 ± 0.0032 |   0.0010 ± 0.0047 | not significant
+        pump/5m/pr_auc |   0.3369 ± 0.0179 |   0.3332 ± 0.0201 |  -0.0037 ± 0.0056 | not significant
+           pump/5m/ece |   0.0035 ± 0.0006 |   0.0037 ± 0.0017 |  -0.0002 ± 0.0013 | not significant
+      pump/15m/roc_auc |   0.8836 ± 0.0134 |   0.8879 ± 0.0089 |   0.0043 ± 0.0058 | not significant
+       pump/15m/pr_auc |   0.2645 ± 0.0284 |   0.2707 ± 0.0300 |   0.0062 ± 0.0092 | not significant
+          pump/15m/ece |   0.0049 ± 0.0013 |   0.0062 ± 0.0021 |  -0.0013 ± 0.0009 | not significant
+       pump/1h/roc_auc |   0.8636 ± 0.0142 |   0.8631 ± 0.0183 |  -0.0006 ± 0.0043 | not significant
+        pump/1h/pr_auc |   0.1878 ± 0.0028 |   0.1957 ± 0.0104 |   0.0080 ± 0.0098 | not significant
+           pump/1h/ece |   0.0050 ± 0.0008 |   0.0060 ± 0.0012 |  -0.0010 ± 0.0015 | not significant
+       rug/30s/roc_auc |   0.9136 ± 0.0027 |   0.9127 ± 0.0025 |  -0.0009 ± 0.0018 | not significant
+        rug/30s/pr_auc |   0.4547 ± 0.0227 |   0.4553 ± 0.0287 |   0.0006 ± 0.0120 | not significant
+           rug/30s/ece |   0.0040 ± 0.0022 |   0.0036 ± 0.0004 |   0.0004 ± 0.0018 | not significant
+        rug/1m/roc_auc |   0.9028 ± 0.0017 |   0.9018 ± 0.0027 |  -0.0009 ± 0.0026 | not significant
+         rug/1m/pr_auc |   0.4939 ± 0.0325 |   0.4959 ± 0.0362 |   0.0019 ± 0.0070 | not significant
+            rug/1m/ece |   0.0060 ± 0.0034 |   0.0057 ± 0.0017 |   0.0004 ± 0.0019 | not significant
+        rug/5m/roc_auc |   0.9003 ± 0.0039 |   0.8964 ± 0.0058 |  -0.0039 ± 0.0028 | not significant
+         rug/5m/pr_auc |   0.7066 ± 0.0110 |   0.6986 ± 0.0099 |  -0.0080 ± 0.0051 | not significant
+            rug/5m/ece |   0.0087 ± 0.0029 |   0.0132 ± 0.0045 |  -0.0045 ± 0.0019 | not significant
+       rug/15m/roc_auc |   0.9216 ± 0.0071 |   0.9190 ± 0.0086 |  -0.0025 ± 0.0024 | not significant
+        rug/15m/pr_auc |   0.8606 ± 0.0096 |   0.8544 ± 0.0112 |  -0.0062 ± 0.0054 | not significant
+           rug/15m/ece |   0.0145 ± 0.0040 |   0.0192 ± 0.0043 |  -0.0047 ± 0.0081 | not significant
+        rug/1h/roc_auc |   0.9386 ± 0.0019 |   0.9372 ± 0.0020 |  -0.0014 ± 0.0022 | not significant
+         rug/1h/pr_auc |   0.9367 ± 0.0051 |   0.9347 ± 0.0029 |  -0.0019 ± 0.0023 | not significant
+            rug/1h/ece |   0.0246 ± 0.0037 |   0.0173 ± 0.0067 |   0.0074 ± 0.0070 | not significant
+      policy/total_pnl | 222.4396 ± 261.2388 | 167.6859 ± 127.9266 | -54.7537 ± 141.0425 | not significant
+        policy/avg_pnl |   1.1049 ± 0.4581 |   1.2835 ± 0.5098 |   0.1787 ± 0.4163 | not significant
+
++wallet_reputation  (add group 'wallet_reputation' vs baseline)
+                metric |          baseline | +wallet_reputation |              lift | verdict
+      pump/30s/roc_auc |   0.9476 ± 0.0006 |   0.9489 ± 0.0007 |   0.0013 ± 0.0011 | not significant
+       pump/30s/pr_auc |   0.2819 ± 0.0077 |   0.2685 ± 0.0106 |  -0.0134 ± 0.0043 | not significant
+          pump/30s/ece |   0.0019 ± 0.0008 |   0.0019 ± 0.0005 |   0.0000 ± 0.0005 | not significant
+       pump/1m/roc_auc |   0.9445 ± 0.0011 |   0.9449 ± 0.0022 |   0.0004 ± 0.0021 | not significant
+        pump/1m/pr_auc |   0.2935 ± 0.0063 |   0.2768 ± 0.0103 |  -0.0166 ± 0.0057 | worse
+           pump/1m/ece |   0.0019 ± 0.0008 |   0.0019 ± 0.0005 |   0.0000 ± 0.0010 | not significant
+       pump/5m/roc_auc |   0.9114 ± 0.0059 |   0.9116 ± 0.0033 |   0.0002 ± 0.0039 | not significant
+        pump/5m/pr_auc |   0.3369 ± 0.0179 |   0.3270 ± 0.0331 |  -0.0098 ± 0.0193 | not significant
+           pump/5m/ece |   0.0035 ± 0.0006 |   0.0029 ± 0.0014 |   0.0006 ± 0.0012 | not significant
+      pump/15m/roc_auc |   0.8836 ± 0.0134 |   0.8902 ± 0.0105 |   0.0065 ± 0.0040 | not significant
+       pump/15m/pr_auc |   0.2645 ± 0.0284 |   0.2626 ± 0.0395 |  -0.0019 ± 0.0121 | not significant
+          pump/15m/ece |   0.0049 ± 0.0013 |   0.0043 ± 0.0030 |   0.0006 ± 0.0024 | not significant
+       pump/1h/roc_auc |   0.8636 ± 0.0142 |   0.8624 ± 0.0185 |  -0.0013 ± 0.0049 | not significant
+        pump/1h/pr_auc |   0.1878 ± 0.0028 |   0.1810 ± 0.0185 |  -0.0067 ± 0.0168 | not significant
+           pump/1h/ece |   0.0050 ± 0.0008 |   0.0067 ± 0.0008 |  -0.0017 ± 0.0013 | not significant
+       rug/30s/roc_auc |   0.9136 ± 0.0027 |   0.9130 ± 0.0031 |  -0.0007 ± 0.0020 | not significant
+        rug/30s/pr_auc |   0.4547 ± 0.0227 |   0.4540 ± 0.0282 |  -0.0008 ± 0.0135 | not significant
+           rug/30s/ece |   0.0040 ± 0.0022 |   0.0044 ± 0.0018 |  -0.0004 ± 0.0016 | not significant
+        rug/1m/roc_auc |   0.9028 ± 0.0017 |   0.9022 ± 0.0019 |  -0.0006 ± 0.0028 | not significant
+         rug/1m/pr_auc |   0.4939 ± 0.0325 |   0.4922 ± 0.0346 |  -0.0017 ± 0.0114 | not significant
+            rug/1m/ece |   0.0060 ± 0.0034 |   0.0065 ± 0.0036 |  -0.0005 ± 0.0018 | not significant
+        rug/5m/roc_auc |   0.9003 ± 0.0039 |   0.9010 ± 0.0046 |   0.0007 ± 0.0014 | not significant
+         rug/5m/pr_auc |   0.7066 ± 0.0110 |   0.7081 ± 0.0100 |   0.0015 ± 0.0030 | not significant
+            rug/5m/ece |   0.0087 ± 0.0029 |   0.0131 ± 0.0055 |  -0.0045 ± 0.0027 | not significant
+       rug/15m/roc_auc |   0.9216 ± 0.0071 |   0.9220 ± 0.0088 |   0.0004 ± 0.0031 | not significant
+        rug/15m/pr_auc |   0.8606 ± 0.0096 |   0.8603 ± 0.0104 |  -0.0003 ± 0.0048 | not significant
+           rug/15m/ece |   0.0145 ± 0.0040 |   0.0163 ± 0.0024 |  -0.0018 ± 0.0059 | not significant
+        rug/1h/roc_auc |   0.9386 ± 0.0019 |   0.9394 ± 0.0036 |   0.0007 ± 0.0020 | not significant
+         rug/1h/pr_auc |   0.9367 ± 0.0051 |   0.9363 ± 0.0056 |  -0.0004 ± 0.0024 | not significant
+            rug/1h/ece |   0.0246 ± 0.0037 |   0.0283 ± 0.0077 |  -0.0037 ± 0.0096 | not significant
+      policy/total_pnl | 222.4396 ± 261.2388 | 123.2649 ± 150.8285 | -99.1746 ± 115.4117 | not significant
+        policy/avg_pnl |   1.1049 ± 0.4581 |   1.2830 ± 1.2054 |   0.0950 ± 0.8047 | not significant
+
++metadata  (add group 'metadata' vs baseline)
+                metric |          baseline |         +metadata |              lift | verdict
+      pump/30s/roc_auc |   0.9476 ± 0.0006 |   0.9478 ± 0.0011 |   0.0002 ± 0.0016 | not significant
+       pump/30s/pr_auc |   0.2819 ± 0.0077 |   0.2809 ± 0.0127 |  -0.0010 ± 0.0074 | not significant
+          pump/30s/ece |   0.0019 ± 0.0008 |   0.0019 ± 0.0004 |  -0.0000 ± 0.0004 | not significant
+       pump/1m/roc_auc |   0.9445 ± 0.0011 |   0.9440 ± 0.0030 |  -0.0005 ± 0.0024 | not significant
+        pump/1m/pr_auc |   0.2935 ± 0.0063 |   0.2963 ± 0.0099 |   0.0029 ± 0.0087 | not significant
+           pump/1m/ece |   0.0019 ± 0.0008 |   0.0020 ± 0.0004 |  -0.0001 ± 0.0006 | not significant
+       pump/5m/roc_auc |   0.9114 ± 0.0059 |   0.9114 ± 0.0030 |   0.0000 ± 0.0035 | not significant
+        pump/5m/pr_auc |   0.3369 ± 0.0179 |   0.3316 ± 0.0226 |  -0.0053 ± 0.0079 | not significant
+           pump/5m/ece |   0.0035 ± 0.0006 |   0.0032 ± 0.0006 |   0.0003 ± 0.0006 | not significant
+      pump/15m/roc_auc |   0.8836 ± 0.0134 |   0.8835 ± 0.0100 |  -0.0002 ± 0.0036 | not significant
+       pump/15m/pr_auc |   0.2645 ± 0.0284 |   0.2565 ± 0.0411 |  -0.0080 ± 0.0160 | not significant
+          pump/15m/ece |   0.0049 ± 0.0013 |   0.0050 ± 0.0018 |  -0.0001 ± 0.0012 | not significant
+       pump/1h/roc_auc |   0.8636 ± 0.0142 |   0.8584 ± 0.0209 |  -0.0052 ± 0.0074 | not significant
+        pump/1h/pr_auc |   0.1878 ± 0.0028 |   0.1697 ± 0.0224 |  -0.0181 ± 0.0242 | not significant
+           pump/1h/ece |   0.0050 ± 0.0008 |   0.0055 ± 0.0010 |  -0.0005 ± 0.0016 | not significant
+       rug/30s/roc_auc |   0.9136 ± 0.0027 |   0.9124 ± 0.0026 |  -0.0012 ± 0.0007 | not significant
+        rug/30s/pr_auc |   0.4547 ± 0.0227 |   0.4554 ± 0.0317 |   0.0007 ± 0.0138 | not significant
+           rug/30s/ece |   0.0040 ± 0.0022 |   0.0041 ± 0.0017 |  -0.0000 ± 0.0006 | not significant
+        rug/1m/roc_auc |   0.9028 ± 0.0017 |   0.9021 ± 0.0023 |  -0.0007 ± 0.0012 | not significant
+         rug/1m/pr_auc |   0.4939 ± 0.0325 |   0.4948 ± 0.0370 |   0.0009 ± 0.0081 | not significant
+            rug/1m/ece |   0.0060 ± 0.0034 |   0.0062 ± 0.0024 |  -0.0002 ± 0.0010 | not significant
+        rug/5m/roc_auc |   0.9003 ± 0.0039 |   0.8996 ± 0.0036 |  -0.0007 ± 0.0012 | not significant
+         rug/5m/pr_auc |   0.7066 ± 0.0110 |   0.7079 ± 0.0120 |   0.0013 ± 0.0026 | not significant
+            rug/5m/ece |   0.0087 ± 0.0029 |   0.0136 ± 0.0059 |  -0.0049 ± 0.0039 | not significant
+       rug/15m/roc_auc |   0.9216 ± 0.0071 |   0.9204 ± 0.0076 |  -0.0012 ± 0.0025 | not significant
+        rug/15m/pr_auc |   0.8606 ± 0.0096 |   0.8603 ± 0.0086 |  -0.0003 ± 0.0052 | not significant
+           rug/15m/ece |   0.0145 ± 0.0040 |   0.0168 ± 0.0055 |  -0.0024 ± 0.0056 | not significant
+        rug/1h/roc_auc |   0.9386 ± 0.0019 |   0.9377 ± 0.0013 |  -0.0009 ± 0.0013 | not significant
+         rug/1h/pr_auc |   0.9367 ± 0.0051 |   0.9364 ± 0.0036 |  -0.0003 ± 0.0027 | not significant
+            rug/1h/ece |   0.0246 ± 0.0037 |   0.0272 ± 0.0039 |  -0.0026 ± 0.0034 | not significant
+      policy/total_pnl | 222.4396 ± 261.2388 | 83.6936 ± 116.9547 | -138.7460 ± 155.3250 | not significant
+        policy/avg_pnl |   1.1049 ± 0.4581 |   0.9134 ± 0.8075 |  -0.1914 ± 0.6810 | not significant
+
++holders_supply  (add group 'holders_supply' vs baseline)
+                metric |          baseline |   +holders_supply |              lift | verdict
+      pump/30s/roc_auc |   0.9476 ± 0.0006 |   0.9482 ± 0.0031 |   0.0006 ± 0.0030 | not significant
+       pump/30s/pr_auc |   0.2819 ± 0.0077 |   0.2851 ± 0.0133 |   0.0032 ± 0.0102 | not significant
+          pump/30s/ece |   0.0019 ± 0.0008 |   0.0019 ± 0.0004 |   0.0001 ± 0.0003 | not significant
+       pump/1m/roc_auc |   0.9445 ± 0.0011 |   0.9451 ± 0.0012 |   0.0006 ± 0.0013 | not significant
+        pump/1m/pr_auc |   0.2935 ± 0.0063 |   0.2967 ± 0.0083 |   0.0032 ± 0.0074 | not significant
+           pump/1m/ece |   0.0019 ± 0.0008 |   0.0018 ± 0.0004 |   0.0001 ± 0.0008 | not significant
+       pump/5m/roc_auc |   0.9114 ± 0.0059 |   0.9111 ± 0.0047 |  -0.0003 ± 0.0041 | not significant
+        pump/5m/pr_auc |   0.3369 ± 0.0179 |   0.3307 ± 0.0273 |  -0.0062 ± 0.0187 | not significant
+           pump/5m/ece |   0.0035 ± 0.0006 |   0.0037 ± 0.0008 |  -0.0002 ± 0.0006 | not significant
+      pump/15m/roc_auc |   0.8836 ± 0.0134 |   0.8857 ± 0.0109 |   0.0021 ± 0.0040 | not significant
+       pump/15m/pr_auc |   0.2645 ± 0.0284 |   0.2618 ± 0.0313 |  -0.0027 ± 0.0151 | not significant
+          pump/15m/ece |   0.0049 ± 0.0013 |   0.0050 ± 0.0010 |  -0.0001 ± 0.0007 | not significant
+       pump/1h/roc_auc |   0.8636 ± 0.0142 |   0.8632 ± 0.0219 |  -0.0004 ± 0.0081 | not significant
+        pump/1h/pr_auc |   0.1878 ± 0.0028 |   0.1913 ± 0.0155 |   0.0035 ± 0.0150 | not significant
+           pump/1h/ece |   0.0050 ± 0.0008 |   0.0055 ± 0.0011 |  -0.0004 ± 0.0008 | not significant
+       rug/30s/roc_auc |   0.9136 ± 0.0027 |   0.9218 ± 0.0023 |   0.0082 ± 0.0016 | not significant
+        rug/30s/pr_auc |   0.4547 ± 0.0227 |   0.4667 ± 0.0212 |   0.0119 ± 0.0081 | not significant
+           rug/30s/ece |   0.0040 ± 0.0022 |   0.0027 ± 0.0002 |   0.0013 ± 0.0022 | not significant
+        rug/1m/roc_auc |   0.9028 ± 0.0017 |   0.9131 ± 0.0025 |   0.0104 ± 0.0023 | not significant
+         rug/1m/pr_auc |   0.4939 ± 0.0325 |   0.5085 ± 0.0272 |   0.0146 ± 0.0104 | not significant
+            rug/1m/ece |   0.0060 ± 0.0034 |   0.0035 ± 0.0006 |   0.0025 ± 0.0031 | not significant
+        rug/5m/roc_auc |   0.9003 ± 0.0039 |   0.9056 ± 0.0023 |   0.0054 ± 0.0016 | not significant
+         rug/5m/pr_auc |   0.7066 ± 0.0110 |   0.7184 ± 0.0102 |   0.0118 ± 0.0017 | better
+            rug/5m/ece |   0.0087 ± 0.0029 |   0.0137 ± 0.0039 |  -0.0051 ± 0.0017 | not significant
+       rug/15m/roc_auc |   0.9216 ± 0.0071 |   0.9255 ± 0.0065 |   0.0039 ± 0.0020 | not significant
+        rug/15m/pr_auc |   0.8606 ± 0.0096 |   0.8684 ± 0.0078 |   0.0079 ± 0.0036 | not significant
+           rug/15m/ece |   0.0145 ± 0.0040 |   0.0161 ± 0.0018 |  -0.0016 ± 0.0048 | not significant
+        rug/1h/roc_auc |   0.9386 ± 0.0019 |   0.9422 ± 0.0028 |   0.0035 ± 0.0029 | not significant
+         rug/1h/pr_auc |   0.9367 ± 0.0051 |   0.9421 ± 0.0047 |   0.0055 ± 0.0017 | not significant
+            rug/1h/ece |   0.0246 ± 0.0037 |   0.0261 ± 0.0093 |  -0.0015 ± 0.0066 | not significant
+      policy/total_pnl | 222.4396 ± 261.2388 | 185.4437 ± 196.4675 | -36.9959 ± 70.4530 | not significant
+        policy/avg_pnl |   1.1049 ± 0.4581 |   1.0264 ± 0.4019 |  -0.0785 ± 0.3697 | not significant
+
+Calibration (platt): calibrated - raw over all runs, positive = better
+                metric |            effect | verdict
+      pump/30s/roc_auc |   0.0000 ± 0.0000 | not significant
+       pump/30s/pr_auc |   0.0000 ± 0.0000 | not significant
+          pump/30s/ece |   0.0103 ± 0.0033 | not significant
+       pump/1m/roc_auc |   0.0000 ± 0.0000 | not significant
+        pump/1m/pr_auc |   0.0000 ± 0.0000 | not significant
+           pump/1m/ece |   0.0094 ± 0.0029 | not significant
+       pump/5m/roc_auc |   0.0000 ± 0.0000 | not significant
+        pump/5m/pr_auc |   0.0000 ± 0.0000 | not significant
+           pump/5m/ece |   0.0159 ± 0.0038 | better
+      pump/15m/roc_auc |   0.0000 ± 0.0000 | not significant
+       pump/15m/pr_auc |   0.0000 ± 0.0000 | not significant
+          pump/15m/ece |   0.0144 ± 0.0042 | better
+       pump/1h/roc_auc |   0.0000 ± 0.0000 | not significant
+        pump/1h/pr_auc |   0.0000 ± 0.0000 | not significant
+           pump/1h/ece |   0.0171 ± 0.0057 | better
+       rug/30s/roc_auc |   0.0000 ± 0.0000 | not significant
+        rug/30s/pr_auc |   0.0000 ± 0.0000 | not significant
+           rug/30s/ece |   0.0254 ± 0.0061 | better
+        rug/1m/roc_auc |   0.0000 ± 0.0000 | not significant
+         rug/1m/pr_auc |   0.0000 ± 0.0000 | not significant
+            rug/1m/ece |   0.0336 ± 0.0068 | better
+        rug/5m/roc_auc |   0.0000 ± 0.0000 | not significant
+         rug/5m/pr_auc |   0.0000 ± 0.0000 | not significant
+            rug/5m/ece |   0.0383 ± 0.0096 | better
+       rug/15m/roc_auc |   0.0000 ± 0.0000 | not significant
+        rug/15m/pr_auc |   0.0000 ± 0.0000 | not significant
+           rug/15m/ece |   0.0306 ± 0.0127 | better
+        rug/1h/roc_auc |   0.0000 ± 0.0000 | not significant
+         rug/1h/pr_auc |   0.0000 ± 0.0000 | not significant
+            rug/1h/ece |   0.0253 ± 0.0147 | better
+
+report written to /app/models/reports/ablation-198.json

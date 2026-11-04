@@ -838,60 +838,77 @@ compare against the 19-column baseline. Reports: `docs/reports/ablation-188-run1
   - The change makes the champion's checkpoint incompatible (its feature mask differs), so the next retrain starts from scratch (`candidate.on_incompatible: scratch`).
   - That retrain then goes through the promotion gate like any challenger.
 
-#### Results: `market` (#195) — pending, measured in #198
+#### Results: combined ablation (#198, 2026-11-04)
 
-Not measured yet. The `market` group is computed by the pipeline but **disabled** (not in
-`features.groups`) until it is. It is measured together with `wallet` (#189),
-`wallet_reputation` (#190), `metadata` (#196) and `holders_supply` (#197) in one combined
-re-replay + ablation (#198), so the history is replayed once for all of them. Protocol:
+**No new group is enabled.** None lifts the primary metric (pump/5m PR-AUC) by `mean − std > 0.01`, so
+`features.groups` stays `[price, liquidity, flow, holders, context, momentum, concentration]`. The enabled set is
+unchanged, so `candidate.on_incompatible` is not involved. No `--combine` ran: no group cleared the margin alone.
+Reports: `docs/reports/ablation-198.{txt,json,runs.jsonl}` and `docs/reports/ablation-198-confirm.{txt,json,runs.jsonl}`.
 
-- **Data**: migration 0013 applied, then a re-replay that starts **≥ 1 h before** the first training
-  row (long-window warm-up), so the evaluated rows carry every `mkt_*` aggregate. Rows predating 0013
-  are refused for the group (`mkt_coverage_sec` NULL).
-- **Variants**: the current defaults (`momentum` + `concentration` enabled) vs the same **+market**.
-- **Regimes**: the walk-forward windows should span different activity levels (weekday vs weekend, busy
-  vs quiet hours), and the lift is reported **per window**, not only on average: a regime feature that
-  only helps in the regime it was trained on is not a gain.
-- **Decision rule**: same margin as the other groups. `market` is enabled only if it clears it.
+- **Screening**: every group alone vs the current defaults, 2 windows × 2 seeds, 2 d, frame read. The planned 8 M rows
+  hit the 14 GB cap in run 2 (OOM), so it ran on **6 M rows**. Eval: 11-03 18:25 → 11-04 05:47 UTC.
+- **Confirmation**: `holders_supply` only, on every token of 3.5 d (26.7 M rows / 199 k tokens), stride 240,
+  `--prune-columns`, 2 windows × 2 seeds. Eval: 11-03 17:09 → 11-04 12:34 UTC. A Windows crash stopped it after run 1
+  and it resumed from its checkpoint on the same window (same row and token counts).
 
-#### Results: `wallet` (#189) — pending, measured in #198
+Screening, paired lift over all 4 runs, and the mean lift of each window (`w0` / `w1`):
 
-Not measured yet. The `wallet` group is computed by the pipeline but **disabled** until the combined ablation
-#198 measures it. Protocol specifics:
+| group | pump/5m PR-AUC | w0 / w1 | rug/5m PR-AUC | w0 / w1 | `policy/total_pnl` |
+|---|---:|---:|---:|---:|---:|
+| `market` | −0.0074 ± 0.0131 | −0.0173 / +0.0026 | −0.0051 ± 0.0031 | −0.0065 / −0.0036 | −67.0 ± 59.3 (worse) |
+| `wallet` | −0.0037 ± 0.0056 | −0.0065 / −0.0009 | −0.0080 ± 0.0051 | −0.0110 / −0.0051 | −54.8 ± 141.0 |
+| `wallet_reputation` | −0.0098 ± 0.0193 | −0.0259 / +0.0062 | +0.0015 ± 0.0030 | +0.0011 / +0.0019 | −99.2 ± 115.4 |
+| `metadata` | −0.0053 ± 0.0079 | −0.0101 / −0.0005 | +0.0013 ± 0.0026 | +0.0028 / −0.0003 | −138.7 ± 155.3 |
+| `holders_supply` | −0.0062 ± 0.0187 | −0.0178 / +0.0055 | **+0.0118 ± 0.0017** | +0.0106 / +0.0130 | −37.0 ± 70.5 |
 
-- **Data**: migration 0014 applied, then the combined re-replay with **`--warmup-hours 24`**, so the evaluated
-  rows carry the history-dependent `wal_*` columns. Rows predating 0014 are refused for the group
-  (`wal_coverage_sec` NULL).
-- **Variants**: the current defaults vs the same **+wallet**.
-- **Decision rule**: same margin as the other groups. `wallet` is enabled only if it clears it.
+Confirmation of `holders_supply`:
 
-#### Results: `wallet_reputation` (#190) — pending, measured in #198
+| metric | lift | w0 / w1 |
+|---|---:|---:|
+| pump/5m PR-AUC (primary) | +0.0023 ± 0.0105 | −0.0018 / +0.0063 |
+| rug/30s PR-AUC | +0.0116 ± 0.0055 | |
+| rug/1m PR-AUC | +0.0145 ± 0.0082 | |
+| rug/5m PR-AUC | +0.0046 ± 0.0060 | +0.0044 / +0.0048 |
+| rug/15m PR-AUC | +0.0028 ± 0.0034 | +0.0031 / +0.0026 |
+| rug/1h PR-AUC | −0.0008 ± 0.0029 | +0.0001 / −0.0017 |
+| `policy/avg_pnl` | +0.0823 ± 0.0587 (better) | +0.1189 / +0.0457 |
+| `policy/total_pnl` | +15.4 ± 48.3 | −11.1 / +41.8 |
 
-Not measured yet. The `wallet_reputation` group is computed by the pipeline but **disabled** until the combined
-ablation #198 measures it. Protocol specifics:
+**Not done, and why it can matter:**
 
-- **Data**: migration 0015 applied, then the same combined re-replay with **`--warmup-hours 24`** (the
-  reputation look-backs fit in the age cap: launch outcomes need 1 h + 1 h embargo, round trips 18 h + one 6 h
-  bucket). Rows predating 0015 are refused for the group (`rep_early_buyers` NULL).
-- **Variants**: the current defaults vs the same **+wallet_reputation** (and +wallet +wallet_reputation, since
-  both read the same memory).
-- **Overfitting check**: report the number of distinct creators and wallets behind the top-1 % entry selection
-  (pump heads). A lift carried by a handful of very active wallets is memorization, not a gain.
-- **Decision rule**: same margin as the other groups. `wallet_reputation` is enabled only if it clears it.
+- **Regimes.** All the eval windows fall between Tuesday 11-03 and Wednesday 11-04: daytime vs night, no weekend. A
+  group that only helps on a weekend, the case the `market` protocol asks about, has not been tested.
+- **Protocol variants that depended on a lift**, none of which ran: `+wallet +wallet_reputation`,
+  `+holders_supply −concentration`, the distinct creators / wallets behind the top-1 % entries, and the
+  `holders_supply` lift on complete tokens only.
+- **Link flags** were not measured apart from the stream part of `metadata`.
 
-#### Results: `metadata` (#196) — pending, measured in #198
+Sampled coverage (0.5 % block sample of all the window's rows, before the whole-token and row-cap selection):
 
-Not measured yet. The `metadata` group is computed by the pipeline but **disabled** until the combined ablation
-#198 measures it. Protocol specifics:
+- `hs_incomplete = 1` on **87 %** of the rows, so most of the `holders_supply` signal comes from incomplete history.
+- A known link on 15 % of the rows of the screening window, and 10 % of the 3.5 d window.
 
-- **Data**: migration 0016 applied, then the combined re-replay with `--warmup-hours 24` (the narrative counts
-  need 6 h). Rows predating 0016 are refused for the group (`meta_coverage_sec` NULL).
-- **Link flags are live-only.** A replay never fetches: it reads `token_metadata`, which only holds tokens seen
-  by live ingestion since the fetcher was deployed. Over a window before that, the three link flags are NULL on
-  every row, so #198 measures the stream part (URI kind + narrative heat) on the whole window, and the links only
-  on a window fully ingested live after deployment (report both, and the share of rows with a known link).
-- **Variants**: the current defaults vs the same **+metadata**.
-- **Decision rule**: same margin as the other groups. `metadata` is enabled only if it clears it.
+#### Results: `market` (#195) — not enabled (#198)
+
+Slightly negative in the screening (pump/1h PR-AUC −0.018, `policy/total_pnl` worse). Computed by the pipeline, masked. The
+weekend regime is untested. Re-replays need a warm-up of at least 1 h (rows predating 0013 are refused).
+
+#### Results: `wallet` (#189) — not enabled (#198)
+
+No significant lift in the screening. Computed by the pipeline, masked. Re-replays need `--warmup-hours 24` (rows
+predating 0014 are refused).
+
+#### Results: `wallet_reputation` (#190) — not enabled (#198)
+
+No significant lift in the screening, so the overfitting check (distinct creators and wallets behind the top-1 %
+entries) and `+wallet +wallet_reputation` did not run. Computed by the pipeline, masked. Re-replays need
+`--warmup-hours 24` (rows predating 0015 are refused).
+
+#### Results: `metadata` (#196) — not enabled (#198)
+
+No significant lift in the screening (pump/1h PR-AUC −0.018). Computed by the pipeline, masked. A replay never fetches, so
+the link flags are only known for tokens seen live since the fetcher's deployment (first fetch 2026-11-02 04:26 UTC).
+Re-replays need `--warmup-hours 24` (rows predating 0016 are refused).
 
 ```bash
 # from services/ai-service, database from SOLIA_DB_CONNECTION / POSTGRES_* (a replayed history)
@@ -908,18 +925,11 @@ python -u -m solia_ai.ablation --groups holders_supply --windows 2 --seeds 0 1 \
     --out /app/models/reports/ablation-198-confirm.json
 ```
 
-#### Results: `holders_supply` (#197) — pending, measured in #198
+#### Results: `holders_supply` (#197) — not enabled (#198)
 
-Not measured yet. The `holders_supply` group is computed by the pipeline but **disabled** until the combined
-ablation #198 measures it. Protocol specifics:
-
-- **Data**: migration 0017 applied, then the combined re-replay with `--warmup-hours 24`, so tokens created in the
-  warm-up have complete positions. Rows predating 0017 are refused for the group (`hs_holders` NULL).
-- **Incomplete history**: report the share of training rows with `hs_incomplete = 1`, and the lift on complete
-  tokens only (`hs_incomplete = 0`); a lift that only shows on incomplete tokens is suspicious.
-- **Variants**: the current defaults vs the same **+holders_supply** (and **+holders_supply −concentration**, to see
-  whether the two concentration views overlap).
-- **Decision rule**: same margin as the other groups. `holders_supply` is enabled only if it clears it.
+The screening's rug/5m PR-AUC lift (+0.0118 ± 0.0017) did not hold on every token of 3.5 d (+0.0046 ± 0.0060), and the
+primary metric never moved. Short rug horizons stay positive on average at 3.5 d, below the margin. Computed by the
+pipeline, masked. Re-replays need `--warmup-hours 24` (rows predating 0017 are refused).
 
 ### Hyperparameter & labeling-threshold search
 
