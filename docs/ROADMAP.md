@@ -1,4 +1,4 @@
-# Roadmap — 8 sprints
+# Roadmap — 8 sprints (+ gated Sprint 9)
 
 Each sprint is a GitHub **milestone**, implemented on a feature branch and merged via PR (see [`../CONTRIBUTING.md`](../CONTRIBUTING.md)). Sprints are mostly sequential; some can overlap once contracts are frozen.
 
@@ -37,3 +37,11 @@ one-hot; plus hyperparameter/threshold tuning and probability calibration.
 
 Tracked by milestone **"Feature enrichment & tuning"** (epic #34). Not a numbered sprint — runs
 when the baseline exists and we can measure improvements.
+
+## Future phase — Live trading (gated)
+
+[Sprint 9](sprints/SPRINT-09-live-trading.md): real trading with micro-capital on a
+**human-approved, hash-pinned model**, never on the auto-promoted champion. Gated: it starts only
+when the retraining *process* passes the "not luck" gate in paper (walk-forward champions,
+statistically positive net P&L after full costs, measured model decay) and an ADR lifts `CLAUDE.md`'s paper-only rule. Until then, only its paper-safe
+tasks (model approval workflow, gate report, bot hardening) may be done.
