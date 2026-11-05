@@ -360,9 +360,23 @@ Budget **~400 MB per hour** compressed (~9.4 GiB/day): before it starts, the run
 hours **not yet mirrored** and the free space. The
 full archive is ~1.7 TB — mirror chosen windows, never all of it.
 
-**Idempotent / resumable.** `features` rows are keyed by `(mint, ts)` and inserted
-`ON CONFLICT DO NOTHING`, so re-running a window (after an interruption or failed hours) inserts no
-duplicates; with a mirror, the re-run doesn't download again either.
+**Idempotent / resumable — against itself only.** `features` rows are keyed by `(mint, ts)` and inserted
+`ON CONFLICT DO NOTHING`, so re-running a window **from the same source** (after an interruption or failed
+hours) inserts no duplicates; with a mirror, the re-run doesn't download again either.
+
+**Never replay over hours live ingestion already wrote.** Live and replay tick at offset times, so their
+`(mint, ts)` never collide and both rows stay: each token ends up with two interleaved ~10 s series, which
+shrinks the time a fixed-length training sequence spans. A coverage check can't see it, since every hour has
+rows. So bound a replay to the exact gap (`--from`/`--to` accept seconds; `--warmup-hours` writes nothing
+before `--from`), and check the result, read-only, around it:
+
+```bash
+python -m solia_ai.density --from 2026-11-04T18:50Z --to 2026-11-04T19:25Z
+```
+
+It counts each token's rows per 10 s bucket per 5-minute slot: ~1 for one series, ~2 for two (a slot holding
+the seam between two writers measured up to 1.04). Exit `0` = no slot above `--max-density` (default 1.1),
+`1` = at least one, `2` = invalid arguments, no rows in the window or an unreachable database.
 
 **Rebuild** (for feature enrichment). By default a re-replay **keeps** existing rows, so a column added
 since they were written would stay NULL. `--rebuild` switches the insert to `ON CONFLICT (mint, ts) DO
