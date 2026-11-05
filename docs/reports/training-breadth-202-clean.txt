@@ -1,0 +1,73 @@
+features window 2026-11-01T13:20:34.393000+00:00 .. 2026-11-05T01:20:34.393000+00:00 (3.5 d): 25738682 rows of 212902 tokens read (window held 73008335 rows of 264010 tokens; dropped 51108 starting before it, 0 over max_rows 1000000000)
+[2/20] trial-01: {'lookback_days': 3.5, 'window_stride_seconds': 240, 'max_rows': 1000000000}
+Search (grid) — 2 trial(s) [stopped by space], 2 window(s) x 2 seed(s); objective = mean pr_auc over heads x horizons, scored on the base labels; rank by mean - std
+generated 2026-11-05T06:38:40.044247+00:00
+
+     trial |    pr_auc mean ± std |    score | best ep | val-train gap | params
+  trial-01 |      0.4886 ± 0.0023 |   0.4862 |  5.2500 |       -0.0949 | lookback_days=3.5, window_stride_seconds=240, max_rows=1000000000
+  baseline |      0.4835 ± 0.0036 |   0.4799 |  2.7500 |       -0.0888 | (base config)
+
+Rug drift — baseline: roc_auc / pr_auc per held-out slice
+            slice |           30s |            1m |            5m |           15m |            1h
+11-04T05:47..16:20 | 0.9195/0.4359 | 0.9099/0.4756 | 0.9057/0.6687 | 0.9236/0.8359 | 0.9390/0.9222
+11-04T16:20..01:20 | 0.9145/0.4185 | 0.9051/0.4612 | 0.9108/0.7085 | 0.9340/0.8759 | 0.9455/0.9396
+
+Rug drift — trial-01: roc_auc / pr_auc per held-out slice
+            slice |           30s |            1m |            5m |           15m |            1h
+11-04T05:47..16:20 | 0.9186/0.4426 | 0.9089/0.4812 | 0.9099/0.6799 | 0.9280/0.8391 | 0.9454/0.9302
+11-04T16:20..01:20 | 0.9149/0.4263 | 0.9064/0.4675 | 0.9153/0.7184 | 0.9396/0.8844 | 0.9510/0.9473
+
+Best: trial-01 vs baseline — objective lift 0.0051 ± 0.0031 (margin 0.01): not significant
+                metric |              lift | verdict
+      pump/30s/roc_auc |   0.0009 ± 0.0024 | not significant
+       pump/30s/pr_auc |  -0.0026 ± 0.0137 | not significant
+          pump/30s/ece |  -0.0000 ± 0.0006 | not significant
+       pump/1m/roc_auc |   0.0011 ± 0.0025 | not significant
+        pump/1m/pr_auc |  -0.0034 ± 0.0108 | not significant
+           pump/1m/ece |  -0.0002 ± 0.0007 | not significant
+       pump/5m/roc_auc |   0.0029 ± 0.0035 | not significant
+        pump/5m/pr_auc |  -0.0011 ± 0.0061 | not significant
+           pump/5m/ece |   0.0003 ± 0.0013 | not significant
+      pump/15m/roc_auc |   0.0063 ± 0.0043 | not significant
+       pump/15m/pr_auc |   0.0068 ± 0.0129 | not significant
+          pump/15m/ece |   0.0005 ± 0.0004 | not significant
+       pump/1h/roc_auc |   0.0155 ± 0.0151 | not significant
+        pump/1h/pr_auc |   0.0135 ± 0.0240 | not significant
+           pump/1h/ece |   0.0007 ± 0.0008 | not significant
+       rug/30s/roc_auc |  -0.0002 ± 0.0017 | not significant
+        rug/30s/pr_auc |   0.0072 ± 0.0095 | not significant
+           rug/30s/ece |  -0.0006 ± 0.0020 | not significant
+        rug/1m/roc_auc |   0.0002 ± 0.0020 | not significant
+         rug/1m/pr_auc |   0.0059 ± 0.0091 | not significant
+            rug/1m/ece |  -0.0015 ± 0.0017 | not significant
+        rug/5m/roc_auc |   0.0043 ± 0.0007 | not significant
+         rug/5m/pr_auc |   0.0105 ± 0.0063 | not significant
+            rug/5m/ece |   0.0011 ± 0.0042 | not significant
+       rug/15m/roc_auc |   0.0050 ± 0.0017 | not significant
+        rug/15m/pr_auc |   0.0058 ± 0.0044 | not significant
+           rug/15m/ece |  -0.0010 ± 0.0064 | not significant
+        rug/1h/roc_auc |   0.0059 ± 0.0031 | not significant
+         rug/1h/pr_auc |   0.0079 ± 0.0012 | not significant
+            rug/1h/ece |   0.0064 ± 0.0033 | not significant
+      policy/total_pnl | 267.9292 ± 227.9142 | better
+        policy/avg_pnl |  -0.1296 ± 0.2096 | not significant
+
+Proposed config.yaml diff (NOT applied):
+--- config.yaml
++++ config.yaml (proposed)
+@@ -71,9 +71,9 @@
+   keep_candidates: 5
+   rollback_depth: 2
+ data:
+-  lookback_days: 2.0
+-  max_rows: 8000000
+-  window_stride_seconds: 60
++  lookback_days: 3.5
++  max_rows: 1000000000
++  window_stride_seconds: 240
+   prune_columns: true
+ eligibility:
+   min_unique_traders: 0
+
+report written to /app/models/reports/training-breadth-clean.json
+proposed diff written to /app/models/reports/training-breadth-clean.diff

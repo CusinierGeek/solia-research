@@ -1,0 +1,15 @@
+--- config.yaml
++++ config.yaml (proposed)
+@@ -71,9 +71,9 @@
+   keep_candidates: 5
+   rollback_depth: 2
+ data:
+-  lookback_days: 2.0
+-  max_rows: 8000000
+-  window_stride_seconds: 60
++  lookback_days: 3.5
++  max_rows: 1000000000
++  window_stride_seconds: 240
+   prune_columns: true
+ eligibility:
+   min_unique_traders: 0

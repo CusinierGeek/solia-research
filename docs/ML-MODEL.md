@@ -845,6 +845,11 @@ compare against the 19-column baseline. Reports: `docs/reports/ablation-188-run1
 unchanged, so `candidate.on_incompatible` is not involved. No `--combine` ran: no group cleared the margin alone.
 Reports: `docs/reports/ablation-198.{txt,json,runs.jsonl}` and `docs/reports/ablation-198-confirm.{txt,json,runs.jsonl}`.
 
+> **Measured on data holding duplicates.** Both runs trained on windows with doubled rows (19 % at screening, 22 % at
+> confirmation), removed on 2026-11-04 (`docs/DATA-PIPELINE.md`); their eval windows held none. Neither was re-run, so
+> the absence of a lift is unconfirmed on cleaned data. [#202's re-run](#overfitting-training-data-breadth-202) moved a
+> lift by about 0.02, more than any group's lift here, so don't read these numbers as precise.
+
 - **Screening**: every group alone vs the current defaults, 2 windows × 2 seeds, 2 d, frame read. The planned 8 M rows
   hit the 14 GB cap in run 2 (OOM), so it ran on **6 M rows**. Eval: 11-03 18:25 → 11-04 05:47 UTC.
 - **Confirmation**: `holders_supply` only, on every token of 3.5 d (26.7 M rows / 199 k tokens), stride 240,
@@ -1233,6 +1238,10 @@ stride 60, momentum + concentration).
 seeds, `--prune-columns`, a container capped at 14 GB, retrain scheduler and bot off. Report:
 `docs/reports/training-breadth-202.{txt,json,trials.jsonl,diff}`.
 
+> **Measured on data holding duplicates.** Replays over live hours had doubled part of `features`, removed on
+> 2026-11-04 (`docs/DATA-PIPELINE.md`). Share of a window's rows in doubled buckets: eval slice 0 57 %, slice 1 0 %,
+> training 33 % at 2 d and 23 % at 3.5 d. The re-run on cleaned data below supersedes the lifts of this table.
+
 | trial | lookback | stride | rows | objective (mean ± std) | score | pump/5m PR-AUC | paired objective lift | paired pump/5m lift | time |
 |---|---:|---:|---|---:|---:|---:|---:|---:|---:|
 | baseline | 2 d | 60 s | 8 M cap | 0.4948 ± 0.0173 | 0.4775 | 0.3726 ± 0.0111 | — | — | 118 min |
@@ -1261,6 +1270,33 @@ do the compact read yet). The research setting `lookback_days 3.5`, `window_stri
 `--prune-columns` is the data setting carried forward: #203 (recency × lookback 3.5 / 5 d) uses it as its base, and
 the #198 Transformer confirmation re-runs at 3.5 d. Changing production waits for two things: a follow-up that moves
 the retrain to the compact read, and a confirmation with more windows that clears the margin.
+
+**Re-run on cleaned data (2026-11-05): the pump gain did not hold.** Reference vs 3.5 d / every token / stride 240
+only, 2 windows × 2 seeds, 11-05 01:20 → 06:38 UTC. Report:
+`docs/reports/training-breadth-202-clean.{txt,json,trials.jsonl,diff}`. Eval: 11-04 05:47 → 11-05 01:20 UTC, which
+includes the two gaps refilled by replay. The 3.5 d read now holds 25.7 M rows / 213 k tokens.
+
+| | baseline | 3.5 d / every token / stride 240 | paired lift | first run's lift |
+|---|---:|---:|---:|---:|
+| objective | 0.4835 ± 0.0036 | 0.4886 ± 0.0023 | +0.0051 ± 0.0031 | +0.0131 ± 0.0091 |
+| pump/5m PR-AUC | 0.3538 ± 0.0195 | 0.3527 ± 0.0178 | −0.0011 ± 0.0061 | +0.0180 ± 0.0130 |
+| rug/5m PR-AUC | | | +0.0105 ± 0.0063 | +0.0082 ± 0.0057 |
+| `policy/avg_pnl` | | | −0.13 ± 0.21 | +0.076 ± 0.075 |
+| time | 139 min | 147 min | | |
+
+- **The primary metric shows no gain.** Pump/5m is flat, and so are pump 30 s and 1 m. Pump 15 m and 1 h lean positive, with a
+  PR-AUC spread larger than the lift.
+- **Rug still leans positive.** All four rug/5m runs are up, and the rug ROC-AUC and PR-AUC lean positive from 5 m to 1 h.
+  None clears the margin.
+- **`policy/total_pnl` is flagged "better" (+268 ± 228), but `policy/avg_pnl` falls.** As in the first run, it is
+  not treated as a gain.
+- **The cause can't be isolated.** The run has no as-of bound, so its eval windows are newer than the first run's: a
+  difference mixes the cleanup and the period. Only this one trial was re-run, so the first run's stride and 2 d
+  comparisons were not re-measured.
+
+The decision stands: `config.yaml` `data.*` is unchanged. The 3.5 d setting stays the research base of #203, which
+re-runs its own reference, but only for a rug lift and lower spread: it is no longer evidence that a longer period
+helps pump prediction.
 
 ### Overfitting: recency-weighted loss (#203)
 
