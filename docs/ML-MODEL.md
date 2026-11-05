@@ -510,6 +510,27 @@ clears the baseline) is a starting point, not a deployment: pick by the criteria
 `DEFAULT_RUG_THRESHOLD` in `evaluate.py` together, so the promotion gate's P&L guard measures the rule
 the bot trades.
 
+### Edge criterion
+
+A week of sweeps moved PR-AUC by less than the noise between periods, and it doesn't say whether the bot can earn. This
+criterion was fixed on 2026-11-05, **before** reading `exit_sim`'s full run, so that the results can't shape it. A strategy
+(an entry rule with its exit settings) has an edge only if all three hold, one position per mint:
+
+1. **Profitable after every cost:** the lower bound of the 95 % bootstrap CI (by token) of the mean net return is above 0.
+2. **Enough trades:** at least 300.
+3. **More than one period:** conditions 1 and 2 hold on at least 2 separate periods. The settings are chosen on the first
+   and confirmed unchanged on the second, because the best of many cells can win by chance.
+
+What follows:
+
+- **It holds:** keep those settings and test them for several days on the paper bot, champion frozen.
+- **It fails on the current model:** move to a label of TP before SL, and test it first on LightGBM (#205), then on the
+  Transformer.
+- **It fails on that label too, on both models:** stop optimizing the model and review the project.
+
+A single report can't satisfy condition 3. Passing this criterion doesn't lift the paper-only rule, which stays until the
+Sprint 9 gate.
+
 ### Exit-rule simulation (#221)
 
 The entry sweep scores a rule by its label held to the horizon, on labeled windows. The bot exits on take-profit,
