@@ -510,6 +510,61 @@ clears the baseline) is a starting point, not a deployment: pick by the criteria
 `DEFAULT_RUG_THRESHOLD` in `evaluate.py` together, so the promotion gate's P&L guard measures the rule
 the bot trades.
 
+### Exit-rule simulation (#221)
+
+The entry sweep scores a rule by its label held to the horizon, on labeled windows. The bot exits on take-profit,
+stop-loss or timeout, one position per mint, with latency and costs. `solia_ai/exit_sim.py` answers offline which
+settings keep the rule's edge. Read-only: nothing is written but the report.
+
+```bash
+python -m solia_ai.exit_sim --champion --out /app/models/reports/exit-sim.json   # + .txt table
+#   --horizon 15m  --pump-thresholds 0.3,0.4,0.5  --lookback-days / --max-rows like the sweep
+#   --window-stride-seconds 0 (default: a decision per snapshot, as the bot decides; 60 = the sweep's windows)
+#   --ideal (fill at the mark, at once, for free)  --min-trades 30  --bootstrap-samples 1000
+```
+
+**Every selected window counts, labeled or not.** `dataset._label` masks a horizon the data doesn't cover, unless a rug
+already happened. A token that goes quiet without crashing therefore has no 15m label: it is missing from the training
+loss and from the sweep (162 336 of 288 780 held-out windows are labeled at 15m on the current champion's report), though
+nobody can know that at entry. So the report first walks from the sweep to the tradable entries, each step held to the
+horizon, without exits or costs:
+
+| step | |
+|---|---|
+| `labeled_windows` | what the sweep counts |
+| `all_windows` | every selected window, read off its real path under the labels' rules |
+| `one_per_mint` | a mint is held for the horizon after each entry |
+| `first_per_mint` | the first signal of each mint |
+
+Each step gives the precision, win rate, mean / median return, `labeled_share` and `flat_share` (no row of the horizon
+moved from the anchor).
+
+**The grid.** Per entry rule, 8 stops (none, fixed 10 / 20 / 30 / 50 %, volatility × 3 / 5 / 8) × 5 take-profits
+(`min(expected_return, 50 %)`, fixed 50 / 100 / 200 %, none) × 3 timeouts (300 / 900 / 1800 s). Each cell gives trades,
+tokens, win rate, mean / median return with a bootstrap CI **by token**, the share of exits per reason, the median
+holding time, and the entries failed, abandoned or declined. `<- bot` marks today's settings. Every cell applies the
+bot's upside gate (`expected_return ≥ MinTakeProfitPct`), so the cells compare the same entries. The volatility stop keeps
+the bot's bounds, so its cap (30 %) binds on volatile tokens.
+
+**Mechanics** mirror `Solia.Bot`, and `tests/test_exit_sim.py` reads the constants back from `BotOptions.cs`:
+
+- Decision on a mark, fill at the first mark at or after the latency (`EntryLatencyMs`, `ExitLatencyMs`), else abandoned /
+  the stale-mark rule. Marks are the ~10 s `features` rows, so a fill waits for the next row.
+- Levels from the fill mark. The fill's own tick triggers nothing. The deadline is swept first, then SL, then TP.
+- Constant-product fills, venue fees, the pool cap, slippage tolerance with retries, network fees and rent, as in
+  "Realistic fills" and "Execution realism". A token going silent exits at its last mark.
+
+Not modelled: the rug exit (the rule has no rug gate), `MaxConcurrentPositions`, a compounding balance (size = the
+starting balance × `FixedPositionFraction`), a silent feed, MEV. Windows too close to the end of the read for the
+longest hold are dropped (`n_censored`), because the read cuts their path, not the token. The read keeps whole tokens, so
+tokens older than the window (mostly migrated) are not simulated.
+
+**Reading it.** 120 cells share the same trades, so some win by chance. Read the `marginals` (each axis' mean over the
+cells) and stable zones, not the best cell, and confirm on another period before changing a bot default.
+
+**Results & decision.** *Pending.* The run needs the database read and the GPU, so it goes after #203. Record here the
+steps, the bot's cell, the zones and any setting chosen, with the report under `docs/reports/`.
+
 ## Continuous training loop
 
 1. Count new **closed** trades since last training (`training_events`).
@@ -1409,6 +1464,7 @@ the report under `docs/reports/`.
 | `candidate.py` | Candidate training for a retrain (warm start from champion or scratch, refreshed time split, never registered) |
 | `evaluate.py` | Held-out evaluation (predictive metrics + reference-policy P&L) |
 | `entry_sweep.py` | Entry-rule sweep: precision / win rate / P&L per threshold rule on held-out windows (chooses the bot's entry gates) |
+| `exit_sim.py` | Exit-rule simulation: the bot's TP / SL / timeout on real held-out price paths, and the steps from the sweep to the tradable entries |
 | `ablation.py` | Per-feature-group lift across windows & seeds |
 | `eligibility.py` | Token eligibility rule (causal, shared with the bot) |
 | `eligibility_ablation.py` | Lift of eligibility rules (rule's model vs every-token model on the rule's population) |
