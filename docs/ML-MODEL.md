@@ -565,6 +565,44 @@ cells) and stable zones, not the best cell, and confirm on another period before
 **Results & decision.** *Pending.* The run needs the database read and the GPU, so it goes after #203. Record here the
 steps, the bot's cell, the zones and any setting chosen, with the report under `docs/reports/`.
 
+### Live vs offline scoring (#239)
+
+Live paper entries looked far worse than held-out scoring of the same champion: at `pump ≥ 0.4`, 15m, one position per
+mint, 23 % touched +100 % live (39 trades) against 50 % held out (`exit_sim` smoke, 36 entries of another period). If the
+model saw different inputs live and offline, backtests couldn't describe the bot. `solia_ai/rescore.py` tests that: it
+rebuilds the window of each stored prediction from today's `features` and scores it through the same checkpoint and
+`Predictor` path as `/predict`. Read-only.
+
+```bash
+python -m solia_ai.rescore --model-version <models.version> --out /app/models/reports/rescore.json   # + .txt table
+#   --horizon 15m  --entry-threshold 0.4  --selected-from 0.2  --others 5000
+```
+
+**Results (2026-11-05, champion `solia-20261102T151927246570Z`).** Its 65 978 stored 15m predictions cover
+2026-11-02 17:34 → 19:09 UTC. Re-scored: all 11 647 at `pump ≥ 0.2` or sampled below. Every one had a window, and 91 % have a
+row at their exact `ts`. Report: [`reports/rescore-239.txt`](reports/rescore-239.txt).
+
+| stored `pump_prob` | n | live mean | offline mean | median abs. diff | abs. diff > 0.05 | rank corr. |
+|---|---:|---:|---:|---:|---:|---:|
+| all | 11 647 | 0.185 | 0.181 | 0.000 | 4 % | 0.97 |
+| ≥ 0.4, price moved over the horizon | 85 | 0.519 | 0.518 | 0.000 | 0 % | 0.995 |
+| ≥ 0.4, price flat over the horizon | 14 | 0.764 | 0.476 | 0.004 | 36 % | 0.00 |
+
+- **Scoring reproduces.** Of the 99 entries at `≥ 0.4`, 92 stay at or above it offline, and 8 others cross it from below.
+- **The inputs the model uses match.** On all 18 trades holding a `features_snapshot`, every differing column belongs to a
+  disabled group (`wal_*`, `rep_*`, `meta_*`, `mkt_*`), where replay filled values the live row lacked. None of the 31
+  enabled columns differs. Only the trades' anchor rows can be checked this way, not the rest of their windows.
+- **The exception is small.** The 14 flat predictions (12 tokens) score much higher live than offline, with no rank
+  agreement. Their cause isn't established. The 9 % of predictions without an exact row may play a part.
+
+**Decision.** The live vs held-out gap is not a scoring skew, so no fix follows from this task. Offline scoring of those 1.5
+hours would select nearly the same entries, so the 23 % vs 50 % comes mostly from comparing different periods on small
+samples. The model's selection precision therefore can't be read from one short window: `exit_sim`'s full run, with more
+entries, gives the better estimate.
+
+A first estimate (57 % of the selected tokens flat, 36 of 63) counted a token as flat when its later rows held one price,
+even a price different from the anchor's. Compared with the anchor, 12 of 63 tokens are flat.
+
 ## Continuous training loop
 
 1. Count new **closed** trades since last training (`training_events`).
@@ -1465,6 +1503,7 @@ the report under `docs/reports/`.
 | `evaluate.py` | Held-out evaluation (predictive metrics + reference-policy P&L) |
 | `entry_sweep.py` | Entry-rule sweep: precision / win rate / P&L per threshold rule on held-out windows (chooses the bot's entry gates) |
 | `exit_sim.py` | Exit-rule simulation: the bot's TP / SL / timeout on real held-out price paths, and the steps from the sweep to the tradable entries |
+| `rescore.py` | Live vs offline scoring: re-scores stored predictions on today's `features` and compares inputs and probabilities |
 | `ablation.py` | Per-feature-group lift across windows & seeds |
 | `eligibility.py` | Token eligibility rule (causal, shared with the bot) |
 | `eligibility_ablation.py` | Lift of eligibility rules (rule's model vs every-token model on the rule's population) |
