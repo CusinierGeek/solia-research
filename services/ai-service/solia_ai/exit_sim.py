@@ -34,8 +34,9 @@ from typing import Any, NamedTuple
 
 import numpy as np
 import pandas as pd
+import torch
 
-from .evaluate import fmt, json_safe
+from .evaluate import apply_calibration, fmt, json_safe, score_logits
 from .liquidity import LiquidityFloor, normalize_venue
 
 # --- The bot's defaults (BotOptions.cs), in one place. A parity test reads them back.
@@ -859,6 +860,17 @@ def write_report(report: Mapping[str, Any], path: str | Path) -> tuple[Path, Pat
 # --------------------------------------------------------------------------- CLI
 
 
+def score_windows(predictor: Any, dataset: Any, device: str | torch.device) -> tuple[Any, Any]:
+    """The calibrated predictions and the labels over ``dataset``, with the model on ``device``.
+
+    ``Predictor`` loads on the CPU for serving, and :func:`score_logits` scores wherever the model
+    lives, so a run has to move it first.
+    """
+    predictor.model.to(device)
+    logits, truth = score_logits(predictor.model, dataset)
+    return apply_calibration(logits, predictor.calibration), truth
+
+
 def _floats(text: str) -> list[float]:
     return [float(v) for v in text.split(",") if v.strip()]
 
@@ -888,6 +900,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--bootstrap-samples", type=int, default=DEFAULT_BOOTSTRAP_SAMPLES)
     parser.add_argument("--ci", type=float, default=DEFAULT_CI)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--device", help="torch device (default: cuda if available, else cpu)")
     args = parser.parse_args(argv)
 
     try:  # fail on bad settings before reading or scoring anything
@@ -899,9 +912,10 @@ def main(argv: list[str] | None = None) -> None:
 
     from .config import horizon_seconds, load_config
     from .db import DataSettings, make_engine, read_training_features
-    from .evaluate import apply_calibration, holdout_dataset, score_logits
+    from .evaluate import holdout_dataset
     from .inference import Predictor
 
+    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     engine = make_engine()
     if args.champion:
         try:
@@ -923,10 +937,13 @@ def main(argv: list[str] | None = None) -> None:
     settings_read = DataSettings.from_config(
         config, lookback_days=args.lookback_days, max_rows=args.max_rows
     )
+    print("reading features")
     df, _ = read_training_features(engine, settings_read)
+    print(f"read {len(df)} rows, building the held-out windows")
     dataset = holdout_dataset(df, config, predictor)
-    logits, truth = score_logits(predictor.model, dataset)
-    predictions = apply_calibration(logits, predictor.calibration)
+    print(f"scoring {len(dataset)} windows on {device}")
+    predictions, truth = score_windows(predictor, dataset, device)
+    print("simulating the exits")
 
     execution = IDEAL if args.ideal else Execution()
     floor = LiquidityFloor.from_config(config)

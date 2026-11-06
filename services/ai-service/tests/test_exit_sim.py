@@ -10,7 +10,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 
+from solia_ai import exit_sim
 from solia_ai.dataset import build_samples
 from solia_ai.exit_sim import (
     ABANDONED,
@@ -30,6 +32,7 @@ from solia_ai.exit_sim import (
     main,
     one_per_mint,
     render,
+    score_windows,
     simulate_position,
     simulate_rule,
     simulate_rules,
@@ -683,3 +686,25 @@ def test_paths_need_their_columns():
 def test_cli_rejects_bad_settings_before_reading_anything(args):
     with pytest.raises(SystemExit):
         main(args)
+
+
+def test_scoring_moves_the_model_to_the_requested_device(monkeypatch):
+    # The "meta" device stands in for the GPU, so this also runs on a machine without one.
+    class FakePredictor:
+        model = torch.nn.Linear(1, 1)
+        calibration = 1.0
+
+    seen = []
+
+    def fake_score(model, dataset):
+        seen.append(next(model.parameters()).device.type)
+        return {"pump_logits": dataset}, {"mask": dataset}
+
+    monkeypatch.setattr(exit_sim, "score_logits", fake_score)
+    monkeypatch.setattr(exit_sim, "apply_calibration", lambda logits, calibration: logits)
+
+    predictions, truth = score_windows(FakePredictor(), "windows", "meta")
+
+    assert seen == ["meta"]
+    assert predictions == {"pump_logits": "windows"}
+    assert truth == {"mask": "windows"}
