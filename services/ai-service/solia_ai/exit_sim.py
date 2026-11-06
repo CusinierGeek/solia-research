@@ -336,12 +336,7 @@ class Paths:
         missing = {"mint", "ts", "price", "liquidity", "venue", "volatility"} - set(df.columns)
         if missing:
             raise ValueError(f"the price paths need column(s): {', '.join(sorted(missing))}")
-        price = pd.to_numeric(df["price"], errors="coerce").to_numpy(np.float64)
-        valid = np.flatnonzero(np.isfinite(price) & (price > 0) & df["mint"].notna().to_numpy())
-        ts = pd.to_datetime(df["ts"], utc=True).dt.tz_localize(None).to_numpy("datetime64[ms]")
-        ts = ts.astype(np.int64).astype(np.float64) / 1000.0
-        codes, mints = pd.factorize(df["mint"], sort=True)
-        order = valid[np.lexsort((ts[valid], codes[valid]))]
+        order, price, ts, codes, mints = path_rows(df)
 
         liquidity = pd.to_numeric(df["liquidity"], errors="coerce").to_numpy(np.float64)[order]
         venue = df["venue"].to_numpy(dtype=object)[order]
@@ -365,6 +360,18 @@ class Paths:
             volatility=volatility,
             spans=spans,
         )
+
+
+def path_rows(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Any]:
+    """``order`` maps each mark of :class:`Paths` to its row of ``df``: only valid marks, tokens
+    contiguous, time ordered. Also returns the frame's prices, epoch seconds and mint codes, and the
+    mints. Another column of ``df`` lines up with the paths through ``values[order]``."""
+    price = pd.to_numeric(df["price"], errors="coerce").to_numpy(np.float64)
+    valid = np.flatnonzero(np.isfinite(price) & (price > 0) & df["mint"].notna().to_numpy())
+    ts = pd.to_datetime(df["ts"], utc=True).dt.tz_localize(None).to_numpy("datetime64[ms]")
+    ts = ts.astype(np.int64).astype(np.float64) / 1000.0
+    codes, mints = pd.factorize(df["mint"], sort=True)
+    return valid[np.lexsort((ts[valid], codes[valid]))], price, ts, codes, mints
 
 
 def _per_venue(venue: np.ndarray, table: Mapping[str, float], fallback: float) -> np.ndarray:

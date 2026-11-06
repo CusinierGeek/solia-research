@@ -678,6 +678,48 @@ traded by both, its mean net return minus the reference's, with a CI that draws 
 results don't change: old and new code gave identical outcomes on 144 000 simulated positions over random paths.
 
 Not run on a full period yet: a large read could disturb the paper test.
+### Is the model useful? (#252)
+
+The exit simulation says what a rule using the model earns, not whether the model is the reason. `solia_ai/model_value.py`
+walks entries that don't use it through the same exits (the frozen setting: TP +200 %, SL volatility × 3, 900 s), costs, tokens
+and period, on the windows the model never trained on. Read-only: nothing is written but the report.
+
+```bash
+python -m solia_ai.model_value --champion --out /app/models/reports/model-value.json   # + .txt table
+#   --pump-threshold 0.5  --until 2026-11-04T02:11:00Z  --draws 200  --lookback-days / --max-rows like the sweep
+#   --window-stride-seconds 180 (close to the live scoring cadence; default 0, every snapshot)
+```
+
+| arm | entries |
+|---|---|
+| `model` | `pump_prob ≥ threshold`, with the bot's upside gate |
+| `random` | as many entries, at random among the windows, `--draws` times |
+| `matched` | for each model entry, a random window of another token with the same venue, age (under 5 min, 5-15 min, 15-60 min, older) and volatility quartile, `--draws` times. A sparse stratum falls back to a coarser one, and the report counts how often |
+| `breakout` | the price's lead over its highest of the previous 30 marks (about 5 min) |
+| `buy_pressure` | `buy_volume_ratio` |
+| `volatility` | `volatility` |
+
+The last three take their highest scores, down to as many trades as the model. That cut is read over the whole period, so these
+rules get hindsight the model doesn't have, which favours them. None of the baselines reads the model. Each baseline reports the
+model's mean net return minus its own, with a CI drawing tokens, and `random` and `matched` report a one-sided p-value.
+
+**How to read it, fixed on 2026-11-06, before any run.** On one period:
+
+- **The model adds value** if its difference with `matched` has a 95 % CI above 0 and p < 0.05, and no plain rule beats it.
+- **A plain rule beats the model** if the CI of its difference with the model is entirely below 0.
+- **Otherwise there's no evidence that the model adds value.** That doesn't prove it is useless: a small gap can go undetected.
+
+Fewer than 300 model trades are too few to read. As for the edge criterion, this takes 2 separate periods with the same settings.
+The result is then one of these, and **the decision stays with the project owner**:
+
+| both periods | what it means | decision to take |
+|---|---|---|
+| The model adds value | It picks better than chance among comparable tokens | Keep it, and keep improving it |
+| A plain rule beats it | The Transformer's cost buys nothing here | Whether to replace it with that rule, after the rule passes the edge criterion and its own paper test |
+| No evidence, or the periods disagree | It can't be told from chance | Whether to keep investing in the model, or spend the effort on rules and data instead |
+
+Limits: it tests one threshold and one exit setting, the matching doesn't cover time of day, the read holds a subset of tokens,
+and 5 comparisons are read at once, so one can pass by chance. Not run on real data yet: a large read could disturb the paper test.
 
 ### Live vs offline scoring (#239)
 
@@ -1637,6 +1679,7 @@ the report under `docs/reports/`.
 | `evaluate.py` | Held-out evaluation (predictive metrics + reference-policy P&L) |
 | `entry_sweep.py` | Entry-rule sweep: precision / win rate / P&L per threshold rule on held-out windows (chooses the bot's entry gates) |
 | `exit_sim.py` | Exit-rule simulation: the bot's TP / SL / timeout, partial sales and trailing stops on real held-out price paths, and the steps from the sweep to the tradable entries |
+| `model_value.py` | Is the model useful: its entries against random, matched and plain-rule entries, under the same exits and costs |
 | `rescore.py` | Live vs offline scoring: re-scores stored predictions on today's `features` and compares inputs and probabilities |
 | `ablation.py` | Per-feature-group lift across windows & seeds |
 | `eligibility.py` | Token eligibility rule (causal, shared with the bot) |
