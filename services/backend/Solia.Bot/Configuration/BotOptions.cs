@@ -112,6 +112,14 @@ public sealed class BotOptions : IValidatableObject
     public double TakeProfitPct { get; set; } = 0.5;
 
     /// <summary>
+    /// When true, every position's take-profit is exactly <see cref="TakeProfitPct"/> instead of
+    /// <c>min(expected_return, TakeProfitPct)</c>. The entry gate doesn't change: <see cref="MinTakeProfitPct"/>
+    /// still applies to the capped expected return. Default false. Needs <see cref="PositionSizing.Fixed"/>, because
+    /// Kelly sizes the bet on the take-profit distance being the capped expected return.
+    /// </summary>
+    public bool FixedTakeProfit { get; set; }
+
+    /// <summary>
     /// Smallest upside worth trading, [0, 10]: a prediction whose capped expected return is below this
     /// has no tradeable edge (see Policy.PositionSizer.Gain) — otherwise a near-zero expected return would
     /// set the take-profit at the entry price and blow up the Kelly fraction. Zero disables the floor.
@@ -336,6 +344,14 @@ public sealed class BotOptions : IValidatableObject
                 $"{nameof(MinTakeProfitPct)} ({MinTakeProfitPct}) exceeds {nameof(TakeProfitPct)} ({TakeProfitPct}); " +
                 "no prediction could ever clear the take-profit floor.",
                 [nameof(MinTakeProfitPct), nameof(TakeProfitPct)]);
+        }
+
+        if (FixedTakeProfit && Sizing != PositionSizing.Fixed)
+        {
+            yield return new ValidationResult(
+                $"{nameof(FixedTakeProfit)} needs {nameof(Sizing)} = {nameof(PositionSizing.Fixed)}: " +
+                "Kelly sizes the bet on a take-profit equal to the capped expected return.",
+                [nameof(FixedTakeProfit), nameof(Sizing)]);
         }
 
         decimal roundTrip = RoundTripFixedCostSol();

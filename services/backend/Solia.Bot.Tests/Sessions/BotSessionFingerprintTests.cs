@@ -44,6 +44,7 @@ public class BotSessionFingerprintTests
         o => o.MinPumpProb = 0.3,
         o => o.MaxRugProb = 0.15,
         o => o.TakeProfitPct = 0.6,
+        o => o.FixedTakeProfit = true,
         o => o.PositionTimeoutSeconds = 600,
         o => o.RealisticFills = false,
         o => o.LiquidityFloorSol["default"] = 2m,

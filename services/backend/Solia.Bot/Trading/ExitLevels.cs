@@ -11,7 +11,9 @@ namespace Solia.Bot.Trading;
 /// <list type="bullet">
 ///   <item><b>Take-profit</b> = <see cref="PositionSizer.Gain"/>: <c>min(expected_return, TakeProfitPct)</c>
 ///   — the return the model expects, capped, and at least <see cref="BotOptions.MinTakeProfitPct"/>.
-///   The same helper sizes the bet, so TP is exactly the gain <c>b</c> the position was sized on.</item>
+///   The same helper sizes the bet, so TP is exactly the gain <c>b</c> the position was sized on.
+///   With <see cref="BotOptions.FixedTakeProfit"/>, TP is <see cref="BotOptions.TakeProfitPct"/> itself, for any
+///   prediction the gate accepted.</item>
 ///   <item><b>Stop-loss</b> = <c>StopLossVolatilityMultiple · volatility</c>, clamped to
 ///   [<see cref="BotOptions.MinStopLossPct"/>, <see cref="BotOptions.StopLossPct"/>] (the cap wins should
 ///   the floor exceed it): a calm token gets a
@@ -47,6 +49,11 @@ public readonly record struct ExitLevels(
         {
             throw new ArgumentException(
                 "The prediction has no tradeable gain; only an accepted entry has exit levels.", nameof(prediction));
+        }
+
+        if (options.FixedTakeProfit)
+        {
+            tp = options.TakeProfitPct;
         }
 
         double sl = options.StopLossPct;

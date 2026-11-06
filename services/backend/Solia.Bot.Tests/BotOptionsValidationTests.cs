@@ -207,6 +207,14 @@ public class BotOptionsValidationTests
     }
 
     [Fact]
+    public void A_fixed_take_profit_is_off_by_default_and_needs_fixed_sizing()
+    {
+        Assert.False(new BotOptions().FixedTakeProfit);
+        Assert.True(IsValid(new BotOptions { FixedTakeProfit = true, TakeProfitPct = 2.0 }));
+        Assert.False(IsValid(new BotOptions { FixedTakeProfit = true, Sizing = PositionSizing.Kelly }));
+    }
+
+    [Fact]
     public void Take_profit_above_100_percent_is_accepted()
     {
         Assert.True(IsValid(new BotOptions { TakeProfitPct = 2.0, StopLossPct = 0.99 }));

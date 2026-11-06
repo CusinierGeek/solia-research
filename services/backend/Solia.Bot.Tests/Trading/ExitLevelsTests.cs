@@ -23,6 +23,32 @@ public class ExitLevelsTests
         Assert.Equal(expectedTp, levels.TakeProfitPct, 12);
     }
 
+    [Theory]
+    [InlineData(0.07)] // below the level
+    [InlineData(5.0)]  // above it
+    public void A_fixed_take_profit_ignores_the_expected_return(double expectedReturn)
+    {
+        BotOptions fixedTp = PolicyFixtures.Options();
+        fixedTp.TakeProfitPct = 2.0;
+        fixedTp.FixedTakeProfit = true;
+
+        ExitLevels levels = Levels(PolicyFixtures.Buyable() with { ExpectedReturn = expectedReturn }, fixedTp);
+
+        Assert.Equal(2.0, levels.TakeProfitPct, 12);
+        Assert.Equal(0.0003m, levels.TakeProfitPrice);
+    }
+
+    [Fact]
+    public void A_fixed_take_profit_keeps_the_entry_floor()
+    {
+        BotOptions fixedTp = PolicyFixtures.Options();
+        fixedTp.TakeProfitPct = 2.0;
+        fixedTp.FixedTakeProfit = true;
+
+        Assert.Throws<ArgumentException>(
+            () => Levels(PolicyFixtures.Buyable() with { ExpectedReturn = 0.0005 }, fixedTp));
+    }
+
     [Fact]
     public void Take_profit_equals_the_gain_the_sizer_bets_on()
     {

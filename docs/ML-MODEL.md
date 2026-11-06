@@ -339,6 +339,7 @@ configurable without retraining. They consume the model's predictions, for examp
   - **`Kelly`:** fractional Kelly on `expected_return` (capped at TP) vs `rug_prob` (loss capped at SL), scaled by confidence, capped.
   - A declined entry of a buy signal is logged with its reason (`entry declined: <reason> for <mint> (pump, rug, confidence, expected return)`);
 - TP/SL from `expected_return` and recent volatility.
+  - `Bot:FixedTakeProfit` (default false; needs `Fixed` sizing): TP is exactly `TakeProfitPct`, whatever the expected return. The entry gate doesn't change. It lets the bot run the fixed take-profits `exit_sim` simulates.
 
 Keeping decisions out of the model lets risk appetite change instantly and keeps the model purely
 predictive. A *learned* policy (e.g. RL) is possible later only if it clearly beats the rules.
