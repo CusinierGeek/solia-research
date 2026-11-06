@@ -583,8 +583,46 @@ tokens older than the window (mostly migrated) are not simulated.
 **Reading it.** 120 cells share the same trades, so some win by chance. Read the `marginals` (each axis' mean over the
 cells) and stable zones, not the best cell, and confirm on another period before changing a bot default.
 
-**Results & decision.** *Pending.* The run needs the database read and the GPU, so it goes after #203. Record here the
-steps, the bot's cell, the zones and any setting chosen, with the report under `docs/reports/`.
+**Results (first period).** Champion `solia-20261102T151927246570Z`, defaults, 2 days ending at the read of 2026-11-06
+02:11 UTC, every held-out snapshot (5 293 293 windows), in 20 min on the GPU. The read reached the 8 M row cap, so it
+holds a subset of the window's tokens. Report: `docs/reports/exit-sim-221.{txt,json}`.
+
+Precision of the 15m label from the sweep to the entries:
+
+| entry rule | `labeled_windows` | `all_windows` | `one_per_mint` | `first_per_mint` | `labeled_share` (`all_windows`) |
+|---|---:|---:|---:|---:|---:|
+| `pump ≥ 0.3` | 39.3 % | 37.1 % | 37.2 % | 38.4 % | 93 % |
+| `pump ≥ 0.4` | 47.6 % | 45.1 % | 39.9 % | 40.1 % | 95 % |
+| `pump ≥ 0.5` | 52.4 % | 50.1 % | 46.1 % | 45.9 % | 96 % |
+
+So the windows the label masks cost 2 to 3 points, and overlapping windows up to 5 more. Neither explains a large gap on
+its own. Compared with the edge criterion, net of every cost:
+
+| entry rule | today's bot exits (TP cap / SL vol3 / 900 s): mean [95 % CI] | trades / tokens | cells with CI lower bound > 0 and ≥ 300 trades |
+|---|---:|---:|---:|
+| `pump ≥ 0.3` | −1.8 % [−3.3, −0.1] | 5 474 / 2 147 | 0 of 120 |
+| `pump ≥ 0.4` | −1.0 % [−4.3, +1.9] | 1 699 / 837 | 0 of 120 |
+| `pump ≥ 0.5` | +5.0 % [−1.2, +11.0] | 359 / 209 | 11 of 120 |
+
+The 11 cells have 301 to 322 trades on the same 209 tokens, and CI lower bounds from +0.0 % to +4.2 %. At `≥ 0.5`, the
+timeout marginal falls from +20.1 % (300 s) to +1.4 % (1800 s). At `≥ 0.3` and `≥ 0.4`, no cell passes at any exit
+setting.
+
+**Decision.** The criterion's first two conditions hold only on these 11 cells of 360, and its third is untested, so this
+is **not an edge**. Bot defaults don't change. One setting is frozen, on 2026-11-06, before any data of the second period
+exists:
+
+> **`pump ≥ 0.5`, TP +200 %, SL volatility × 3, timeout 900 s**: first period +17.2 % [+3.3, +30.7], 308 trades, 209 tokens,
+> win rate 31.5 %, median −13.2 %.
+
+It is chosen over the cell with the highest bound because the same TP and stop also pass at 300 s and 1800 s, and because
+only the threshold and the TP differ from the bot. It relies on a minority of large wins.
+
+**Second period.** The same simulation, same model, on data entirely after the first: run at or after 2026-11-08 02:12 UTC,
+so that the 2-day window starts after the first period's end, and read only the frozen cell. It passes if that cell's CI
+lower bound is above 0 with at least 300 trades. Under 300 trades, the read may widen (`--lookback-days`, `--max-rows`)
+without changing the setting, as long as it stays after the first period. Another cell winning doesn't count. If it fails,
+the criterion's next step applies: the TP-before-SL label.
 
 ### Live vs offline scoring (#239)
 
