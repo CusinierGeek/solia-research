@@ -1472,9 +1472,29 @@ the history while trusting yesterday more than four days ago.
   #202 research setting. `search --window-stride-seconds 240` sets the baseline's stride, and so the held-out windows
   every trial is scored on. Its baseline is 3.5 d without weighting, and no trial runs 5 d without weighting.
 
-**Results & decision.** *Pending.* A paired comparison (`mean − std > margin`, primary pump/5m PR-AUC) on the
-longest window #202 retains needs the GPU. It runs after #202's measurements, with the retrain scheduler and the
-bot off. Record the table and the decision here. `config.yaml` changes only if a half-life clears the margin.
+**Results (2026-11-05, grid stopped before its last trial).** `recency-lookback` grid on the #202 research setting
+(`--prune-columns`, stride 240 s, every token), 2 windows × 2 seeds, same held-out windows for every trial: 11-04 02:44
+→ 11-05 06:38 UTC. The run was stopped on purpose on 11-06 at 01:21 UTC to free the GPU for #221, during 3.5 d / 24 h. So
+that trial has no result, and the run wrote no final report or diff. The 6 finished trials are in
+`docs/reports/recency-lookback-203.trials.jsonl`. Lifts are paired on window and seed, against the baseline:
+
+| period | half-life | objective (mean PR-AUC) | lift | pump/5m PR-AUC | lift | rug/5m PR-AUC | lift |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 3.5 d | off (baseline) | 0.5268 | | 0.3846 | | 0.7398 | |
+| 3.5 d | 48 h | 0.5260 | −0.0008 | 0.3853 | +0.0007 | 0.7372 | −0.0026 |
+| 5 d | 48 h | 0.5246 | −0.0022 | 0.3860 | +0.0014 | 0.7381 | −0.0017 |
+| 5 d | 24 h | 0.5204 | −0.0064 | 0.3801 | −0.0046 | 0.7344 | −0.0054 |
+| 3.5 d | 12 h | 0.5178 | −0.0090 | 0.3746 | −0.0101 | 0.7270 | −0.0128 |
+| 5 d | 12 h | 0.5150 | −0.0118 | 0.3698 | −0.0148 | 0.7254 | −0.0143 |
+
+- **No trial clears the margin** (0.01): the best pump/5m lift is +0.0014, and the signs change from run to run.
+- **12 h looks harmful:** rug/5m falls in all 4 runs of both 12 h trials. On pump, most of the fall comes from the second
+  window.
+- **5 d doesn't help:** at the same half-life it is at best level with 3.5 d, and costs about 10 % more time.
+
+**Decision.** `config.yaml` doesn't change, and recency weighting stays off. The missing 3.5 d / 24 h isn't re-run: the
+trials on either side of it (48 h and 12 h at 3.5 d) don't suggest it would clear the margin. This is indicative only:
+these metrics rank windows and don't measure whether the bot earns (see "Edge criterion").
 
 ### Seed ensemble champion (#204)
 
