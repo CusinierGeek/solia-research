@@ -37,8 +37,9 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import torch
 
-from .evaluate import fmt, json_safe
+from .evaluate import apply_calibration, fmt, json_safe, score_logits
 
 DEFAULT_PUMP_THRESHOLDS = (0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6)
 DEFAULT_RUG_THRESHOLDS: tuple[float | None, ...] = (None, 0.5, 0.3, 0.2, 0.1, 0.05)
@@ -373,6 +374,17 @@ def write_report(report: Mapping[str, Any], path: str | Path) -> tuple[Path, Pat
 # --------------------------------------------------------------------------- CLI
 
 
+def score_windows(predictor: Any, dataset: Any, device: str | torch.device) -> tuple[Any, Any]:
+    """The calibrated predictions and the labels over ``dataset``, with the model on ``device``.
+
+    ``Predictor`` loads on the CPU for serving, and :func:`score_logits` scores wherever the model
+    lives, so a run has to move it first.
+    """
+    predictor.model.to(device)
+    logits, truth = score_logits(predictor.model, dataset)
+    return apply_calibration(logits, predictor.calibration), truth
+
+
 def _floats(text: str) -> list[float]:
     return [float(v) for v in text.split(",") if v.strip()]
 
@@ -407,6 +419,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--ci", type=float, default=DEFAULT_CI)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--all-rules", action="store_true", help="print rules under min_trades")
+    parser.add_argument("--device", help="torch device (default: cuda if available, else cpu)")
     args = parser.parse_args(argv)
 
     settings = {
@@ -434,9 +447,10 @@ def main(argv: list[str] | None = None) -> None:
 
     from .config import load_config
     from .db import DataSettings, make_engine, read_training_features
-    from .evaluate import apply_calibration, holdout_dataset, score_logits
+    from .evaluate import holdout_dataset
     from .inference import Predictor
 
+    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     engine = make_engine()
     if args.champion:
         try:
@@ -454,8 +468,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     df, _ = read_training_features(engine, data_settings)
     dataset = holdout_dataset(df, config, predictor)
-    logits, truth = score_logits(predictor.model, dataset)
-    predictions = apply_calibration(logits, predictor.calibration)
+    print(f"scoring {len(dataset)} windows on {device}")
+    predictions, truth = score_windows(predictor, dataset, device)
     by_horizon = sweep(predictions, truth, list(predictor.horizons), **settings)
     report = build_report(predictor.model_version, len(dataset), by_horizon, settings)
     print(render(report, all_rules=args.all_rules))

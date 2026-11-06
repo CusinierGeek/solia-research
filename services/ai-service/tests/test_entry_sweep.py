@@ -7,13 +7,16 @@ import json
 
 import numpy as np
 import pytest
+import torch
 
+from solia_ai import entry_sweep
 from solia_ai.entry_sweep import (
     bootstrap_mean_ci,
     build_report,
     main,
     recommend,
     render,
+    score_windows,
     selection_metrics,
     sweep,
     sweep_horizon,
@@ -265,3 +268,25 @@ def test_mismatched_arrays_are_rejected():
 def test_cli_rejects_a_bad_grid_before_touching_the_database():
     with pytest.raises(SystemExit, match="pump threshold"):
         main(["--champion", "--pump-thresholds", "0.2,2"])
+
+
+def test_scoring_moves_the_model_to_the_requested_device(monkeypatch):
+    # The "meta" device stands in for the GPU, so this also runs on a machine without one.
+    class FakePredictor:
+        model = torch.nn.Linear(1, 1)
+        calibration = 1.0
+
+    seen = []
+
+    def fake_score(model, dataset):
+        seen.append(next(model.parameters()).device.type)
+        return {"pump_logits": dataset}, {"mask": dataset}
+
+    monkeypatch.setattr(entry_sweep, "score_logits", fake_score)
+    monkeypatch.setattr(entry_sweep, "apply_calibration", lambda logits, calibration: logits)
+
+    predictions, truth = score_windows(FakePredictor(), "windows", "meta")
+
+    assert seen == ["meta"]
+    assert predictions == {"pump_logits": "windows"}
+    assert truth == {"mask": "windows"}
