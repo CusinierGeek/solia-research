@@ -540,6 +540,7 @@ settings keep the rule's edge. Read-only: nothing is written but the report.
 ```bash
 python -m solia_ai.exit_sim --champion --out /app/models/reports/exit-sim.json   # + .txt table
 #   --horizon 15m  --pump-thresholds 0.3,0.4,0.5  --lookback-days / --max-rows like the sweep
+#   --until 2026-11-04T02:11:00Z (end of the read, default: the newest row)
 #   --window-stride-seconds 0 (default: a decision per snapshot, as the bot decides; 60 = the sweep's windows)
 #   --ideal (fill at the mark, at once, for free)  --min-trades 30  --bootstrap-samples 1000
 ```
@@ -618,11 +619,37 @@ exists:
 It is chosen over the cell with the highest bound because the same TP and stop also pass at 300 s and 1800 s, and because
 only the threshold and the TP differ from the bot. It relies on a minority of large wins.
 
-**Second period.** The same simulation, same model, on data entirely after the first: run at or after 2026-11-08 02:12 UTC,
-so that the 2-day window starts after the first period's end, and read only the frozen cell. It passes if that cell's CI
-lower bound is above 0 with at least 300 trades. Under 300 trades, the read may widen (`--lookback-days`, `--max-rows`)
-without changing the setting, as long as it stays after the first period. Another cell winning doesn't count. If it fails,
-the criterion's next step applies: the TP-before-SL label.
+**Second period.** The same simulation, same model and same settings, on the other 2 days the champion never saw:
+`--until 2026-11-04T02:11:00Z`, so 11-02 02:11 → 11-04 02:11 UTC. The champion's data ends on 11-02 at 01:02 UTC. The read
+keeps whole tokens, so a token with a row before a window is dropped from it, and the two periods share no token. The
+second period is earlier than the first: the setting hadn't seen it when it was frozen, but it says less about the future
+than new data would. The multi-day paper bot test covers that. Only the frozen cell is judged: it passes if its CI lower
+bound is above 0 with at least 300 trades. Under 300 trades, the read may widen (`--max-rows`) without changing the
+setting. Another cell winning doesn't count. If it fails, the criterion's next step applies: the TP-before-SL label.
+
+**Verdict (2026-11-06): the frozen setting meets the edge criterion on these two periods.** Report:
+`docs/reports/exit-sim-221-p2.{txt,json}`, 5 082 706 windows, read capped at 8 M rows (68 430 of 151 965 tokens).
+
+| period | frozen setting: mean net return [95 % CI] | trades / tokens | win rate | median | today's bot exits at `pump ≥ 0.5` |
+|---|---:|---:|---:|---:|---:|
+| 11-04 → 11-06 (first) | +17.2 % [+3.3, +30.7] | 308 / 209 | 31.5 % | −13.2 % | +5.0 % [−1.2, +11.0] |
+| 11-02 → 11-04 (second) | +18.1 % [+7.4, +29.9] | 490 / 332 | 32.4 % | −16.7 % | +3.2 % [−1.5, +7.2] |
+
+Next step, as the criterion states: the same setting for several days on the paper bot, champion frozen. Bot defaults stay
+as they are until then. What this result doesn't settle:
+
+- **Live gap:** this is a simulation on stored rows. Live entries at `≥ 0.4` touched +100 % 23 % of the time on 39 trades,
+  against 39 to 40 % here at one position per mint, and #239 doesn't explain it. Only the bot test can.
+- **The bot can't run this setting yet.** Its take-profit is `min(expected_return, TakeProfitPct)`, while the simulated
+  cell is a fixed +200 %.
+- **Not modelled:** `MaxConcurrentPositions`, a compounding balance, a silent feed, MEV.
+- **Sample:** each read holds a subset of the tokens, and trades outnumber tokens because a mint can be re-entered after an
+  exit. Don't scale the mean or the P&L up to a real return.
+- **Order:** the second period is earlier than the first, and neither follows the bot's real time.
+- **Other cells:** today's exits still fail on both periods. At `≥ 0.3` they lose significantly on the second (−3.0 %
+  [−4.6, −1.4]).
+
+Passing doesn't lift the paper-only rule.
 
 ### Live vs offline scoring (#239)
 

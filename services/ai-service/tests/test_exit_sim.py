@@ -681,6 +681,8 @@ def test_paths_need_their_columns():
         ["--champion", "--min-trades", "0"],
         ["--champion", "--ci", "2"],
         ["--champion", "--window-stride-seconds", "-1"],
+        ["--champion", "--until", "yesterday"],
+        ["--champion", "--until", "2026-11-04T02:11:00"],
     ],
 )
 def test_cli_rejects_bad_settings_before_reading_anything(args):
@@ -708,3 +710,28 @@ def test_scoring_moves_the_model_to_the_requested_device(monkeypatch):
     assert seen == ["meta"]
     assert predictions == {"pump_logits": "windows"}
     assert truth == {"mask": "windows"}
+
+
+def test_until_ends_the_read_there(monkeypatch):
+    class Stop(Exception):
+        pass
+
+    class FakePredictor:
+        horizons = ("15m",)
+
+    seen = {}
+
+    def fake_read(engine, settings, *, end=None):
+        seen["end"] = end
+        raise Stop
+
+    monkeypatch.setattr("solia_ai.db.make_engine", lambda: None)
+    monkeypatch.setattr("solia_ai.db.read_training_features", fake_read)
+    monkeypatch.setattr(
+        "solia_ai.inference.Predictor.from_checkpoint", lambda path: FakePredictor()
+    )
+
+    with pytest.raises(Stop):
+        main(["--checkpoint", "model.pt", "--until", "2026-11-03T21:11:00-05:00"])
+
+    assert seen["end"] == pd.Timestamp("2026-11-04T02:11:00Z")

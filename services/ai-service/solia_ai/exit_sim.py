@@ -871,6 +871,17 @@ def score_windows(predictor: Any, dataset: Any, device: str | torch.device) -> t
     return apply_calibration(logits, predictor.calibration), truth
 
 
+def _utc(text: str) -> datetime:
+    """An ISO-8601 time with its offset, as UTC: a naive time would depend on the machine."""
+    try:
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"not an ISO-8601 time: {text!r}") from exc
+    if moment.tzinfo is None:
+        raise argparse.ArgumentTypeError(f"give a UTC offset: {text!r}")
+    return moment.astimezone(UTC)
+
+
 def _floats(text: str) -> list[float]:
     return [float(v) for v in text.split(",") if v.strip()]
 
@@ -887,6 +898,11 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--pump-thresholds", type=_floats, default=list(DEFAULT_PUMP_THRESHOLDS))
     parser.add_argument("--lookback-days", type=float, help="override data.lookback_days")
     parser.add_argument("--max-rows", type=int, help="override data.max_rows")
+    parser.add_argument(
+        "--until",
+        type=_utc,
+        help="end of the read, ISO-8601 with an offset (default: the newest row)",
+    )
     parser.add_argument(
         "--window-stride-seconds",
         type=float,
@@ -938,8 +954,9 @@ def main(argv: list[str] | None = None) -> None:
         config, lookback_days=args.lookback_days, max_rows=args.max_rows
     )
     print("reading features")
-    df, _ = read_training_features(engine, settings_read)
-    print(f"read {len(df)} rows, building the held-out windows")
+    df, bounds = read_training_features(engine, settings_read, end=args.until)
+    print(bounds.describe())
+    print("building the held-out windows")
     dataset = holdout_dataset(df, config, predictor)
     print(f"scoring {len(dataset)} windows on {device}")
     predictions, truth = score_windows(predictor, dataset, device)
@@ -960,6 +977,7 @@ def main(argv: list[str] | None = None) -> None:
     settings = {
         "pump_thresholds": args.pump_thresholds,
         "window_stride_seconds": args.window_stride_seconds,
+        "read": bounds.as_dict(),
         "min_trades": args.min_trades,
         "bootstrap_samples": args.bootstrap_samples,
         "ci": args.ci,
