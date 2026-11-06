@@ -21,6 +21,8 @@ from solia_ai.exit_sim import (
     FAILED,
     FILLED,
     IDEAL,
+    REFERENCE_RULE,
+    STAKE,
     Execution,
     ExitRule,
     Paths,
@@ -31,6 +33,7 @@ from solia_ai.exit_sim import (
     first_per_mint,
     main,
     one_per_mint,
+    paired_difference,
     render,
     score_windows,
     simulate_position,
@@ -39,6 +42,7 @@ from solia_ai.exit_sim import (
     stop_loss_level,
     take_profit_level,
     uncensored,
+    variant_grid,
     window_outcomes,
     write_report,
 )
@@ -540,7 +544,7 @@ def test_cell_reports_what_the_issue_asks_for():
     assert cell["win_rate"] == pytest.approx(0.5)
     assert cell["mean_return"] == pytest.approx((0.6 - 0.5) / 2)
     assert cell["median_return"] == pytest.approx((0.6 - 0.5) / 2)
-    assert cell["exit_share"] == {"tp": 0.5, "sl": 0.5, "timeout": 0.0}
+    assert cell["exit_share"] == {"tp": 0.5, "sl": 0.5, "timeout": 0.0, "trail": 0.0}
     assert cell["median_hold_s"] == pytest.approx(10.0)
     assert None not in cell["mean_return_ci"]
     assert report["rules"][0]["cells"][0]["is_bot_default"] is True
@@ -630,6 +634,256 @@ def test_read_only_mirror_of_bot_options_defaults():
     assert table("VirtualSol") == sim.VIRTUAL_SOL
 
 
+# --------------------------------------------------------------------------- partial sales
+
+
+def partial_rule(**kwargs):
+    defaults = {"take_profit": 3.0, "stop_loss": 0.2, "timeout_s": 300, "partial_at": 2.0}
+    return ExitRule(**{**defaults, **kwargs})
+
+
+NO_COSTS = Execution(
+    entry_latency_s=0.0,
+    exit_latency_s=0.0,
+    network_fee=0.0,
+    account_rent=0.0,
+    max_slippage=0.0,
+)
+
+
+def test_partial_sale_recovers_the_stake_and_the_rest_reaches_its_target():
+    out = run([1.0, 3.0, 3.5, 4.0, 1.0], partial_rule())
+    # A third sold at x3 pays the stake back, two thirds sold at x4.
+    assert out.reason == "tp" and out.partial is True
+    assert out.net_return == pytest.approx((2.0 / 3.0) * 4.0)
+    assert out.hold_s == pytest.approx(30.0)
+
+
+def test_partial_sale_of_a_fixed_share():
+    out = run([1.0, 2.0, 4.0], partial_rule(partial_at=1.0, partial_share=0.5))
+    assert out.net_return == pytest.approx(0.5 * 2.0 + 0.5 * 4.0 - 1.0)
+
+
+def test_rest_keeps_the_stop_by_default():
+    out = run([1.0, 3.0, 0.5, 9.0], partial_rule())
+    assert out.reason == "sl"
+    assert out.net_return == pytest.approx((2.0 / 3.0) * 0.5)
+
+
+def test_rest_stop_can_move_to_the_fill_mark():
+    out = run([1.0, 3.0, 2.0, 1.0, 9.0], partial_rule(rest_stop="entry"))
+    assert out.reason == "sl"
+    assert out.net_return == pytest.approx(2.0 / 3.0)
+
+
+def test_rest_without_a_stop_rides_a_drop_and_times_out():
+    prices = [1.0, 3.0, 0.2] + [0.5] * 40
+    out = run(prices, partial_rule(rest_stop="none"))
+    assert out.reason == "timeout" and out.partial is True
+    assert out.net_return == pytest.approx((2.0 / 3.0) * 0.5)
+
+
+def test_rest_gets_its_own_deadline():
+    prices = [1.0, 3.0] + [3.0] * 30 + [4.0, 1.0]  # the target comes after the first deadline
+    assert run(prices, partial_rule()).reason == "timeout"
+    out = run(prices, partial_rule(rest_timeout_s=600))
+    assert out.reason == "tp" and out.hold_s == pytest.approx(320.0)
+
+
+def test_rest_sold_into_a_drained_pool_gets_nothing():
+    liquidity = [100.0, 100.0, 0.0, 0.0]
+    rule = partial_rule(rest_stop="none", timeout_s=25)
+    out = run([1.0, 3.0, 3.1, 3.1], rule, execution=NO_COSTS, liquidity=liquidity)
+    # The stake came back at the partial sale and the rest is lost: about break-even.
+    assert out.partial is True
+    assert out.net_return == pytest.approx(0.0, abs=1e-9)
+
+
+def test_a_price_on_an_empty_pool_triggers_the_sale_but_pays_nothing():
+    # Trades 791 and 795: the entry latency fills on row 1, then x3 shows up on an empty pool.
+    liquidity = [100.0, 100.0, 0.0, 0.0, 0.0]
+    out = run([1.0, 1.0, 3.0, 3.0, 3.0], partial_rule(), execution=Execution(), liquidity=liquidity)
+    assert out.status == FILLED and out.reason == "tp" and out.partial is False
+    assert out.net_return == pytest.approx(-1.0, abs=0.01)
+
+
+def test_a_partial_trigger_doesnt_also_take_the_target_on_the_same_tick():
+    out = run([1.0, 5.0, 5.0], partial_rule())
+    assert out.partial is True and out.hold_s == pytest.approx(20.0)
+    assert out.net_return == pytest.approx(1.0 + (1.0 - 1.0 / 5.0) * 5.0 - 1.0)
+
+
+def test_each_sale_goes_through_latency_and_pays_its_network_fee():
+    execution = Execution(
+        realistic_fills=False,
+        entry_latency_s=0.0,
+        exit_latency_s=5.0,
+        network_fee=0.01,
+        account_rent=0.0,
+        max_slippage=0.0,
+    )
+    out = run([1.0, 3.0, 3.3, 4.0, 4.4, 1.0], partial_rule(), execution=execution)
+    # Stake share chosen at the x3 trigger, filled at the next mark; same for the target.
+    # The entry costs one fee, each of the two sales one.
+    sold = 1.0 / 3.0
+    expected = sold * 3.3 + (1.0 - sold) * 4.4 - 1.0 - 3 * 0.01
+    assert out.pnl_sol == pytest.approx(expected)
+
+
+def test_realistic_stake_share_pays_the_size_back_through_the_pools_impact():
+    paths = paths_of(
+        frame([1.0, 3.0, 3.0, 3.0], liquidity=[100.0, 100.0, 0.0, 0.0]), execution=NO_COSTS
+    )
+    rule = partial_rule(take_profit=None, rest_stop="none", timeout_s=25)
+    out = simulate_position(paths, 0, 4, 1.0, rule, NO_COSTS)
+    # The rest is lost in the empty pool, so the result is exactly what the partial sale paid.
+    assert out.partial is True
+    assert out.net_return == pytest.approx(0.0, abs=1e-9)
+
+
+def test_a_pool_too_small_to_pay_the_stake_sells_everything_as_a_take_profit():
+    execution = Execution(
+        entry_latency_s=0.0,
+        exit_latency_s=0.0,
+        network_fee=0.0,
+        account_rent=0.0,
+        max_slippage=0.0,
+        min_position_size=0.0,
+        max_pool_fraction=10.0,
+    )
+    out = run([1.0, 3.0, 9.0], partial_rule(), execution=execution, liquidity=0.5)
+    assert out.reason == "tp" and out.partial is False
+
+
+# --------------------------------------------------------------------------- trailing stop
+
+
+def trail_rule(**kwargs):
+    defaults = {"take_profit": None, "stop_loss": None, "timeout_s": 300, "trail": 0.25}
+    return ExitRule(**{**defaults, **kwargs})
+
+
+def test_trailing_stop_follows_the_highest_mark():
+    out = run([1.0, 2.0, 4.0, 3.5, 3.0, 9.0], trail_rule())
+    assert out.reason == "trail" and out.net_return == pytest.approx(2.0)
+
+
+def test_trailing_stop_from_the_fill_is_active_at_once():
+    out = run([1.0, 0.7, 9.0], trail_rule())
+    assert out.reason == "trail" and out.net_return == pytest.approx(-0.3)
+
+
+def test_armed_trailing_stop_waits_for_its_gain():
+    out = run([1.0, 0.5, 1.5, 1.0, 2.0, 1.4, 9.0], trail_rule(trail_after=1.0))
+    assert out.reason == "trail" and out.net_return == pytest.approx(0.4)
+
+
+def test_a_mark_making_a_new_high_never_fires_the_trail():
+    out = run([1.0, 2.0, 4.0, 8.0], trail_rule(timeout_s=30))
+    # The mark at the deadline is swept, so the position closes at the last one before it.
+    assert out.reason == "timeout" and out.net_return == pytest.approx(3.0)
+
+
+def test_the_stop_still_wins_when_both_fire():
+    out = run([1.0, 2.0, 0.5], trail_rule(stop_loss=0.2))
+    assert out.reason == "sl"
+
+
+def test_trailing_stop_applies_to_the_rest_after_a_partial_sale():
+    rule = ExitRule(
+        take_profit=None, stop_loss=None, timeout_s=300, partial_at=2.0, trail=0.25, trail_after=1.0
+    )
+    out = run([1.0, 3.0, 4.0, 3.0, 9.0], rule)
+    assert out.reason == "trail" and out.partial is True
+    assert out.net_return == pytest.approx((2.0 / 3.0) * 3.0)
+
+
+def test_a_default_rule_never_reports_a_partial():
+    assert run([1.0, 1.8, 1.0], FIXED).partial is False
+
+
+# --------------------------------------------------------------------------- the variants
+
+
+def test_variant_grid_is_short_and_starts_from_the_frozen_setting():
+    grid = variant_grid()
+    assert grid[0] == REFERENCE_RULE
+    assert REFERENCE_RULE == ExitRule(take_profit=2.0, stop_loss="vol3", timeout_s=900)
+    assert len(grid) == len(set(grid)) <= 15
+    assert any(r.partial_at == 2.0 and r.partial_share == STAKE for r in grid)
+    assert any(r.trail is not None for r in grid)
+
+
+def _filled(net):
+    return exit_sim.Outcome(FILLED, 0.0, "tp", net)
+
+
+def test_paired_difference_compares_tokens_in_common():
+    a = [("A", _filled(1.0)), ("B", _filled(0.0))]
+    b = [("A", _filled(0.5)), ("C", _filled(9.0))]
+    out = paired_difference(a, b, samples=10, ci=0.95, rng=np.random.default_rng(0))
+    assert out["n_tokens"] == 1 and out["mean_diff"] == pytest.approx(0.5)
+    assert out["mean_diff_ci"] == [None, None]  # one token can't give a CI
+
+
+def test_paired_difference_averages_each_token_first():
+    a = [("A", _filled(2.0)), ("A", _filled(0.0)), ("B", _filled(1.0))]
+    b = [("A", _filled(0.0)), ("B", _filled(0.0))]
+    out = paired_difference(a, b, samples=50, ci=0.95, rng=np.random.default_rng(0))
+    assert out["mean_diff"] == pytest.approx(1.0)
+    assert None not in out["mean_diff_ci"]
+
+
+def test_paired_difference_without_common_tokens():
+    a = [("A", exit_sim.Outcome(FAILED, 0.0))]
+    out = paired_difference(a, [], samples=10, ci=0.95, rng=np.random.default_rng(0))
+    assert out == {"n_tokens": 0, "mean_diff": None, "mean_diff_ci": [None, None]}
+
+
+def test_report_with_a_reference_shows_each_cells_difference():
+    prices = [1.0, 3.0, 4.0] + [1.0] * 400
+    paths = paths_of(frame(prices, mint="A"), frame(prices, mint="B"))
+    windows = windows_of(paths, [("A", paths.spans["A"][0]), ("B", paths.spans["B"][0])])
+    variant = partial_rule(timeout_s=900)
+    rules = simulate_rules(
+        paths,
+        windows,
+        pump_thresholds=[0.4],
+        horizon_s=900,
+        pump_threshold=1.0,
+        grid=[REFERENCE_RULE, variant],
+        execution=IDEAL,
+        reference=REFERENCE_RULE,
+        min_trades=1,
+        bootstrap_samples=20,
+    )
+    base, cell = rules[0]["cells"]
+    assert base["vs_reference"]["mean_diff"] == pytest.approx(0.0)
+    assert cell["vs_reference"]["mean_diff"] > 0
+    assert cell["partial_fill_share"] == pytest.approx(1.0)
+    settings = {"min_trades": 1, "ci": 0.95, "execution": {"realistic_fills": False}}
+    table = render(build_report("m", 2, "15m", rules, settings))
+    assert "vs ref" in table and "rest SL keep" in table
+
+
+def test_rest_timeout_widens_the_censoring_margin():
+    paths = paths_of(frame([1.0] * 100))  # 990 s of data
+    windows = windows_of(paths, [("A", 0)])
+    rule = partial_rule(take_profit=3.0, rest_timeout_s=3600, timeout_s=900)
+    out = simulate_rules(
+        paths,
+        windows,
+        pump_thresholds=[0.4],
+        horizon_s=900,
+        pump_threshold=1.0,
+        grid=[rule],
+        execution=IDEAL,
+        min_trades=1,
+        bootstrap_samples=5,
+    )
+    assert out[0]["n_censored"] == 1
+
+
 # --------------------------------------------------------------------------- bad settings
 
 
@@ -662,6 +916,20 @@ def test_simulate_rules_rejects_bad_settings(kwargs):
         {"stop_loss": "volx"},
         {"stop_loss": "vol0"},
         {"timeout_s": 0},
+        {"partial_at": 0, "take_profit": 1.0},
+        {"partial_at": 1.0, "take_profit": 1.0},
+        {"partial_at": 1.0, "take_profit": "cap"},
+        {"partial_at": 1.0, "take_profit": 2.0, "partial_share": 1.0},
+        {"partial_at": 1.0, "take_profit": 2.0, "partial_share": "half"},
+        {"partial_at": 1.0, "take_profit": 2.0, "rest_stop": "up"},
+        {"partial_at": 1.0, "take_profit": 2.0, "timeout_s": 900, "rest_timeout_s": 60},
+        {"partial_share": 0.5},
+        {"rest_stop": "none"},
+        {"rest_timeout_s": 3600},
+        {"trail": 0},
+        {"trail": 1.0},
+        {"trail": 0.3, "trail_after": 0},
+        {"trail_after": 1.0},
     ],
 )
 def test_exit_rule_rejects_bad_levels(kwargs):
@@ -683,6 +951,7 @@ def test_paths_need_their_columns():
         ["--champion", "--window-stride-seconds", "-1"],
         ["--champion", "--until", "yesterday"],
         ["--champion", "--until", "2026-11-04T02:11:00"],
+        ["--champion", "--grid", "best"],
     ],
 )
 def test_cli_rejects_bad_settings_before_reading_anything(args):

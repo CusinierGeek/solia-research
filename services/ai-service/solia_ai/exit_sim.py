@@ -19,6 +19,9 @@ the ~10 s ``features`` rows, so a fill waits for the next row. Not modelled: the
 current rule has no rug gate), ``MaxConcurrentPositions``, a compounding balance (the position size
 is the starting balance's fixed fraction), a silent feed (it is assumed live, so a stale mark fills
 at the last mark), MEV.
+
+**Partial sales and trailing stops** (:class:`ExitRule`) are research options: the bot has neither.
+Each sale goes through the same latency, impact, slippage retries and fees as an exit.
 """
 
 from __future__ import annotations
@@ -80,7 +83,10 @@ DEFAULT_CI = 0.95
 DEFAULT_MAX_RETURN = 10.0  # the labels' cap (labeling.max_return), for the hold-to-horizon return
 
 FILLED, FAILED, ABANDONED, DECLINED = "filled", "failed", "abandoned", "declined"
-REASONS = ("tp", "sl", "timeout")
+REASONS = ("tp", "sl", "timeout", "trail")
+_PARTIAL = "partial"  # an internal trigger: the position stays open, so it is never an exit reason
+STAKE = "stake"  # a partial sale of whatever recovers the position's size
+REST_STOPS = ("keep", "entry", "none")
 
 
 # --------------------------------------------------------------------------- settings
@@ -124,11 +130,26 @@ class ExitRule:
     TakeProfitPct)``; a number is a fixed level; ``None`` means no take-profit.
     ``stop_loss``: a number is a fixed level; ``"volN"`` is the bot's volatility stop with multiple
     N; ``None`` means no stop-loss.
+
+    ``partial_at``: at this gain from the fill mark, sell ``partial_share`` of the position, once:
+    a fraction of it, or :data:`STAKE` for what recovers its size at that mark (everything if the
+    pool can't pay that, which closes the position as a take-profit). The rest then follows
+    ``take_profit``, ``rest_stop`` (``"keep"`` the stop, ``"entry"`` move it to the fill mark,
+    ``"none"`` drop it) and ``rest_timeout_s`` from the fill (default: ``timeout_s``).
+
+    ``trail``: a stop at this distance under the highest mark since the fill, from the fill or, with
+    ``trail_after``, once a mark reached that gain. It applies to whatever is still held.
     """
 
     take_profit: float | str | None = "cap"
     stop_loss: float | str | None = f"vol{STOP_LOSS_VOLATILITY_MULTIPLE:g}"
     timeout_s: float = POSITION_TIMEOUT_SECONDS
+    partial_at: float | None = None
+    partial_share: float | str = STAKE
+    rest_stop: str = "keep"
+    rest_timeout_s: float | None = None
+    trail: float | None = None
+    trail_after: float | None = None
 
     def __post_init__(self) -> None:
         tp, sl = self.take_profit, self.stop_loss
@@ -138,12 +159,55 @@ class ExitRule:
             raise ValueError(f"stop_loss must be 'volN', None or in (0, 1), got {sl!r}")
         if not (_is_number(self.timeout_s) and self.timeout_s > 0):
             raise ValueError(f"timeout_s must be > 0, got {self.timeout_s!r}")
+        self._check_partial()
+        self._check_trail()
+
+    def _check_partial(self) -> None:
+        at, share, rest = self.partial_at, self.partial_share, self.rest_timeout_s
+        if at is None:
+            if share != STAKE or self.rest_stop != "keep" or rest is not None:
+                raise ValueError("partial_share, rest_stop and rest_timeout_s need partial_at")
+            return
+        if not (_is_number(at) and at > 0):
+            raise ValueError(f"partial_at must be > 0, got {at!r}")
+        if not (share == STAKE or (_is_number(share) and 0 < share < 1)):
+            raise ValueError(f"partial_share must be {STAKE!r} or in (0, 1), got {share!r}")
+        if self.rest_stop not in REST_STOPS:
+            raise ValueError(f"rest_stop must be one of {REST_STOPS}, got {self.rest_stop!r}")
+        if not (self.take_profit is None or _is_number(self.take_profit)):
+            raise ValueError("a partial sale needs a fixed take_profit or none")
+        if self.take_profit is not None and self.take_profit <= at:
+            raise ValueError("take_profit must be above partial_at")
+        if rest is not None and not (_is_number(rest) and rest >= self.timeout_s):
+            raise ValueError(f"rest_timeout_s must be >= timeout_s, got {rest!r}")
+
+    def _check_trail(self) -> None:
+        if self.trail is None:
+            if self.trail_after is not None:
+                raise ValueError("trail_after needs trail")
+            return
+        if not (_is_number(self.trail) and 0 < self.trail < 1):
+            raise ValueError(f"trail must be in (0, 1), got {self.trail!r}")
+        if self.trail_after is not None and not (
+            _is_number(self.trail_after) and self.trail_after > 0
+        ):
+            raise ValueError(f"trail_after must be > 0, got {self.trail_after!r}")
 
     @property
     def label(self) -> str:
         tp = "TP none" if self.take_profit is None else f"TP {self.take_profit}"
         sl = "SL none" if self.stop_loss is None else f"SL {self.stop_loss}"
-        return f"{tp} / {sl} / {self.timeout_s:g}s"
+        parts = [tp, sl, f"{self.timeout_s:g}s"]
+        if self.partial_at is not None:
+            share = self.partial_share if self.partial_share == STAKE else f"{self.partial_share:g}"
+            rest = f"rest SL {self.rest_stop}"
+            if self.rest_timeout_s is not None:
+                rest += f" {self.rest_timeout_s:g}s"
+            parts.append(f"sell {share} at +{self.partial_at:g}, {rest}")
+        if self.trail is not None:
+            after = "" if self.trail_after is None else f" after +{self.trail_after:g}"
+            parts.append(f"trail {self.trail:g}{after}")
+        return " / ".join(parts)
 
     def levels(self, expected_return: float, volatility: float) -> tuple[float, float]:
         """``(take-profit, stop-loss)`` distances; ``inf`` / ``1`` mean the level never fires."""
@@ -203,6 +267,46 @@ def default_grid() -> list[ExitRule]:
 
 
 BOT_RULE = ExitRule()
+
+# Today's frozen paper-test setting (docs/ML-MODEL.md, "Exit-rule simulation").
+REFERENCE_RULE = ExitRule(take_profit=2.0, stop_loss="vol3", timeout_s=900)
+
+
+def variant_grid() -> list[ExitRule]:
+    """Partial sales and trailing stops against :data:`REFERENCE_RULE`. A short list fixed before
+    any full run: the more cells, the more one of them wins by chance."""
+
+    def partial(at: float, share: float | str, target: float | None, rest: str, t: float | None):
+        return ExitRule(
+            take_profit=target,
+            stop_loss="vol3",
+            timeout_s=900,
+            partial_at=at,
+            partial_share=share,
+            rest_stop=rest,
+            rest_timeout_s=t,
+        )
+
+    def trailing(target: float | None, distance: float, after: float | None):
+        return ExitRule(
+            take_profit=target, stop_loss="vol3", timeout_s=900, trail=distance, trail_after=after
+        )
+
+    return [
+        REFERENCE_RULE,
+        ExitRule(take_profit=3.0, stop_loss="vol3", timeout_s=900),
+        partial(2.0, STAKE, 3.0, "none", None),
+        partial(2.0, STAKE, 3.0, "none", 3600),
+        partial(2.0, STAKE, 3.0, "entry", None),
+        partial(2.0, STAKE, 3.0, "entry", 3600),
+        partial(2.0, STAKE, 5.0, "none", None),
+        partial(1.0, 0.5, 3.0, "none", None),
+        partial(1.0, 0.5, 3.0, "entry", None),
+        trailing(None, 0.3, 1.0),
+        trailing(None, 0.5, 1.0),
+        trailing(None, 0.3, 2.0),
+        trailing(3.0, 0.3, 1.0),
+    ]
 
 
 # --------------------------------------------------------------------------- price paths
@@ -280,6 +384,7 @@ class Outcome(NamedTuple):
     net_return: float = 0.0  # pnl / size, costs included
     pnl_sol: float = 0.0
     hold_s: float = 0.0
+    partial: bool = False  # a partial sale filled before the close
 
 
 def _buy_price(mark: float, reserve: float, fee: float, size: float) -> float:
@@ -300,6 +405,74 @@ def _sell_price(
     if not (reserve > 0):  # a NaN (unknown) reserve too: an empty or unknown pool pays nothing
         return 0.0
     return mark * reserve * (1.0 - fee) / (reserve + size * mark / entry_price)
+
+
+def _stake_size(
+    mark: float, reserve: float, fee: float, size: float, entry_price: float, realistic: bool
+) -> float:
+    """The part of a position of ``size`` whose sale at ``mark`` pays ``size`` back, in the same
+    unit: at the mark, or through the pool's impact. ``size`` when the pool can't pay that."""
+    gain = mark / entry_price
+    if not realistic:
+        return min(size / gain, size)
+    room = reserve * (1.0 - fee) - size
+    if not (reserve > 0 and room > 0):
+        return size
+    return min(size * reserve / room / gain, size)
+
+
+class _Sale(NamedTuple):
+    closed: float
+    price: float  # per token
+    attempts: int
+    next_row: int  # where the walk resumes
+
+
+def _fill_sale(
+    paths: Paths,
+    stop: int,
+    k: int,
+    trigger_at: float,
+    trigger_row: int,
+    sold: float,
+    entry_price: float,
+    execution: Execution,
+) -> _Sale:
+    """One sell order: at once, or at the first mark after the latency, with the slippage retries;
+    with no mark in time, the stale-mark rule (the feed is assumed live), the last mark."""
+    ts, price, reserve, fee = paths.ts, paths.price, paths.reserve, paths.fee
+
+    def sell(i: int) -> float:
+        return _sell_price(
+            float(price[i]),
+            float(reserve[i]),
+            float(fee[i]),
+            sold,
+            entry_price,
+            execution.realistic_fills,
+        )
+
+    quote = sell(trigger_row)
+    if execution.exit_latency_s <= 0:
+        return _Sale(trigger_at, quote, 1, k)
+    due, failures = trigger_at + execution.exit_latency_s, 0
+    while True:
+        at = int(np.searchsorted(ts[k:stop], due, side="left")) + k
+        if at >= stop or ts[at] > due + execution.max_mark_age_s:
+            return _Sale(due + execution.max_mark_age_s, sell(at - 1), failures + 1, at)
+        filled = sell(at)
+        closed = float(ts[at])
+        breached = (
+            execution.max_slippage > 0
+            and failures < execution.max_exit_retries
+            and filled < quote * (1.0 - execution.max_slippage)
+        )
+        if not breached:
+            return _Sale(closed, filled, failures + 1, at + 1)
+        quote = filled
+        due = closed + execution.exit_latency_s
+        failures += 1
+        k = at + 1
 
 
 def simulate_position(
@@ -349,57 +522,75 @@ def simulate_position(
     tp, sl = rule.levels(expected_return, float(paths.volatility[row]))
     tp_price, sl_price = mark * (1.0 + tp), mark * (1.0 - sl)
     deadline = opened + rule.timeout_s
+    partial_price = math.inf if rule.partial_at is None else mark * (1.0 + rule.partial_at)
+    trail_keep = None if rule.trail is None else 1.0 - rule.trail
+    armed_at = mark if rule.trail_after is None else mark * (1.0 + rule.trail_after)
 
-    # Triggers: the deadline is swept before a mark at or after it; then SL, then TP.
+    held, proceeds, attempts, peak, partial_filled = size, 0.0, 0, mark, False
     k = fill + 1
-    reason, trigger_at, trigger_row = "timeout", deadline, stop - 1
-    while k < stop:
-        if ts[k] >= deadline:
-            trigger_row = k - 1
-            break
-        if price[k] <= sl_price:
-            reason, trigger_at, trigger_row = "sl", float(ts[k]), k
-            k += 1
-            break
-        if price[k] >= tp_price:
-            reason, trigger_at, trigger_row = "tp", float(ts[k]), k
-            k += 1
-            break
-        k += 1
-
-    def sell(i: int) -> float:
-        return _sell_price(
-            float(price[i]), float(reserve[i]), float(fee[i]), size, entry_price, realistic
-        )
-
-    exit_quote = sell(trigger_row)
-    closed, exit_price, failures = trigger_at, exit_quote, 0
-    if execution.exit_latency_s > 0:
-        due = trigger_at + execution.exit_latency_s
-        while True:
-            at = int(np.searchsorted(ts[k:stop], due, side="left")) + k
-            if at >= stop or ts[at] > due + execution.max_mark_age_s:
-                # No mark in time: the stale-mark rule (the feed is assumed live), the last mark.
-                closed, exit_price = due + execution.max_mark_age_s, sell(at - 1)
+    while True:
+        # Triggers: the deadline is swept before a mark at or after it; then SL, trail, partial, TP.
+        reason, trigger_at, trigger_row = "timeout", deadline, stop - 1
+        while k < stop:
+            if ts[k] >= deadline:
+                trigger_row = k - 1
                 break
-            exit_price = sell(at)
-            closed = float(ts[at])
-            breached = (
-                execution.max_slippage > 0
-                and failures < execution.max_exit_retries
-                and exit_price < exit_quote * (1.0 - execution.max_slippage)
+            p = price[k]
+            trail_price = peak * trail_keep if trail_keep and peak >= armed_at else 0.0
+            if p <= sl_price:
+                reason = "sl"
+            elif p <= trail_price:
+                reason = "trail"
+            elif p >= partial_price:
+                reason = _PARTIAL
+            elif p >= tp_price:
+                reason = "tp"
+            else:
+                peak = max(peak, float(p))
+                k += 1
+                continue
+            trigger_at, trigger_row = float(ts[k]), k
+            k += 1
+            break
+
+        sold = held
+        if reason == _PARTIAL:
+            sold = (
+                held * rule.partial_share
+                if rule.partial_share != STAKE
+                else _stake_size(
+                    float(price[trigger_row]),
+                    float(reserve[trigger_row]),
+                    float(fee[trigger_row]),
+                    held,
+                    entry_price,
+                    realistic,
+                )
             )
-            if not breached:
-                break
-            exit_quote = exit_price
-            due = closed + execution.exit_latency_s
-            failures += 1
-            k = at + 1
+        sale = _fill_sale(paths, stop, k, trigger_at, trigger_row, sold, entry_price, execution)
+        proceeds += sold * sale.price / entry_price
+        attempts += sale.attempts
+        k = sale.next_row
+        if reason != _PARTIAL or sold >= held:
+            break
 
+        held -= sold
+        partial_filled = True
+        partial_price = math.inf
+        if rule.rest_stop == "none":
+            sl_price = 0.0
+        elif rule.rest_stop == "entry":
+            sl_price = mark
+        if rule.rest_timeout_s is not None:
+            deadline = opened + rule.rest_timeout_s
+        deadline = max(deadline, sale.closed)
+
+    if reason == _PARTIAL:  # the whole position went in the "partial" sale
+        reason = "tp"
     entry_cost = execution.network_fee + execution.account_rent
-    exit_cost = execution.network_fee * (failures + 1)
-    pnl = size * exit_price / entry_price - size - entry_cost - exit_cost
-    return Outcome(FILLED, closed, reason, pnl / size, pnl, closed - opened)
+    pnl = proceeds - size - entry_cost - execution.network_fee * attempts
+    hold = sale.closed - opened
+    return Outcome(FILLED, sale.closed, reason, pnl / size, pnl, hold, partial_filled)
 
 
 # --------------------------------------------------------------------------- windows
@@ -525,6 +716,12 @@ def cell_metrics(
         "take_profit": rule.take_profit,
         "stop_loss": rule.stop_loss,
         "timeout_s": rule.timeout_s,
+        "partial_at": rule.partial_at,
+        "partial_share": rule.partial_share if rule.partial_at is not None else None,
+        "rest_stop": rule.rest_stop if rule.partial_at is not None else None,
+        "rest_timeout_s": rule.rest_timeout_s,
+        "trail": rule.trail,
+        "trail_after": rule.trail_after,
         "label": rule.label,
         "is_bot_default": rule == BOT_RULE,
         "n_trades": len(trades),
@@ -543,6 +740,7 @@ def cell_metrics(
             "exit_share": dict.fromkeys(REASONS, None),
             "median_hold_s": None,
             "top_token_profit_share": None,
+            "partial_fill_share": None,
         }
     low, high = bootstrap_by_token(returns, tokens, samples=samples, ci=ci, rng=rng)
     pnl = pd.Series([o.pnl_sol for _, o in trades]).groupby(tokens).sum()
@@ -556,7 +754,36 @@ def cell_metrics(
         "exit_share": {r: float(np.mean([o.reason == r for _, o in trades])) for r in REASONS},
         "median_hold_s": float(np.median([o.hold_s for _, o in trades])),
         "top_token_profit_share": float(profit.max() / profit.sum()) if len(profit) else None,
+        "partial_fill_share": float(np.mean([o.partial for _, o in trades])),
     }
+
+
+def paired_difference(
+    entries: Sequence[tuple[Any, Outcome]],
+    reference: Sequence[tuple[Any, Outcome]],
+    *,
+    samples: int,
+    ci: float,
+    rng: np.random.Generator,
+) -> dict[str, Any]:
+    """Two exit rules on the same tokens: per token traded by both, its mean net return minus the
+    reference's, with a CI that draws tokens. Tokens are the unit, as an exit can change the number
+    of trades on one token. ``mean_diff`` is ``None`` with no token in common."""
+
+    def token_means(rows: Sequence[tuple[Any, Outcome]]) -> pd.Series:
+        trades = [(m, o.net_return) for m, o in rows if o.status == FILLED]
+        if not trades:
+            return pd.Series(dtype=np.float64)
+        frame = pd.DataFrame(trades, columns=["mint", "net"])
+        return frame.groupby("mint")["net"].mean()
+
+    joined = pd.concat([token_means(entries), token_means(reference)], axis=1, join="inner")
+    if joined.empty:
+        return {"n_tokens": 0, "mean_diff": None, "mean_diff_ci": [None, None]}
+    diff = (joined.iloc[:, 0] - joined.iloc[:, 1]).to_numpy(np.float64)
+    tokens = joined.index.to_numpy(dtype=object)
+    low, high = bootstrap_by_token(diff, tokens, samples=samples, ci=ci, rng=rng)
+    return {"n_tokens": len(diff), "mean_diff": float(diff.mean()), "mean_diff_ci": [low, high]}
 
 
 def marginals(cells: Sequence[Mapping[str, Any]], *, min_trades: int) -> dict[str, Any]:
@@ -695,31 +922,36 @@ def simulate_rules(
     pump_threshold: float,
     grid: Sequence[ExitRule] | None = None,
     execution: Execution = BOT_EXECUTION,
+    reference: ExitRule | None = None,
     min_trades: int = DEFAULT_MIN_TRADES,
     bootstrap_samples: int = DEFAULT_BOOTSTRAP_SAMPLES,
     ci: float = DEFAULT_CI,
     seed: int = 0,
 ) -> list[dict[str, Any]]:
-    """Per entry rule ``pump_prob >= P``: the selection's steps and the grid of exits."""
+    """Per entry rule ``pump_prob >= P``: the selection's steps and the grid of exits. With a
+    ``reference``, every cell also gets its :func:`paired_difference` to that rule."""
     check_settings(pump_thresholds, min_trades, bootstrap_samples, ci)
     grid = default_grid() if grid is None else list(grid)
-    longest = max([horizon_s, *(rule.timeout_s for rule in grid)])
+    longest = max([horizon_s, *(_longest_hold(rule) for rule in grid)])
     usable = uncensored(windows, paths, longest)
     rng = np.random.default_rng(seed)
     out = []
     for threshold in pump_thresholds:
         selected = usable.take(usable.pump_prob >= threshold)
-        cells = [
-            cell_metrics(
-                rule,
-                simulate_rule(paths, selected, rule, execution),
-                execution=execution,
-                samples=bootstrap_samples,
-                ci=ci,
-                rng=rng,
+        baseline = (
+            None if reference is None else simulate_rule(paths, selected, reference, execution)
+        )
+        cells = []
+        for rule in grid:
+            entries = simulate_rule(paths, selected, rule, execution)
+            cell = cell_metrics(
+                rule, entries, execution=execution, samples=bootstrap_samples, ci=ci, rng=rng
             )
-            for rule in grid
-        ]
+            if baseline is not None:
+                cell["vs_reference"] = paired_difference(
+                    entries, baseline, samples=bootstrap_samples, ci=ci, rng=rng
+                )
+            cells.append(cell)
         out.append(
             {
                 "pump_threshold": threshold,
@@ -738,6 +970,10 @@ def simulate_rules(
             }
         )
     return out
+
+
+def _longest_hold(rule: ExitRule) -> float:
+    return rule.timeout_s if rule.rest_timeout_s is None else rule.rest_timeout_s
 
 
 def check_settings(
@@ -797,16 +1033,22 @@ def _render_step(name: str, s: Mapping[str, Any]) -> str:
 
 def _render_cell(c: Mapping[str, Any]) -> str:
     if not c["n_trades"]:
-        return f"  {c['label']:<34} {0:>6}"
+        return f"  {c['label']:<58} {0:>6}"
     low, high = c["mean_return_ci"]
     ci = "n/a" if low is None else f"[{low:+.3f},{high:+.3f}]"
     share = c["exit_share"]
     hold = "n/a" if c["median_hold_s"] is None else f"{c['median_hold_s']:.0f}"
     mark = " <- bot" if c["is_bot_default"] else ""
+    versus = c.get("vs_reference")
+    if versus and versus["mean_diff"] is not None:
+        low_d, high_d = versus["mean_diff_ci"]
+        band = "n/a" if low_d is None else f"[{low_d:+.3f},{high_d:+.3f}]"
+        mark += f"  vs ref {versus['mean_diff']:+.3f} {band}"
     return (
-        f"  {c['label']:<34} {c['n_trades']:>6} {c['n_tokens']:>6} {fmt(c['win_rate']):>7} "
+        f"  {c['label']:<58} {c['n_trades']:>6} {c['n_tokens']:>6} {fmt(c['win_rate']):>7} "
         f"{fmt(c['mean_return']):>8} {fmt(c['median_return']):>8} {ci:>17} "
-        f"{_pct(share['tp']):>4} {_pct(share['sl']):>4} {_pct(share['timeout']):>4} {hold:>6} "
+        f"{_pct(share['tp']):>4} {_pct(share['sl']):>4} {_pct(share['timeout']):>4} "
+        f"{_pct(share['trail']):>5} {hold:>6} "
         f"{c['failed_entries']:>4}{mark}"
     )
 
@@ -834,8 +1076,9 @@ def render(report: Mapping[str, Any]) -> str:
         lines += [_render_step(k, s) for k, s in rule["selection"].items()]
         lines += [
             "  exits (net of costs)",
-            f"  {'cell':<34} {'trades':>6} {'tokens':>6} {'win':>7} {'mean':>8} {'median':>8} "
-            f"{'mean CI':>17} {'tp':>4} {'sl':>4} {'time':>4} {'hold s':>6} {'fail':>4}",
+            f"  {'cell':<58} {'trades':>6} {'tokens':>6} {'win':>7} {'mean':>8} {'median':>8} "
+            f"{'mean CI':>17} {'tp':>4} {'sl':>4} {'time':>4} {'trail':>5} {'hold s':>6} "
+            f"{'fail':>4}",
         ]
         lines += [_render_cell(c) for c in rule["cells"]]
         lines.append(f"  marginals (mean of the cells with >= {settings['min_trades']} trades)")
@@ -912,6 +1155,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--ideal", action="store_true", help="fill at the mark, at once, for free (for comparison)"
     )
+    parser.add_argument(
+        "--grid",
+        choices=("bot", "variants"),
+        default="bot",
+        help="bot = the #221 grid; variants = partial sales and trailing stops vs today's setting",
+    )
     parser.add_argument("--min-trades", type=int, default=DEFAULT_MIN_TRADES)
     parser.add_argument("--bootstrap-samples", type=int, default=DEFAULT_BOOTSTRAP_SAMPLES)
     parser.add_argument("--ci", type=float, default=DEFAULT_CI)
@@ -977,6 +1226,7 @@ def main(argv: list[str] | None = None) -> None:
     settings = {
         "pump_thresholds": args.pump_thresholds,
         "window_stride_seconds": args.window_stride_seconds,
+        "grid": args.grid,
         "read": bounds.as_dict(),
         "min_trades": args.min_trades,
         "bootstrap_samples": args.bootstrap_samples,
@@ -984,13 +1234,16 @@ def main(argv: list[str] | None = None) -> None:
         "seed": args.seed,
         "execution": asdict(execution),
     }
+    variants = args.grid == "variants"
     rules = simulate_rules(
         paths,
         windows,
         pump_thresholds=args.pump_thresholds,
         horizon_s=horizon_seconds(args.horizon),
         pump_threshold=float(config["labeling"]["pump_threshold"][args.horizon]),
+        grid=variant_grid() if variants else None,
         execution=execution,
+        reference=REFERENCE_RULE if variants else None,
         min_trades=args.min_trades,
         bootstrap_samples=args.bootstrap_samples,
         ci=args.ci,

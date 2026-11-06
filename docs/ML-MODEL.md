@@ -652,6 +652,33 @@ as they are until then. What this result doesn't settle:
 
 Passing doesn't lift the paper-only rule.
 
+### Partial sales and trailing stops (#251)
+
+`exit_sim` can also simulate two exits the bot doesn't have. This is research: nothing changes in `Solia.Bot`, and these
+rules need the same two-period confirmation and their own paper session before any use.
+
+```bash
+python -m solia_ai.exit_sim --champion --grid variants --pump-thresholds 0.5 --out /app/models/reports/exit-variants.json
+```
+
+- **Partial sale** (`partial_at`, `partial_share`): at a gain from the fill mark, sell once a fraction of the position, or
+  `stake`, what pays the position's size back through the pool's impact at that mark. If the pool can't pay that, everything is
+  sold, as a take-profit. The rest then follows `take_profit`, `rest_stop` (`keep`, `entry` = the fill mark, `none`) and
+  `rest_timeout_s`, counted from the fill.
+- **Trailing stop** (`trail`, `trail_after`): a stop at this distance under the highest mark since the fill, active from the
+  fill or once a mark reached `trail_after`. The mark that makes a new high can't fire it. It applies to what is still held.
+- **Order on one mark:** deadline, stop, trailing stop, partial sale, take-profit. The partial sale takes the mark, so the
+  target can fire from the next mark on.
+- **Each sale** is an order like any exit: latency, impact on its own size, slippage retries, its network fee. A price on an
+  empty pool can trigger a sale, as in the bot, and the sale then pays nothing (trades 791 and 795).
+
+`--grid variants` is a list of 13 cells fixed before any full run, because the more cells are read, the more one wins by
+chance. Its reference is today's frozen setting (TP +200 %, SL volatility × 3, 900 s). Each cell adds `vs_reference`: per token
+traded by both, its mean net return minus the reference's, with a CI that draws tokens. Without `--grid`, the #221 grid and its
+results don't change: old and new code gave identical outcomes on 144 000 simulated positions over random paths.
+
+Not run on a full period yet: a large read could disturb the paper test.
+
 ### Live vs offline scoring (#239)
 
 Live paper entries looked far worse than held-out scoring of the same champion: at `pump ≥ 0.4`, 15m, one position per
@@ -1609,7 +1636,7 @@ the report under `docs/reports/`.
 | `candidate.py` | Candidate training for a retrain (warm start from champion or scratch, refreshed time split, never registered) |
 | `evaluate.py` | Held-out evaluation (predictive metrics + reference-policy P&L) |
 | `entry_sweep.py` | Entry-rule sweep: precision / win rate / P&L per threshold rule on held-out windows (chooses the bot's entry gates) |
-| `exit_sim.py` | Exit-rule simulation: the bot's TP / SL / timeout on real held-out price paths, and the steps from the sweep to the tradable entries |
+| `exit_sim.py` | Exit-rule simulation: the bot's TP / SL / timeout, partial sales and trailing stops on real held-out price paths, and the steps from the sweep to the tradable entries |
 | `rescore.py` | Live vs offline scoring: re-scores stored predictions on today's `features` and compares inputs and probabilities |
 | `ablation.py` | Per-feature-group lift across windows & seeds |
 | `eligibility.py` | Token eligibility rule (causal, shared with the bot) |
