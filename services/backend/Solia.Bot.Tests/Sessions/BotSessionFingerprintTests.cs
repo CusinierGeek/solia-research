@@ -30,6 +30,19 @@ public class BotSessionFingerprintTests
     public void The_session_label_is_not_part_of_the_regime() =>
         Assert.Equal(Json(new BotOptions()), Json(new BotOptions { SessionLabel = "tuned" }));
 
+    [Fact]
+    public void A_regime_part_that_is_off_leaves_the_regime_alone() =>
+        Assert.Equal(Json(new BotOptions()), Json(new BotOptions(), new BotRegimePart("scoringFloor", null)));
+
+    [Fact]
+    public void A_regime_part_that_is_on_or_changes_changes_the_regime()
+    {
+        string on = Json(new BotOptions(), new BotRegimePart("scoringFloor", "traders>=20,liquidity>=5"));
+
+        Assert.NotEqual(Json(new BotOptions()), on);
+        Assert.NotEqual(on, Json(new BotOptions(), new BotRegimePart("scoringFloor", "traders>=30,liquidity>=5")));
+    }
+
     [Theory]
     [MemberData(nameof(RegimeChanges))]
     public void Changing_the_entry_rule_exits_fills_or_sizing_changes_the_regime(Action<BotOptions> change)

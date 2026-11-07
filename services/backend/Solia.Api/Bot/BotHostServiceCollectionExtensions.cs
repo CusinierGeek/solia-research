@@ -28,6 +28,9 @@ public static class BotHostServiceCollectionExtensions
 
         // The horizon traded on is part of the bot's regime: changing it opens a new bot session.
         services.AddSingleton(sp => new BotRegimePart("horizon", sp.GetRequiredService<IOptions<BotHostOptions>>().Value.Horizon));
+
+        // So is a scoring floor that is on: it changes which tokens are seen, and how soon.
+        services.AddSingleton(sp => new BotRegimePart("scoringFloor", sp.GetRequiredService<IOptions<BotHostOptions>>().Value.ScoringFloorRegime()));
         services.AddSingleton<PostgresPredictionStore>();
         services.AddSingleton<ChampionEligibility>();
         services.AddSingleton<IBotEventSource, DbBotEventSource>();

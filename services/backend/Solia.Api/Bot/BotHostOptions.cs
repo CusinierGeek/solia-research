@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.Globalization;
 using Solia.Bot.Configuration;
 using Solia.Core.Data;
 
@@ -49,5 +50,27 @@ public sealed class BotHostOptions
         ParseLimitsInInvariantCulture = true, ConvertValueInInvariantCulture = true)]
     public TimeSpan MaxCommitDelay { get; set; } = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// Scoring floor: a row under this many <c>unique_traders</c> isn't queued for scoring, 0 = off. The queue scores
+    /// one token at a time, so every inactive token delays the active ones. A capacity setting of the live bot, not
+    /// the champion's <see cref="Solia.Bot.Policy.EligibilityRule"/>: training reads <c>features</c>, which this doesn't touch.
+    /// </summary>
+    [Range(0, int.MaxValue)]
+    public int MinScoreTraders { get; set; }
+
+    /// <summary>Scoring floor: a row under this much pool liquidity (SOL) isn't queued for scoring, 0 = off.</summary>
+    [Range(typeof(decimal), "0", "1000000000",
+        ParseLimitsInInvariantCulture = true, ConvertValueInInvariantCulture = true)]
+    public decimal MinScoreLiquiditySol { get; set; }
+
     public bool HasKnownHorizon() => PredictionHorizons.IsKnown(Horizon);
+
+    /// <summary>Whether a row clears the scoring floor; an unknown value counts as under a floor that is on.</summary>
+    public bool MeetsScoringFloor(int? uniqueTraders, decimal? liquiditySol) =>
+        (uniqueTraders ?? 0) >= MinScoreTraders && (liquiditySol ?? 0m) >= MinScoreLiquiditySol;
+
+    /// <summary>The floor as a regime value; null when it is off, so that it leaves a session's fingerprint alone.</summary>
+    public string? ScoringFloorRegime() => MinScoreTraders == 0 && MinScoreLiquiditySol == 0m
+        ? null
+        : string.Create(CultureInfo.InvariantCulture, $"traders>={MinScoreTraders},liquidity>={MinScoreLiquiditySol:G29}");
 }

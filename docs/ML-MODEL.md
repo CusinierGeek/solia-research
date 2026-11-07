@@ -415,8 +415,22 @@ new session, #171), and each one set to 0 disables it — all at 0 is the engine
 | **Slippage tolerance** | `MaxSlippagePct` (0.15) | each order is quoted at decision time (the fill at the decision mark). An entry filling more than 15 % above its quote — or into a pool with no SOL left — **fails**: no position, the fee is still paid. An exit filling more than 15 % below its quote fails, pays the fee and is re-sent, quoted at what it now sees, one latency later; `MaxExitRetries` (3) bounds it, after which the exit fills at any price — an exit is never dropped. Default from the 10–20 % retail memecoin bots use. |
 
 **Latency breakdown** (the default 3 s entry): the snapshot is aggregated and written (~1 s), the bot polls it
-(`Bot:PollInterval` 2 s → ~1 s on average), the ai-service scores it (~0.1 s on GPU), then the transaction is sent and
-included (~1 s, 2–3 slots). An exit on a price trigger skips the scoring and is seen through the same feed: ~2 s.
+(`Bot:PollInterval` 2 s → ~1 s on average), the ai-service scores it (~0.1 s, on CPU, one token at a time), then the
+transaction is sent and included (~1 s, 2–3 slots). An exit on a price trigger skips the scoring and is seen through the
+same feed: ~2 s. This excludes the wait in the scoring queue, which is what usually delays an entry.
+
+**Scoring floor (`Bot:MinScoreTraders`, `Bot:MinScoreLiquiditySol`, off by default).** The queue serves one token at a
+time, about 10 per second. On 2026-11-06, as the market got busier, the gap between two scores of an active token rose
+from about 3 min to about 5 min, and its first score from about 170 s to about 275 s of age. Over 2 h, 93.6 % of the
+turns went to rows under 20 traders or 5 SOL. A row under the floor isn't queued: its ticks still flow, so an open
+position is managed, and its first row above queues the token. An unknown value counts as under a floor that is on.
+Limits:
+- A token that falls under the floor while it waits is still scored on its queued row.
+- A held token under the floor gets no new prediction, so a rug-exit rule (`MaxRugProb` < 1) wouldn't fire on it.
+- It changes when and on what the bot enters, so a floor that is on is part of the session's regime.
+
+It's a capacity setting, not the champion's eligibility rule. `features` isn't touched, so training data stays complete.
+Don't use it as a strategy: a stricter filter needs its own simulation and paper session.
 
 **Accounting.** `pnl = Size · exit / entry − size − entry cost − exit cost`; entry cost = fee + rent, exit cost = one
 fee per attempt. A failed entry's fee isn't a trade: it is booked in the engine's realized P&L (`RealizedPnl`,

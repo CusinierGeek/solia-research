@@ -20,7 +20,7 @@ namespace Solia.Api.Bot;
 /// <see cref="Venue"/> / <see cref="Liquidity"/> the pool the price was read off (what the bot's fills trade against).
 /// </summary>
 internal sealed record FeedRow(long Id, string Mint, DateTimeOffset Ts, decimal? Price, bool Tracked,
-    string? Venue = null, decimal? Liquidity = null);
+    string? Venue = null, decimal? Liquidity = null, int? UniqueTraders = null);
 
 /// <summary>
 /// The bot's live feed: polls the <c>features</c> snapshots the data-pipeline writes and turns them into
@@ -30,7 +30,8 @@ internal sealed record FeedRow(long Id, string Mint, DateTimeOffset Ts, decimal?
 ///   <item>the <em>poll</em> loop reads the new rows by id (<see cref="FeatureCursor"/>: an id that commits
 ///   late is still read) and emits every priced row of a <em>tracked</em> token (<c>tokens_live.is_active</c>)
 ///   as a <see cref="BotEvent.Price"/> tick at its snapshot time — with the row's venue and liquidity, the pool
-///   the bot's fills trade against — then queues the token for scoring;</item>
+///   the bot's fills trade against — then queues the token for scoring, unless that row is under the scoring floor
+///   (<see cref="BotHostOptions.MeetsScoringFloor"/>): its ticks still flow, and its first row above queues it;</item>
 ///   <item>the <em>scoring</em> loop takes the queued tokens one at a time, oldest-waiting first
 ///   (<see cref="ScoringQueue"/>), skips a token not eligible at the queued row under the champion's
 ///   <see cref="EligibilityRule"/> (<see cref="ChampionEligibility"/>: the model only learned on eligible tokens, so
@@ -168,7 +169,10 @@ public sealed class DbBotEventSource(
                         }));
                     }
 
-                    toScore.Add(row);
+                    if (_host.MeetsScoringFloor(row.UniqueTraders, row.Liquidity))
+                    {
+                        toScore.Add(row);
+                    }
                 }
 
                 cursor.ExpireGaps();
@@ -214,7 +218,7 @@ public sealed class DbBotEventSource(
             .OrderBy(f => f.Id)
             .Take(_host.MaxTicksPerPoll)
             .Select(f => new FeedRow(f.Id, f.Mint, f.Ts, f.Price, db.TokensLive.Any(l => l.Mint == f.Mint && l.IsActive),
-                f.Venue, f.Liquidity))
+                f.Venue, f.Liquidity, f.UniqueTraders))
             .ToListAsync(cancellationToken);
         if (rows.Count == 0 && cursor.MaxSeen is null)
         {

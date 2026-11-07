@@ -68,6 +68,8 @@ public class BotHostingTests
     [InlineData("Bot:ReorderWindow", "00:02:00")]
     [InlineData("Bot:MaxCommitDelay", "00:00:00")] // would give up on every in-flight insert
     [InlineData("Bot:MaxTicksPerPoll", "0")]
+    [InlineData("Bot:MinScoreTraders", "-1")]
+    [InlineData("Bot:MinScoreLiquiditySol", "-1")]
     public void Invalid_host_options_fail_at_startup(string key, string value)
     {
         using WebApplicationFactory<Program> factory = Factory(new ThrowingSource(), (key, value));
@@ -97,6 +99,40 @@ public class BotHostingTests
         Assert.Equal("15m", options.Horizon);
         Assert.True(options.HasKnownHorizon());
         Assert.Equal(15 * 60, new BotOptions().PositionTimeoutSeconds);
+    }
+
+    [Theory]
+    [InlineData(20, 5.0, 20, 5.0, true)]   // exactly on the floor
+    [InlineData(20, 5.0, 19, 5.0, false)]
+    [InlineData(20, 5.0, 20, 4.9, false)]
+    [InlineData(20, 5.0, null, 5.0, false)]  // unknown counts as under a floor that is on
+    [InlineData(20, 5.0, 20, null, false)]
+    [InlineData(20, 0.0, 20, null, true)]  // each floor is independent
+    [InlineData(0, 5.0, null, 5.0, true)]
+    [InlineData(0, 0.0, null, null, true)] // off: every row is queued, as before
+    public void The_scoring_floor_judges_a_row(int traders, double liquidity, int? rowTraders, double? rowLiquidity, bool expected)
+    {
+        var options = new BotHostOptions { MinScoreTraders = traders, MinScoreLiquiditySol = (decimal)liquidity };
+
+        Assert.Equal(expected, options.MeetsScoringFloor(rowTraders, (decimal?)rowLiquidity));
+    }
+
+    [Fact]
+    public void A_scoring_floor_is_off_by_default_and_then_leaves_the_regime_alone()
+    {
+        var options = new BotHostOptions();
+
+        Assert.Equal(0, options.MinScoreTraders);
+        Assert.Equal(0m, options.MinScoreLiquiditySol);
+        Assert.Null(options.ScoringFloorRegime());
+    }
+
+    [Fact]
+    public void A_scoring_floor_that_is_on_names_its_values_whatever_their_spelling()
+    {
+        Assert.Equal("traders>=20,liquidity>=5",
+            new BotHostOptions { MinScoreTraders = 20, MinScoreLiquiditySol = 5.00m }.ScoringFloorRegime());
+        Assert.Equal("traders>=0,liquidity>=0.5", new BotHostOptions { MinScoreLiquiditySol = 0.5m }.ScoringFloorRegime());
     }
 
     [Fact]

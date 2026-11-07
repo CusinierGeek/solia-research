@@ -9,9 +9,10 @@ namespace Solia.Bot.Sessions;
 
 /// <summary>
 /// One piece of the bot's regime that lives outside <see cref="BotOptions"/> — e.g. the horizon the host trades on.
-/// Registered as singletons; every one registered is part of the <see cref="BotSessionFingerprint"/>.
+/// Registered as singletons; every one registered is part of the <see cref="BotSessionFingerprint"/>, except one
+/// with a null <paramref name="Value"/>: a feature that is off doesn't move the fingerprint of a running session.
 /// </summary>
-public sealed record BotRegimePart(string Name, string Value);
+public sealed record BotRegimePart(string Name, string? Value);
 
 /// <summary>
 /// What identifies a bot regime: the effective options, normalized so that two configurations meaning the same
@@ -31,7 +32,10 @@ public static class BotSessionFingerprint
         root.Remove(JsonNamingPolicy.CamelCase.ConvertName(nameof(BotOptions.SessionLabel)));
         foreach (BotRegimePart part in parts ?? [])
         {
-            root[part.Name] = part.Value;
+            if (part.Value is not null)
+            {
+                root[part.Name] = part.Value;
+            }
         }
 
         return Normalize(root, lowerKeys: false)!.ToJsonString();
