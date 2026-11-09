@@ -35,6 +35,28 @@ public sealed class PostgresRetentionTests(PostgresFixture db) : IClassFixture<P
         return await Exec("INSERT INTO features (mint, ts) VALUES (@m, @ts)", ("m", mint), ("ts", ts));
     }
 
+    private async Task<long> Feature(string mint, DateTimeOffset ts, int ageSec)
+    {
+        await Token(mint);
+        return await Exec("INSERT INTO features (mint, ts, token_age_sec) VALUES (@m, @ts, @age)",
+            ("m", mint), ("ts", ts), ("age", ageSec));
+    }
+
+    /// <summary>A token active from <paramref name="start"/>: one row every <paramref name="step"/> up to <paramref name="maxAgeSec"/>.</summary>
+    private async Task Activity(string mint, DateTimeOffset start, int maxAgeSec, TimeSpan step)
+    {
+        await Token(mint);
+        await db.ScalarAsync<int>(
+        """
+        INSERT INTO features (mint, ts, token_age_sec)
+        SELECT @m, @t0 + make_interval(secs => a), a FROM generate_series(0, @max, @step) a
+        UNION ALL SELECT @m, @t0 + make_interval(secs => @max), @max -- the exact max age, whatever the step
+        ON CONFLICT DO NOTHING
+        RETURNING 1
+        """,
+        ("m", mint), ("t0", start), ("max", maxAgeSec), ("step", (int)step.TotalSeconds));
+    }
+
     private async Task<long> Prediction(string mint, DateTimeOffset ts, long? featureId = null)
     {
         await Token(mint);
@@ -101,8 +123,8 @@ public sealed class PostgresRetentionTests(PostgresFixture db) : IClassFixture<P
     public async Task Rows_referencing_purged_rows_survive_with_null_references()
     {
         var now = new DateTimeOffset(2032, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        long feature = await Feature("FK1", now.AddDays(-20)); // past the 14-day features TTL
-        long prediction = await Prediction("FK1", now.AddDays(-20), feature); // inside the 30-day predictions TTL
+        long feature = await Feature("FK1", now.AddDays(-16)); // past the 14-day features TTL, not established
+        long prediction = await Prediction("FK1", now.AddDays(-16), feature); // inside the 30-day predictions TTL
         long oldPrediction = await Prediction("FK1", now.AddDays(-40));
         long trade = await Exec("INSERT INTO trades (mint, prediction_id, opened_at) VALUES ('FK1', @p, @ts)",
             ("p", oldPrediction), ("ts", now.AddDays(-40)));
@@ -119,7 +141,7 @@ public sealed class PostgresRetentionTests(PostgresFixture db) : IClassFixture<P
     public async Task Purges_in_batches_oldest_first_and_reports_the_span()
     {
         var now = new DateTimeOffset(2033, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        DateTimeOffset first = now.AddDays(-20);
+        DateTimeOffset first = now.AddDays(-16);
         await Token("BATCH1");
         await db.ScalarAsync<int>(
             "INSERT INTO features (mint, ts) SELECT 'BATCH1', @t0 + g * interval '1 minute' FROM generate_series(0, 249) g RETURNING 1",
@@ -144,6 +166,58 @@ public sealed class PostgresRetentionTests(PostgresFixture db) : IClassFixture<P
 
         Assert.True(report.Tables.Single(t => t.Table == RetainedTable.Features).Removed.Rows >= 1);
         Assert.Equal(1, await Count("features", "id = @id", ("id", feature)));
+    }
+
+    [Fact]
+    public async Task A_token_reaching_the_age_keeps_its_rows_past_the_ttl_and_one_a_second_short_loses_them()
+    {
+        var now = new DateTimeOffset(2036, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        DateTimeOffset start = now.AddDays(-16);
+        await Activity("AGE6H", start, 21_600, TimeSpan.FromMinutes(10)); // reaches exactly 6 h
+        await Activity("AGE6H-1S", start, 21_599, TimeSpan.FromMinutes(10)); // one second short
+        // Its first hour is past the features cutoff, the 6 h it reaches are after it: still kept.
+        await Activity("AGELATE", now.AddDays(-14).AddHours(-1), 21_600, TimeSpan.FromMinutes(10));
+        long before = await Count("features", "mint IN ('AGE6H', 'AGE6H-1S', 'AGELATE')");
+
+        RetentionReport report = await Job(now).RunAsync(false, default);
+
+        Assert.False(report.Failed);
+        Assert.Equal(37, await Count("features", "mint = 'AGE6H'"));
+        Assert.Equal(0, await Count("features", "mint = 'AGE6H-1S'"));
+        Assert.Equal(37, await Count("features", "mint = 'AGELATE'"));
+        Assert.Equal(before - 37, await Count("features", "mint IN ('AGE6H', 'AGE6H-1S', 'AGELATE')"));
+    }
+
+    [Fact]
+    public async Task Established_rows_go_after_the_established_ttl()
+    {
+        var now = new DateTimeOffset(2037, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        long expired = await Feature("TTL90", now.AddDays(-30).AddSeconds(-1), 30_000);
+        long kept = await Feature("TTL90", now.AddDays(-29), 30_000);
+
+        RetentionReport report = await Job(now, new RetentionOptions { EstablishedTtlDays = 30 }).RunAsync(false, default);
+
+        Assert.Equal(0, await Count("features", "id = @id", ("id", expired)));
+        Assert.Equal(1, await Count("features", "id = @id", ("id", kept)));
+        TablePurge features = report.Tables.Single(t => t.Table == RetainedTable.Features);
+        Assert.Equal(now.AddDays(-14), features.Cutoff);
+        Assert.Equal(now.AddDays(-30), features.EstablishedCutoff);
+    }
+
+    [Theory]
+    [InlineData(60, 360 + 301)] // first hour whole (360 rows), then the first row of each minute (ages 3600..21600)
+    [InlineData(0, 2161)] // no thinning: every row
+    public async Task Established_rows_past_the_ttl_are_thinned_after_the_full_resolution_age(int sampleSeconds, long expected)
+    {
+        var now = new DateTimeOffset(2038 + sampleSeconds, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        string mint = $"THIN{sampleSeconds}";
+        await Activity(mint, now.AddDays(-16), 21_600, TimeSpan.FromSeconds(10));
+        var options = new RetentionOptions { BatchSize = 100, EstablishedSampleSeconds = sampleSeconds };
+
+        await Job(now, options).RunAsync(false, default);
+
+        Assert.Equal(expected, await Count("features", "mint = @m", ("m", mint)));
+        Assert.Equal(360, await Count("features", "mint = @m AND token_age_sec < 3600", ("m", mint)));
     }
 
     [Fact]

@@ -326,7 +326,8 @@ Index: `(ts)`, `(service, level)`.
 
 ## Retention
 TTL purge by the data-pipeline (details and knobs: [DATA-PIPELINE.md § Data retention](DATA-PIPELINE.md#data-retention)):
-`features` 14 days, `logs` 14 days, `predictions` 30 days; `trades`, `models`, `training_events`,
+`features` 14 days (90 days, thinned to one row per minute after the first hour of age, for tokens whose activity
+reached 6 h — `features_established_idx`, 0018), `logs` 14 days, `predictions` 30 days; `trades`, `models`, `training_events`,
 `tokens_history`, `tokens_live` are never purged. `predictions.feature_id` and `trades.prediction_id` are
 `ON DELETE SET NULL`, so a purge never blocks on, nor deletes, the rows that reference purged ones.
 

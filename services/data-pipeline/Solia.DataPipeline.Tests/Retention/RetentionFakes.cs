@@ -49,6 +49,43 @@ internal sealed class FakeRetentionStore : IRetentionStore
             : new PurgeCount(n, Epoch, Epoch.AddMinutes(n - 1)));
     }
 
+    /// <summary>Rows of the established band, by (ts, id); <c>Doomed</c> = not kept by the rule.</summary>
+    public List<(DateTimeOffset Ts, long Id, bool Doomed)> Band { get; } = [];
+
+    public List<(FeaturesCursor After, DateTimeOffset Cutoff, EstablishedRule Rule, int BatchSize, bool DryRun)> BandCalls { get; } = [];
+
+    public FakeRetentionStore WithBand(DateTimeOffset start, int rows, Func<int, bool> doomed)
+    {
+        for (int i = 0; i < rows; i++)
+        {
+            Band.Add((start.AddMinutes(i), i + 1, doomed(i)));
+        }
+
+        return this;
+    }
+
+    public Task<BandBatch> PurgeEstablishedBandBatchAsync(
+        FeaturesCursor after, DateTimeOffset cutoff, EstablishedRule rule, int batchSize, bool dryRun, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        Touch(RetainedTable.Features, cutoff);
+        BandCalls.Add((after, cutoff, rule, batchSize, dryRun));
+        var scanned = Band
+            .Where(r => r.Ts >= after.Ts && r.Ts < cutoff && (r.Ts > after.Ts || r.Id > after.Id))
+            .OrderBy(r => r.Ts).ThenBy(r => r.Id)
+            .Take(batchSize)
+            .ToList();
+        var doomed = scanned.Where(r => r.Doomed).ToList();
+        if (!dryRun)
+        {
+            Band.RemoveAll(doomed.Contains);
+        }
+
+        PurgeCount removed = doomed.Count == 0 ? PurgeCount.None : new PurgeCount(doomed.Count, doomed[0].Ts, doomed[^1].Ts);
+        FeaturesCursor? last = scanned.Count == 0 ? null : new FeaturesCursor(scanned[^1].Ts, scanned[^1].Id);
+        return Task.FromResult(new BandBatch(scanned.Count, last, removed));
+    }
+
     public Task VacuumAsync(RetainedTable table, CancellationToken ct)
     {
         Vacuums.Add(table);

@@ -7,7 +7,7 @@ namespace Solia.DataPipeline.Retention;
 /// single owner of the purge: it owns <c>features</c>, the bulk of the volume, and the replay that must not write
 /// rows the next purge would wipe. Validated at startup.
 /// </summary>
-public sealed class RetentionOptions
+public sealed class RetentionOptions : IValidatableObject
 {
     public const string Section = "Retention";
 
@@ -28,6 +28,36 @@ public sealed class RetentionOptions
     [Range(1, 3650)]
     public int FeaturesTtlDays { get; set; } = 14;
 
+    /// <summary>
+    /// A token is <em>established</em> once one of its rows reaches this <c>token_age_sec</c> (hours of continuous
+    /// activity: the age restarts when an idle token is evicted and comes back). Its rows outlive
+    /// <see cref="FeaturesTtlDays"/>, up to <see cref="EstablishedTtlDays"/>. At least 1 h: the partial index
+    /// <c>features_established_idx</c> (migration 0018) covers rows aged 1 h or more.
+    /// </summary>
+    [Range(1, 720)]
+    public int EstablishedAgeHours { get; set; } = 6;
+
+    /// <summary>
+    /// Days of <c>features</c> kept for established tokens. Equal to <see cref="FeaturesTtlDays"/>: no special
+    /// treatment; lower: rejected.
+    /// </summary>
+    [Range(1, 3650)]
+    public int EstablishedTtlDays { get; set; } = 90;
+
+    /// <summary>
+    /// Once an established token's rows pass <see cref="FeaturesTtlDays"/>, those younger than this age
+    /// (<c>token_age_sec</c>) are all kept; older ones are thinned to one per <see cref="EstablishedSampleSeconds"/>.
+    /// </summary>
+    [Range(0, 43_200)]
+    public int EstablishedFullResolutionMinutes { get; set; } = 60;
+
+    /// <summary>
+    /// Bucket width of the thinning: past <see cref="FeaturesTtlDays"/>, an established token keeps the first row of
+    /// each bucket once older than <see cref="EstablishedFullResolutionMinutes"/>. 0 keeps every row.
+    /// </summary>
+    [Range(0, 86_400)]
+    public int EstablishedSampleSeconds { get; set; } = 60;
+
     /// <summary>Days of <c>logs</c> kept (every service's rows).</summary>
     [Range(1, 3650)]
     public int LogsTtlDays { get; set; } = 14;
@@ -41,6 +71,26 @@ public sealed class RetentionOptions
     public int BatchSize { get; set; } = 10_000;
 
     public TimeSpan Interval => TimeSpan.FromMinutes(IntervalMinutes);
+
+    /// <summary>Established tokens' rows outlive the general features TTL.</summary>
+    public bool KeepsEstablished => EstablishedTtlDays > FeaturesTtlDays;
+
+    public TimeSpan EstablishedTtl => TimeSpan.FromDays(EstablishedTtlDays);
+
+    public EstablishedRule Established => new(
+        TimeSpan.FromHours(EstablishedAgeHours),
+        TimeSpan.FromMinutes(EstablishedFullResolutionMinutes),
+        TimeSpan.FromSeconds(EstablishedSampleSeconds));
+
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        if (EstablishedTtlDays < FeaturesTtlDays)
+        {
+            yield return new ValidationResult(
+                $"Retention:EstablishedTtlDays ({EstablishedTtlDays}) must be >= Retention:FeaturesTtlDays ({FeaturesTtlDays}).",
+                [nameof(EstablishedTtlDays)]);
+        }
+    }
 
     public TimeSpan TtlOf(RetainedTable table) => TimeSpan.FromDays(table switch
     {

@@ -489,6 +489,7 @@ owns `features` (the bulk of the volume) and the replay that must not write rows
 | Table | Kept | Env var |
 |-------|------|---------|
 | `features` | 14 days | `RETENTION_FEATURES_TTL_DAYS` |
+| `features` of established tokens | 90 days, thinned after 14 | `RETENTION_ESTABLISHED_*` (below) |
 | `logs` (every service) | 14 days | `RETENTION_LOGS_TTL_DAYS` |
 | `predictions` | 30 days | `RETENTION_PREDICTIONS_TTL_DAYS` |
 
@@ -520,5 +521,41 @@ history stay complete. A `trades.prediction_id` / `predictions.feature_id` point
   ```
 
   Exit `0` = done, `1` = a table failed (re-run), `2` = invalid arguments / configuration.
-- **Config** is validated at startup (TTLs 1–3650 days, interval 1–1440 min, batch 100–1 000 000); an invalid
-  value stops the pipeline (or the command) with the option's name.
+- **Config** is validated at startup (TTLs 1–3650 days, interval 1–1440 min, batch 100–1 000 000, established
+  age 1–720 h, established TTL ≥ the features TTL); an invalid value stops the pipeline (or the command) with the
+  option's name.
+
+### Established tokens (#258)
+
+Trading on 4 h – 3 d horizons needs the history of the tokens that last, and only a few hundred are active past
+6 h at any time, so their `features` outlive the 14-day TTL:
+
+| Env var | Default | Meaning |
+|---------|---------|---------|
+| `RETENTION_ESTABLISHED_AGE_HOURS` | 6 | A token is *established* once a row of it reaches this `token_age_sec` (1–720 h). |
+| `RETENTION_ESTABLISHED_TTL_DAYS` | 90 | Its rows are kept this long. Must be ≥ `RETENTION_FEATURES_TTL_DAYS`; equal = no special treatment. |
+| `RETENTION_ESTABLISHED_FULL_RESOLUTION_MINUTES` | 60 | Past the features TTL, its rows younger than this (`token_age_sec`) are all kept… |
+| `RETENTION_ESTABLISHED_SAMPLE_SECONDS` | 60 | …older ones keep the first row of each bucket of this width (0 = every row). |
+
+- **Which rows**: a row past the features TTL is kept when its token has a row aged ≥ the age **between that
+  row's time and the age later**, i.e. the activity it belongs to reached the age. `token_age_sec` counts
+  *continuous* activity: it restarts when an idle token is evicted and later trades again (and at the start of a
+  replay), so a dead token traded once days later does not count, and the short-lived returns of an established
+  token are not kept. Rows newer than the features TTL are never touched; rows older than the established TTL all go.
+- **How, without a per-row scan**: every row older than the established TTL goes, oldest first, as before. The band
+  between the two cutoffs is scanned in `(ts, id)` order in batches of `RETENTION_BATCH_SIZE`. Whether a batch's
+  token is kept is one index-only probe per token on the partial index `features_established_idx`
+  (migration 0018: `(mint, ts) INCLUDE (token_age_sec) WHERE token_age_sec >= 3600`, hence the 1 h minimum
+  age); the thinning probe ("an earlier row in the same bucket") is index-only on `features_mint_ts_key`. Once a run
+  has scanned the band up to its cutoff, everything before is kept rows only, so the next run resumes there and
+  reads ~1 h of rows. A fresh process (restart, the `retention` command) starts 3 days before the cutoff; rows an
+  outage longer than that (or a replay older than the TTL with `--allow-expired`) left in the band wait for the
+  established TTL. Measured on the live table (2026-11-09, 272 M rows): one 10 000-row batch selects in ~1.6 s
+  cold (134 s without the partial index), ~96 % of it removed, so an hour of ingestion takes ~2 min of selection
+  plus the deletes. The index is ~3.5 GB (built `CONCURRENTLY` in 7 min).
+- **Cost** (measured 2026-11-09 on 2026-11-07, 18.3 M rows / 14.1 GB of row data that day): 411 tokens reached
+  6 h, 16 % of the rows (2.96 M, 2.5 GB). Kept whole that would be ~3 GB/day with indexes, ~230 GB more on disk
+  at 90 days, more than the host's free space, hence the thinning: the first hour whole (0.53 M rows, 0.42 GB)
+  then one row per minute (0.41 M rows, 0.35 GB) = **~0.94 M rows, ~0.8 GB/day, ~65–70 GB at 90 days**.
+- **Training**: rows older than the features TTL now exist only for established tokens, thinned. A read of
+  `features` past 14 days is therefore a survivor-only, minute-resolution sample — filter by `ts` accordingly.

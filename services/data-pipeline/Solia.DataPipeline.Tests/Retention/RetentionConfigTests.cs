@@ -26,6 +26,44 @@ public class RetentionConfigTests
         Assert.Equal(TimeSpan.FromDays(14), o.TtlOf(RetainedTable.Features));
         Assert.Equal(TimeSpan.FromDays(14), o.TtlOf(RetainedTable.Logs));
         Assert.Equal(TimeSpan.FromDays(30), o.TtlOf(RetainedTable.Predictions));
+        Assert.True(o.KeepsEstablished);
+        Assert.Equal(TimeSpan.FromDays(90), o.EstablishedTtl);
+        Assert.Equal(new EstablishedRule(TimeSpan.FromHours(6), TimeSpan.FromHours(1), TimeSpan.FromMinutes(1)), o.Established);
+    }
+
+    [Fact]
+    public void Established_ttl_below_the_features_ttl_is_rejected_and_equal_turns_it_off()
+    {
+        var below = new RetentionOptions { FeaturesTtlDays = 14, EstablishedTtlDays = 13 };
+        var equal = new RetentionOptions { FeaturesTtlDays = 14, EstablishedTtlDays = 14 };
+
+        var results = new List<ValidationResult>();
+        Assert.False(Validator.TryValidateObject(below, new ValidationContext(below), results, validateAllProperties: true));
+        Assert.Contains("EstablishedTtlDays", Assert.Single(results).ErrorMessage);
+        Assert.True(IsValid(equal));
+        Assert.False(equal.KeepsEstablished);
+    }
+
+    [Theory]
+    [InlineData(nameof(RetentionOptions.EstablishedAgeHours), 0)] // below the 1 h partial index
+    [InlineData(nameof(RetentionOptions.EstablishedAgeHours), 721)]
+    [InlineData(nameof(RetentionOptions.EstablishedTtlDays), 0)]
+    [InlineData(nameof(RetentionOptions.EstablishedFullResolutionMinutes), -1)]
+    [InlineData(nameof(RetentionOptions.EstablishedSampleSeconds), -1)]
+    [InlineData(nameof(RetentionOptions.EstablishedSampleSeconds), 86_401)]
+    public void Out_of_range_established_values_are_rejected(string property, int value)
+    {
+        var o = new RetentionOptions();
+        typeof(RetentionOptions).GetProperty(property)!.SetValue(o, value);
+
+        Assert.False(IsValid(o));
+    }
+
+    [Fact]
+    public async Task Established_ttl_below_the_features_ttl_on_the_command_is_a_usage_error()
+    {
+        Assert.Equal(RetentionCommand.ExitUsage,
+            await RetentionCommand.RunAsync(["--dry-run", "--Retention:EstablishedTtlDays=7"]));
     }
 
     [Theory]
@@ -68,6 +106,10 @@ public class RetentionConfigTests
             ["RETENTION_LOGS_TTL_DAYS"] = "3",
             ["RETENTION_PREDICTIONS_TTL_DAYS"] = "60",
             ["RETENTION_BATCH_SIZE"] = "5000",
+            ["RETENTION_ESTABLISHED_AGE_HOURS"] = "12",
+            ["RETENTION_ESTABLISHED_TTL_DAYS"] = "30",
+            ["RETENTION_ESTABLISHED_FULL_RESOLUTION_MINUTES"] = "120",
+            ["RETENTION_ESTABLISHED_SAMPLE_SECONDS"] = "0",
         });
 
         config.AddFlatEnvAliases();
@@ -79,6 +121,10 @@ public class RetentionConfigTests
         Assert.Equal(3, o.LogsTtlDays);
         Assert.Equal(60, o.PredictionsTtlDays);
         Assert.Equal(5000, o.BatchSize);
+        Assert.Equal(12, o.EstablishedAgeHours);
+        Assert.Equal(30, o.EstablishedTtlDays);
+        Assert.Equal(120, o.EstablishedFullResolutionMinutes);
+        Assert.Equal(0, o.EstablishedSampleSeconds);
     }
 
     [Fact]

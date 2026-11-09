@@ -23,8 +23,10 @@ public sealed class RetentionService(
         }
 
         logger.LogInformation(
-            "retention enabled: every {Interval} min, features {Features} d, logs {Logs} d, predictions {Predictions} d, batches of {Batch}",
-            opt.IntervalMinutes, opt.FeaturesTtlDays, opt.LogsTtlDays, opt.PredictionsTtlDays, opt.BatchSize);
+            "retention enabled: every {Interval} min, features {Features} d (established tokens, aged >= {Age} h: {Established} d, " +
+            "every row up to {Full} min of age then one per {Sample} s), logs {Logs} d, predictions {Predictions} d, batches of {Batch}",
+            opt.IntervalMinutes, opt.FeaturesTtlDays, opt.EstablishedAgeHours, opt.EstablishedTtlDays,
+            opt.EstablishedFullResolutionMinutes, opt.EstablishedSampleSeconds, opt.LogsTtlDays, opt.PredictionsTtlDays, opt.BatchSize);
 
         using var timer = new PeriodicTimer(opt.Interval, time);
         try

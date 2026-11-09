@@ -22,6 +22,10 @@ public static class FlatEnvAliases
         new("RETENTION_LOGS_TTL_DAYS", "Retention:LogsTtlDays"),
         new("RETENTION_PREDICTIONS_TTL_DAYS", "Retention:PredictionsTtlDays"),
         new("RETENTION_BATCH_SIZE", "Retention:BatchSize"),
+        new("RETENTION_ESTABLISHED_AGE_HOURS", "Retention:EstablishedAgeHours"),
+        new("RETENTION_ESTABLISHED_TTL_DAYS", "Retention:EstablishedTtlDays"),
+        new("RETENTION_ESTABLISHED_FULL_RESOLUTION_MINUTES", "Retention:EstablishedFullResolutionMinutes"),
+        new("RETENTION_ESTABLISHED_SAMPLE_SECONDS", "Retention:EstablishedSampleSeconds"),
     ];
 
     /// <inheritdoc cref="FlatAliases.AddFlatAliases"/>

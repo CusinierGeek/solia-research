@@ -144,6 +144,100 @@ public class RetentionJobTests
     }
 
     [Fact]
+    public async Task Established_rows_past_their_own_ttl_go_and_the_band_is_scanned_up_to_the_features_cutoff()
+    {
+        _store.With(RetainedTable.Features, 5);
+
+        RetentionReport report = await Job(new RetentionOptions { EstablishedTtlDays = 60 }).RunAsync(false, default);
+
+        TablePurge features = report.Tables.Single(t => t.Table == RetainedTable.Features);
+        Assert.Equal(Now.AddDays(-14), features.Cutoff);
+        Assert.Equal(Now.AddDays(-60), features.EstablishedCutoff);
+        Assert.Equal(5, features.Removed.Rows);
+        var call = Assert.Single(_store.BandCalls);
+        Assert.Equal(FeaturesCursor.At(Now.AddDays(-14) - RetentionJob.BandStartupLookback), call.After);
+        Assert.Equal(Now.AddDays(-14), call.Cutoff);
+        Assert.Equal(new EstablishedRule(TimeSpan.FromHours(6), TimeSpan.FromMinutes(60), TimeSpan.FromSeconds(60)), call.Rule);
+    }
+
+    [Fact]
+    public async Task The_band_is_walked_in_batches_and_only_the_rows_the_rule_drops_go()
+    {
+        DateTimeOffset start = Now.AddDays(-15);
+        _store.WithBand(start, 250, i => i % 2 == 0); // 125 doomed, 125 kept
+
+        RetentionReport report = await Job(new RetentionOptions { BatchSize = 100 }).RunAsync(false, default);
+
+        Assert.Equal(3, _store.BandCalls.Count);
+        Assert.Equal(new FeaturesCursor(start.AddMinutes(99), 100), _store.BandCalls[1].After); // resumes after the last row scanned
+        Assert.Equal(125, _store.Band.Count);
+        Assert.All(_store.Band, r => Assert.False(r.Doomed));
+        TablePurge features = report.Tables.Single(t => t.Table == RetainedTable.Features);
+        Assert.Equal(125, features.Removed.Rows);
+        Assert.Equal(start, features.Removed.Oldest);
+        Assert.Contains(RetainedTable.Features, _store.Vacuums);
+    }
+
+    [Fact]
+    public async Task The_next_run_resumes_the_band_where_the_last_one_ended()
+    {
+        RetentionJob job = Job();
+        await job.RunAsync(false, default);
+        await job.RunAsync(false, default); // same clock: nothing new to scan, starts at the previous cutoff
+
+        Assert.Equal(FeaturesCursor.At(Now.AddDays(-14)), _store.BandCalls[1].After);
+    }
+
+    [Fact]
+    public async Task A_dry_run_or_a_failed_run_does_not_move_the_band_start()
+    {
+        RetentionJob job = Job();
+        await job.RunAsync(dryRun: true, default);
+        _store.Failing.Add(RetainedTable.Features);
+        RetentionReport failed = await job.RunAsync(false, default);
+        _store.Failing.Clear();
+        await job.RunAsync(false, default);
+
+        Assert.True(failed.Failed);
+        FeaturesCursor fresh = FeaturesCursor.At(Now.AddDays(-14) - RetentionJob.BandStartupLookback);
+        Assert.Equal(fresh, _store.BandCalls[0].After);
+        Assert.Equal(fresh, _store.BandCalls[^1].After);
+        Assert.True(_store.BandCalls[0].DryRun);
+    }
+
+    [Fact]
+    public async Task Dry_run_counts_the_band_without_deleting()
+    {
+        _store.WithBand(Now.AddDays(-15), 10, _ => true);
+
+        RetentionReport report = await Job().RunAsync(dryRun: true, default);
+
+        Assert.Equal(10, report.Tables.Single(t => t.Table == RetainedTable.Features).Removed.Rows);
+        Assert.Equal(10, _store.Band.Count);
+    }
+
+    [Fact]
+    public async Task The_band_never_starts_before_the_established_cutoff()
+    {
+        // TTLs 14 and 15 days: the 3-day startup lookback would reach past the established cutoff.
+        await Job(new RetentionOptions { EstablishedTtlDays = 15 }).RunAsync(false, default);
+
+        Assert.Equal(FeaturesCursor.At(Now.AddDays(-15)), Assert.Single(_store.BandCalls).After);
+    }
+
+    [Fact]
+    public async Task Equal_ttls_mean_a_plain_purge_without_a_band()
+    {
+        _store.With(RetainedTable.Features, 3);
+
+        RetentionReport report = await Job(new RetentionOptions { EstablishedTtlDays = 14 }).RunAsync(false, default);
+
+        Assert.Empty(_store.BandCalls);
+        Assert.Equal(Now.AddDays(-14), _store.Cutoffs[RetainedTable.Features]);
+        Assert.Null(report.Tables.Single(t => t.Table == RetainedTable.Features).EstablishedCutoff);
+    }
+
+    [Fact]
     public async Task Cancellation_propagates()
     {
         _store.With(RetainedTable.Predictions, 10);
