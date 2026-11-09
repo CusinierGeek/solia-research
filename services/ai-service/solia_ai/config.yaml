@@ -190,3 +190,14 @@ labeling:
     "5m": 0.5
     "15m": 0.6
     "1h": 0.7
+
+# Rug-guard labels (solia_ai/rug_labels.py, docs/ML-MODEL.md "Rug-guard labels"), separate from the
+# model's labels above. sudden_rug: price or liquidity falls >= sudden_drop between two consecutive
+# snapshots at most max_step_seconds apart (~one transaction), or the pool falls under its
+# labeling.liquidity_floor. gradual_dump: the price falls >= gradual_drop within the horizon before
+# any sudden event. Coverage (stale rows) reuses labeling.max_gap_fraction / min_gap_seconds.
+rug_labels:
+  horizons: ["1h", "6h", "24h"]
+  sudden_drop: 0.5
+  gradual_drop: 0.5
+  max_step_seconds: 20 # two snapshot cadences, as labeling.min_gap_seconds

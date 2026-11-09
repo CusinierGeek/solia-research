@@ -115,6 +115,17 @@ ELIGIBILITY_DEFAULTS: dict[str, Any] = {
     "min_token_age_sec": 0.0,
 }
 
+# Rug-guard labels (``config.yaml`` ``rug_labels``, solia_ai.rug_labels): a sudden rug is a >=
+# ``sudden_drop`` fall of price or liquidity between two snapshots at most ``max_step_seconds``
+# apart; a gradual dump a >= ``gradual_drop`` fall of price within the horizon before any sudden
+# event.
+RUG_LABELS_DEFAULTS: dict[str, Any] = {
+    "horizons": ["1h", "6h", "24h"],
+    "sudden_drop": 0.5,
+    "gradual_drop": 0.5,
+    "max_step_seconds": 20,
+}
+
 _HORIZON_UNITS = {"s": 1, "m": 60, "h": 3600}
 
 Lookup = Callable[[str], str | None]
@@ -217,6 +228,35 @@ def liquidity_floor_error(values: Any) -> str | None:
             return f"'{name}.{key}' must be a number (SOL), got {value!r}"
         if not 0 <= value < float("inf"):  # also rejects NaN
             return f"'{name}.{key}' must be a finite number >= 0 (0 disables it), got {value!r}"
+    return None
+
+
+def rug_labels_error(values: Any) -> str | None:
+    """Why a ``rug_labels`` section (solia_ai.rug_labels) is invalid, or ``None`` when it is valid:
+    unknown key, horizons not a non-empty list of distinct valid horizons, a drop outside (0, 1),
+    a non-positive ``max_step_seconds``."""
+    if not isinstance(values, dict):
+        return f"'rug_labels' must be a mapping, got {values!r}"
+    unknown = [str(k) for k in values if k not in RUG_LABELS_DEFAULTS]
+    if unknown:
+        return f"'rug_labels' has unknown key(s): {', '.join(unknown)}"
+    horizons = values.get("horizons", RUG_LABELS_DEFAULTS["horizons"])
+    if not isinstance(horizons, list | tuple) or not horizons:
+        return f"'rug_labels.horizons' must be a non-empty list, got {horizons!r}"
+    if len(set(map(str, horizons))) != len(horizons):
+        return f"'rug_labels.horizons' lists a horizon twice: {horizons!r}"
+    for horizon in horizons:
+        try:
+            horizon_seconds(horizon)
+        except (ValueError, TypeError, AttributeError):
+            return f"'rug_labels.horizons' has an invalid horizon {horizon!r} (e.g. '1h', '30m')"
+    for key in ("sudden_drop", "gradual_drop"):
+        value = values.get(key, RUG_LABELS_DEFAULTS[key])
+        if isinstance(value, bool) or not isinstance(value, int | float) or not 0 < value < 1:
+            return f"'rug_labels.{key}' must be a fraction in (0, 1), got {value!r}"
+    step = values.get("max_step_seconds", RUG_LABELS_DEFAULTS["max_step_seconds"])
+    if isinstance(step, bool) or not isinstance(step, int | float) or not 0 < step < float("inf"):
+        return f"'rug_labels.max_step_seconds' must be a number > 0, got {step!r}"
     return None
 
 
@@ -572,6 +612,9 @@ def _validate(config: Any, source: str) -> None:
         for horizon, value in thresholds.items():
             if isinstance(value, bool) or not isinstance(value, int | float) or value <= 0:
                 fail(f"'labeling.{kind}.{horizon}' must be a positive number, got {value!r}")
+
+    if "rug_labels" in config and (problem := rug_labels_error(config["rug_labels"])):
+        fail(problem)
 
 
 # --------------------------------------------------------------------------- database

@@ -245,6 +245,77 @@ Labels require the token's **full lifecycle** — including **post-bonding** pri
 AMM. The pipeline captures pre- and post-bonding events (see [`DATA-SOURCES.md`](DATA-SOURCES.md)),
 so a pump/rug after migration is labeled correctly; a pre-bonding-only dataset would bias labels.
 
+### Rug-guard labels (#259)
+
+The 15m model's `rug` fires on any fall within the horizon. The rug guard needs the event that ruined the bot
+apart from a slow decline, so `solia_ai/rug_labels.py` builds two labels of its own, at `1h` / `6h` / `24h`
+(`config.yaml` `rug_labels`). They change nothing in the model's labels.
+
+- **Drop** — a step (a row and the one before it) from a tradeable row (`labeling.liquidity_floor`) where the
+  price, or the main pool's liquidity, falls by ≥ `sudden_drop` (50 %), or the pool falls under its floor, **and
+  stays there** (60 s; or the token stops trading).
+  - **sudden** if the two snapshots are ≤ `max_step_seconds` (20 s, two snapshot cadences) apart, i.e. about one
+    transaction;
+  - **ambiguous** if they are further apart (no row in between: restart, replay boundary, evicted idle token). It
+    decides nothing: the labels after it are unknown.
+- `sudden_<H>` = 1 if a sudden drop comes before any ambiguous one; 0 if no drop at all and the horizon is
+  covered (the same gap rule as the model's labels); else NaN. Already-seen drops are labeled without coverage (a
+  drained token stops being snapshotted).
+- `gradual_<H>` = 1 if a tradeable price ≤ anchor × (1 − `gradual_drop`) is reached **before** the first drop;
+  0 if not and a sudden drop came first, or no drop and the horizon is covered; else NaN. Both can be 1.
+- `drain_<H>` = 1 when the first sudden drop left the pool under its floor (emptied), 0 for a crash.
+
+**Multi-pool tokens.** A snapshot carries the liquidity, venue and pool of the pool traded **last**. A token
+trading on several pools jumps between their liquidities every snapshot (seen: 20 → 28 957 → 342 → 59 185 SOL in
+40 s, same price). Hence a liquidity fall counts only between two rows of the same pool (`pool_address`), staying
+there on that pool, and must start from the token's main pool (≥ 50 % of its largest liquidity over the previous
+minute). A fall under the floor across pools (the main pool emptied, trading left on a dust pool, seen on
+session 5) counts only if the token stays under the floor for 30 min: on 2026-11-06, 109 of 114 such orca cases
+came back above it within 30 min (a dust pool trading while the main pool rested), vs 6 of 89 same-pool pumpswap
+ones.
+
+**Who caused it — not attributable from `features`.** The pipeline folds remove-liquidity events into the pool
+state; no row records an event kind or a signer. The price read after an emptied pool is arbitrary (×0, ×1 or
+×10⁷ on session 5), so a liquidity removal can't be told from the sale of a huge position either. `drain`
+(emptied) vs crash is what the snapshots support. Attributing a drop to the creator / LP holder needs a pipeline
+column (remove-liquidity events and their signer) and a re-replay: a follow-up, not done here.
+
+**Quality check** (2026-11-09, anchors 2026-11-06 00:00 → 11-07 00:00 UTC, one per token per minute: 3.64 M;
+`python -m solia_ai.rug_labels --start 2026-11-06T00:00 --end 2026-11-07T00:00 --session 5
+--anchor-every-seconds 60`). Rates are per anchor (active tokens weigh more), among labeled anchors:
+
+| Venue | labeled 1h | sudden 1h | drained of sudden 1h | gradual 1h | sudden 24h | gradual 24h |
+|-------|-----------:|----------:|---------------------:|-----------:|-----------:|------------:|
+| pumpswap | 68 % | 9.0 % | 80 % | 1.2 % | 16 % | 7.4 % |
+| meteora | 62 % | 8.1 % | 83 % | 0.9 % | 26 % | 3.0 % |
+| raydium | 64 % | 1.3 % | 61 % | 0.2 % | 7.2 % | 4.1 % |
+| orca | 73 % | 1.9 % | 85 % | 0.0 % | 11 % | 0.3 % |
+| pumpfun (curve) | 32 % | 52 % | 7 % | 6.0 % | 65 % | 12 % |
+| raydium-launchpad | 50 % | 20 % | 1 % | 1.2 % | 21 % | 13 % |
+| meteora-launchpad | 53 % | 36 % | 70 % | 2.1 % | 32 % | 3.2 % |
+
+| Token age | labeled 1h | sudden 1h | gradual 1h | sudden 24h | gradual 24h |
+|-----------|-----------:|----------:|-----------:|-----------:|------------:|
+| < 5 min | 29 % | 19 % | 1.6 % | 19 % | 4.1 % |
+| 5–30 min | 50 % | 15 % | 1.7 % | 23 % | 7.4 % |
+| 30 min–1 h | 68 % | 15 % | 4.0 % | 28 % | 13 % |
+| 1–6 h | 76 % | 7.9 % | 2.7 % | 30 % | 14 % |
+| 6–24 h | 87 % | 3.4 % | 0.6 % | 29 % | 8.5 % |
+| ≥ 24 h | 90 % | 1.9 % | 0.1 % | 19 % | 3.8 % |
+
+- **Session 5 agreement** (48 traded tokens, labels at the entry row): `sudden` within 1 h on 45, within 6 h /
+  24 h on **47**, 43 of them drained; median 10.9 min from entry to the first sudden drop (p90 33.5). The one
+  miss (`7NdbNZ…`) is unknown, not 0: its drain came after a 40 s gap in the rows (ambiguous), as designed.
+- 25 % of anchors (NULL venue) are never labeled: those rows have neither price nor liquidity.
+- Labeled shares are low for young tokens: most stop trading (no coverage) without a drop the snapshots see.
+- The curve venues' high sudden rate (pumpfun 52 % at 1 h) is one-step price falls ≥ 50 % that last a minute on
+  young curves, consistent with a creator selling in one transaction; not checked against transactions.
+- Older tokens rug less per hour but not rarely over a day: ≥ 6 h tokens still have ~19–29 % sudden drops within
+  24 h, which the survivor trader (#261/#263) must face.
+- Calibration earlier in the same run, kept as the rule's justification: without the multi-pool rules, AMM sudden
+  rates were 55–68 % at 1 h (pool switches read as drops); without the 30-min cross-pool rule, orca 16 % / raydium
+  9 % (dust pools trading while the main pool rested).
+
 
 ## Token eligibility
 
@@ -1699,6 +1770,7 @@ the report under `docs/reports/`.
 | `eligibility.py` | Token eligibility rule (causal, shared with the bot) |
 | `eligibility_ablation.py` | Lift of eligibility rules (rule's model vs every-token model on the rule's population) |
 | `liquidity.py` | Venue-aware liquidity floor for labels & windows (recorded with the model) |
+| `rug_labels.py` | Rug-guard labels (sudden rug / drain / gradual dump at 1 h–24 h) and their quality report (#259) |
 | `liquidity_report.py` | Held-out metrics & entry rule split by anchor pool liquidity (one or several models, same windows) |
 | `search.py` | Hyperparameter, regularization, stride & labeling-threshold search (proposes a `config.yaml` diff; resumable); spaces in `sweeps/` |
 | `overnight.py` | Unattended #160 sweep: preflight, stage 1 → stage 2, summary (`infra/scripts/overnight-sweep.sh`) |
