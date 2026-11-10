@@ -554,7 +554,64 @@ The copy rule was committed before the analysis (3d49d29).
 - This also explains why our models find signal but no edge: the edge is the latency, not the information.
 
 The one profile not tested on its own is the slower high-volume winners (entries 8–145 s after the create, holds of
-minutes). Copying only them would need its own pre-registered test on new archive days.
+minutes). Copying only them would need its own pre-registered test on new archive days (#271, below).
+
+#### Slow persistent winners (#271): pre-registered copy test on new days
+
+**Leaders**, selected on periods A and B only. The rule and the 1 860 leaders were committed (ccf34d4) before any
+period-C data was analyzed; the list is in `docs/reports/slow-winners-271-selection.json`. A leader is a wallet
+eligible in A that:
+
+- was profitable in A **and** in B (≥ 5 closed positions in B);
+- enters ≥ 8 s after the create (median);
+- buys in the create's block on ≤ 10 % of its positions;
+- holds ≥ 60 s (median).
+
+In A they made +10.6 k SOL, with a median entry 211 s after the create and a median hold of 193 s. The control is
+1 860 random wallets eligible in A.
+
+**Period C** is new: 2026-11-05 → 11-07, 48 archive hours downloaded free. The copy rule is #269's: entry at the
+first trade ≥ 3 s / 10 s after the leader's buy, exit ≥ 2 s after its first sell, 1 SOL, the bot's costs.
+
+**Pass** (pre-registered): ≥ 200 copies at 3 s, with a positive mean whose 95 % token-bootstrap CI is above 0.
+
+| Copy, 1 SOL, bot costs | Copies | Mean net [95 % CI by token] | Median | Wins |
+|---|---|---|---|---|
+| **Leaders, 3 s** | 168 159 (1 780 wallets, 28 k tokens) | **−18.2 %** [−18.9, −17.6] | −10.9 % | 20 % |
+| Control, 3 s | 53 205 | −14.2 % [−15.1, −13.2] | −8.8 % | 21 % |
+| Leaders, 10 s | 167 784 | −18.8 % [−19.5, −18.1] | −9.0 % | 17 % |
+| Control, 10 s | 52 849 | −14.6 % [−15.5, −13.6] | −8.0 % | 15 % |
+
+**Verdict: FAIL.** The mean is negative, and copying the slow winners does *worse* than copying random wallets.
+
+The leaders themselves still won on period C, measured on their own closed positions (descriptive, after the
+verdict):
+
+- 1 754 of them traded in C, and 63 % were profitable;
+- together +7.6 k SOL over 119 k positions (+0.064 SOL per position at their own sizes, win rate 51 %);
+- the control: 38 % profitable.
+
+Their edge persists, and it is not copyable: a follower buys after them, into the move they started, and sells after
+them, into the drop their own sale starts.
+
+Why copying them fails (diagnostics after the verdict, leaders' copies on period C):
+
+| Copy variant | Median | Wins | Mean |
+|---|---|---|---|
+| Entry at the trade right after the leader's buy (0 s), no costs at all | 0.0 % | 50 % | not usable: broken post-drain prices dominate it |
+| Same, 3 s late, no costs | 0.0 % | 41 % | not usable: broken post-drain prices dominate it |
+| 0.1 SOL with the bot's costs, 0 s | −6.0 % | 30 % | −11.4 % [−11.7, −11.1] |
+| 0.1 SOL with the bot's costs, 3 s | −5.9 % | 24 % | −12.6 % [−12.9, −12.3] |
+
+- The price right after a leader's buy has no edge left, even before costs. The leaders' gain is in their own entry
+  price, which their buy moves.
+- What remains for a follower is a coin flip, and fees, pool impact and fixed costs turn it into a sure loss.
+
+The diagnostics scripts and outputs are in `docs/reports/slow-winners-271-*`.
+
+**Decision: no-go for copy trading, closed.** Fast winners can't be followed (#269), and slow persistent winners keep
+winning while their followers lose. Solia's paper bot has no edge to borrow from other wallets at the speed and size it
+trades.
 
 
 ## Token eligibility

@@ -401,3 +401,113 @@ def test_cli_arguments():
         w.main(["analyze", "--data", "d", "--a", "2026-11-01/2026-11-05"])
     with pytest.raises(SystemExit):
         w.parser().parse_args(["analyze", "--data", "d", "--b", "bad"])
+
+
+# --------------------------------------------------------------------------- slow winners (#271)
+
+
+def prof_rows(**wallets) -> pd.DataFrame:
+    """Profiles with explicit columns: wallet=(positions, pnl, delay, same_block, hold)."""
+    rows = {
+        k: {
+            "positions": v[0],
+            "pnl": v[1],
+            "delay_median_s": v[2],
+            "same_block": v[3],
+            "hold_median_s": v[4],
+        }
+        for k, v in wallets.items()
+    }
+    return pd.DataFrame.from_dict(rows, orient="index")
+
+
+def test_slow_winners_follow_the_preregistered_rule():
+    a = prof_rows(
+        slow=(20, 5.0, 30.0, 0.0, 300.0),
+        sniper=(20, 50.0, 0.0, 1.0, 5.0),
+        quick=(20, 5.0, 30.0, 0.0, 20.0),  # holds 20 s
+        early=(20, 5.0, 2.0, 0.0, 300.0),  # enters 2 s after the create
+        loser=(20, -5.0, 30.0, 0.0, 300.0),
+        few=(5, 5.0, 30.0, 0.0, 300.0),
+        faded=(20, 5.0, 30.0, 0.0, 300.0),  # lost in B
+        absent=(20, 5.0, 30.0, 0.0, 300.0),  # no B activity
+        unseen=(20, 5.0, 30.0, np.nan, 300.0),  # no create seen for same_block: allowed
+    )
+    b = prof_rows(
+        slow=(6, 1.0, 30.0, 0.0, 300.0),
+        sniper=(6, 1.0, 0.0, 1.0, 5.0),
+        quick=(6, 1.0, 30.0, 0.0, 20.0),
+        early=(6, 1.0, 2.0, 0.0, 300.0),
+        loser=(6, 1.0, 30.0, 0.0, 300.0),
+        few=(6, 1.0, 30.0, 0.0, 300.0),
+        faded=(6, -1.0, 30.0, 0.0, 300.0),
+        unseen=(6, 1.0, 30.0, 0.0, 300.0),
+    )
+    assert sorted(w.slow_winners(a, b)) == ["slow", "unseen"]
+
+
+def test_random_control_excludes_the_leaders():
+    a = prof_rows(**{f"w{i}": (20, 0.0, 1.0, 0.0, 1.0) for i in range(10)}, few=(2, 0, 0, 0, 0))
+    out = w.random_control(a, pd.Index(["w0", "w1"]), 5, seed=1)
+    assert len(out) == 5 and not ({"w0", "w1", "few"} & set(out))
+    assert list(out) == list(w.random_control(a, pd.Index(["w0", "w1"]), 5, seed=1))
+
+
+def test_cluster_mean_ci_resamples_tokens():
+    values = np.r_[np.full(50, 1.0), np.full(50, -1.0)]
+    groups = np.r_[np.full(50, "a"), np.full(50, "b")]
+    lo, hi = w.cluster_mean_ci(values, groups, samples=500)
+    assert lo == -1.0 and hi == 1.0  # two tokens: the CI spans either whole token
+    assert w.cluster_mean_ci(values, np.full(100, "a")) is None
+    many = w.cluster_mean_ci(np.arange(40, dtype=float), np.arange(40), samples=500)
+    assert many[0] < 19.5 < many[1]
+
+
+def test_verdict_needs_enough_copies_and_a_positive_ci():
+    ok = {"copies": 300, "mean": 0.05, "mean_ci_by_token": (0.01, 0.09)}
+    assert w.verdict(ok)["passed"]
+    assert not w.verdict({**ok, "copies": 150})["passed"]
+    assert not w.verdict({**ok, "mean_ci_by_token": (-0.01, 0.09)})["passed"]
+    assert w.verdict({"copies": 0})["why"].startswith("failed")
+
+
+def test_copy_test_on_period_c(tmp_path):
+    d = tmp_path / "p0"
+    d.mkdir()
+    for kind, f in period(3).items():
+        f.to_parquet(d / f"{kind}-2026110503.parquet", index=False)
+    selection = {"leaders": ["smart"], "control": ["dumb"]}
+    out = w.copy_test_c(tmp_path, selection, costs=FREE, samples=50)
+    lead, ctrl = out["copy"]["3s"]["leaders"], out["copy"]["3s"]["control"]
+    assert lead["copies"] == 12 and lead["leaders_copied"] == 1
+    assert lead["mean"] > 0 and ctrl["copies"] == 12 and "mean_ci_by_token" in ctrl
+    assert not out["verdict"]["passed"]  # 12 copies < 200
+    text = w.render_copytest({**out, "selection": {**selection, "rule": {}}})
+    assert "VERDICT" in text and "FAIL" in text
+
+
+def test_download_skips_present_hours(tmp_path):
+    src = tmp_path / "src" / "2026" / "11" / "05"
+    src.mkdir(parents=True)
+    (src / "00.jsonl.zst").write_bytes(b"x")
+    (src / "01.jsonl.zst").write_bytes(b"y")
+    out = tmp_path / "out"
+    got = w.download(
+        (tmp_path / "src").as_uri(), out, w._utc("2026-11-05"), w._utc("2026-11-05 02:00")
+    )
+    assert [p.read_bytes() for p in got] == [b"x", b"y"]
+    (src / "00.jsonl.zst").write_bytes(b"changed")
+    w.download((tmp_path / "src").as_uri(), out, w._utc("2026-11-05"), w._utc("2026-11-05 01:00"))
+    assert got[0].read_bytes() == b"x"  # already present: not fetched again
+    assert not list(out.rglob("*.part"))
+
+
+def test_cli_slow_winner_commands():
+    args = w.parser().parse_args(["copytest", "--data", "c", "--selection", "s.json"])
+    assert args.window == w.PERIOD_C
+    args = w.parser().parse_args(["download", "--out", "o"])
+    assert args.window == w.PERIOD_C and args.base_url.startswith("https://replay.pumpapi.io")
+    with pytest.raises(SystemExit):
+        w.parser().parse_args(["select", "--data", "d"])  # --out required
+    with pytest.raises(SystemExit, match="no token partitions"):
+        w.main(["select", "--data", "nowhere", "--out", "x.json"])

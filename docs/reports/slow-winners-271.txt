@@ -1,0 +1,7 @@
+Slow persistent winners (#271): copy test on period C 2026-11-05T00:00:00+00:00 .. 2026-11-07T00:00:00+00:00
+rule {'min_positions_a': 10, 'min_positions_b': 5, 'min_delay_s': 8.0, 'max_same_block': 0.1, 'min_hold_s': 60.0, 'profitable_in': ['A', 'B']}; 1860 leaders, 1860 control wallets
+    3s leaders  168159 copies (1780 wallets, 28217 tokens), mean -18.2% [by token -18.9%, -17.6%], median -10.9%, win 20%, total -30599.7 SOL
+    3s control   53205 copies (1120 wallets, 19609 tokens), mean -14.2% [by token -15.1%, -13.2%], median -8.8%, win 21%, total -7557.0 SOL
+   10s leaders  167784 copies (1780 wallets, 27953 tokens), mean -18.8% [by token -19.5%, -18.1%], median -9.0%, win 17%, total -31496.9 SOL
+   10s control   52849 copies (1120 wallets, 19293 tokens), mean -14.6% [by token -15.5%, -13.6%], median -8.0%, win 15%, total -7713.7 SOL
+VERDICT (3s leaders): FAIL (failed: mean_positive, ci_above_zero)

@@ -37,7 +37,7 @@ import logging
 import math
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -570,22 +570,15 @@ def study(
     return analyze(_slim(pos_a), _slim(pos_b), meta, run, samples=samples, seed=seed)
 
 
-def study_partitions(
-    data: Path,
-    a: tuple[datetime, datetime],
-    b: tuple[datetime, datetime],
-    *,
-    costs: Costs | None = None,
-    samples: int = 1000,
-    seed: int = 0,
-) -> dict[str, Any]:
-    """:func:`study` over the token partitions of an extraction: positions per partition (a
-    position never spans two), wallet profiles over all of them, copies per partition."""
-    costs = costs or Costs(virtual_sol={})
+def period_positions(
+    data: Path, a: tuple[datetime, datetime], b: tuple[datetime, datetime]
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    """Both periods' positions over the token partitions of an extraction (a position never spans
+    two partitions), and the periods' sizes."""
     parts = partitions(data)
     if not parts:
         raise ValueError(f"no token partitions under {data}")
-    pos = {"A": [], "B": []}
+    pos: dict[str, list[pd.DataFrame]] = {"A": [], "B": []}
     counts = {"A": [0, 0], "B": [0, 0]}
     for part in parts:
         for name, window in (("A", a), ("B", b)):
@@ -602,19 +595,178 @@ def study_partitions(
     pos_a = pd.concat(pos["A"], ignore_index=True)
     pos_b = pd.concat(pos["B"], ignore_index=True)
     meta = {n: _period_meta(*counts[n], p) for n, p in (("A", pos_a), ("B", pos_b))}
+    return pos_a, pos_b, meta
 
-    def run(combos: Sequence[tuple[str, pd.Index, float]]) -> dict[str, pd.DataFrame]:
-        out: dict[str, list[pd.DataFrame]] = {name: [] for name, _, _ in combos}
-        for part in parts:
-            trades = load_period(part, *b)["trades"]
-            if not len(trades):
-                continue
-            for name, who, lat in combos:
-                out[name].append(copy_trades(trades, who, lat, costs))
-            logger.info("copies of %s done", part.name)
-        return {k: pd.concat(v, ignore_index=True) if v else pd.DataFrame() for k, v in out.items()}
 
-    return analyze(pos_a, pos_b, meta, run, samples=samples, seed=seed)
+def partition_copies(
+    data: Path,
+    window: tuple[datetime, datetime],
+    combos: Sequence[tuple[str, pd.Index, float]],
+    costs: Costs,
+) -> dict[str, pd.DataFrame]:
+    """:func:`copy_trades` of every ``(name, leaders, latency)`` combo on ``window``, partition
+    by partition."""
+    parts = partitions(data)
+    if not parts:
+        raise ValueError(f"no token partitions under {data}")
+    out: dict[str, list[pd.DataFrame]] = {name: [] for name, _, _ in combos}
+    for part in parts:
+        trades = load_period(part, *window)["trades"]
+        if not len(trades):
+            continue
+        for name, who, lat in combos:
+            out[name].append(copy_trades(trades, who, lat, costs))
+        logger.info("copies of %s done", part.name)
+    return {k: pd.concat(v, ignore_index=True) if v else pd.DataFrame() for k, v in out.items()}
+
+
+def study_partitions(
+    data: Path,
+    a: tuple[datetime, datetime],
+    b: tuple[datetime, datetime],
+    *,
+    costs: Costs | None = None,
+    samples: int = 1000,
+    seed: int = 0,
+) -> dict[str, Any]:
+    """:func:`study` over the token partitions of an extraction."""
+    costs = costs or Costs(virtual_sol={})
+    pos_a, pos_b, meta = period_positions(data, a, b)
+    return analyze(pos_a, pos_b, meta, lambda combos: partition_copies(data, b, combos, costs),
+                   samples=samples, seed=seed)  # fmt: skip
+
+
+# --------------------------------------------------------------------------- slow winners (#271)
+
+# Fixed before any period-C data is analyzed (#271): leaders are A's eligible wallets that won in
+# A *and* in B, entering late (median >= 8 s after the create), almost never in the create's block
+# (<= 10 % of the positions whose create is seen) and holding for minutes (median >= 60 s).
+PERIOD_C = (_utc("2026-11-05"), _utc("2026-11-07"))
+SLOW_MIN_DELAY_S = 8.0
+SLOW_MAX_SAME_BLOCK = 0.10
+SLOW_MIN_HOLD_S = 60.0
+SLOW_MIN_POSITIONS_B = 5
+MIN_COPIES = 200
+PASS_LATENCY = "3s"
+
+
+def slow_winners(prof_a: pd.DataFrame, prof_b: pd.DataFrame) -> pd.Index:
+    """The pre-registered leaders (above), from both periods' wallet profiles."""
+    a = prof_a[
+        (prof_a["positions"] >= MIN_POSITIONS)
+        & (prof_a["pnl"] > 0)
+        & (prof_a["delay_median_s"] >= SLOW_MIN_DELAY_S)
+        & (prof_a["same_block"].fillna(0.0) <= SLOW_MAX_SAME_BLOCK)
+        & (prof_a["hold_median_s"] >= SLOW_MIN_HOLD_S)
+    ]
+    b = prof_b.reindex(a.index)
+    keep = (b["positions"] >= SLOW_MIN_POSITIONS_B) & (b["pnl"] > 0)
+    return a.index[keep.fillna(False).to_numpy(bool)]
+
+
+def random_control(prof_a: pd.DataFrame, exclude: pd.Index, n: int, seed: int = 0) -> pd.Index:
+    """``n`` random wallets eligible in A (>= :data:`MIN_POSITIONS`), not in ``exclude``."""
+    pool = prof_a.index[prof_a["positions"] >= MIN_POSITIONS].difference(exclude)
+    rng = np.random.default_rng(seed)
+    return pd.Index(rng.choice(pool.to_numpy(object), size=min(n, len(pool)), replace=False))
+
+
+def cluster_mean_ci(
+    values: np.ndarray, groups: np.ndarray, samples: int = 1000, seed: int = 0
+) -> tuple[float, float] | None:
+    """Bootstrap CI (95 %) of the mean of ``values`` resampling whole ``groups`` (tokens): copies
+    of one token aren't independent."""
+    values = np.asarray(values, np.float64)
+    codes, uniq = pd.factorize(pd.Series(np.asarray(groups, dtype=object)))
+    if len(uniq) < 2:
+        return None
+    sums = np.bincount(codes, weights=values, minlength=len(uniq))
+    counts = np.bincount(codes, minlength=len(uniq)).astype(np.float64)
+    rng = np.random.default_rng(seed)
+    pick = rng.integers(0, len(uniq), size=(samples, len(uniq)))
+    means = sums[pick].sum(axis=1) / counts[pick].sum(axis=1)
+    lo, hi = np.quantile(means, [0.025, 0.975])
+    return float(lo), float(hi)
+
+
+def verdict(summary: Mapping[str, Any]) -> dict[str, Any]:
+    """The pre-registered pass on the leaders' copies at :data:`PASS_LATENCY`."""
+    n = summary.get("copies", 0)
+    ci = summary.get("mean_ci_by_token")
+    checks = {
+        "copies": n >= MIN_COPIES,
+        "mean_positive": n > 0 and summary["mean"] > 0,
+        "ci_above_zero": ci is not None and ci[0] > 0,
+    }
+    failed = [k for k, ok in checks.items() if not ok]
+    return {"checks": checks, "passed": not failed,
+            "why": "all checks pass" if not failed else "failed: " + ", ".join(failed)}  # fmt: skip
+
+
+def select_leaders(data: Path, *, seed: int = 0) -> dict[str, Any]:
+    """The slow winners and their control, from periods A and B (writes nothing)."""
+    pos_a, pos_b, _ = period_positions(data, PERIOD_A, PERIOD_B)
+    prof_a, prof_b = wallet_profiles(pos_a), wallet_profiles(pos_b)
+    leaders = slow_winners(prof_a, prof_b)
+    control = random_control(prof_a, leaders, max(len(leaders), TOP_N), seed)
+    return {
+        "rule": {"min_positions_a": MIN_POSITIONS, "min_positions_b": SLOW_MIN_POSITIONS_B,
+                 "min_delay_s": SLOW_MIN_DELAY_S, "max_same_block": SLOW_MAX_SAME_BLOCK,
+                 "min_hold_s": SLOW_MIN_HOLD_S, "profitable_in": ["A", "B"]},
+        "leaders": [str(x) for x in leaders],
+        "control": [str(x) for x in control],
+        "leaders_a": _profile_summary(prof_a.loc[leaders]),
+        "leaders_b": _profile_summary(prof_b.loc[leaders]),
+    }  # fmt: skip
+
+
+def copy_test_c(
+    data_c: Path,
+    selection: Mapping[str, Any],
+    window: tuple[datetime, datetime] = PERIOD_C,
+    *,
+    costs: Costs | None = None,
+    samples: int = 1000,
+) -> dict[str, Any]:
+    """The leaders' and the control's copies on period C, with the verdict."""
+    costs = costs or Costs(virtual_sol={})
+    groups = {"leaders": pd.Index(selection["leaders"]), "control": pd.Index(selection["control"])}
+    combos = [(f"{lat:g}s/{g}", who, lat) for lat in LATENCIES for g, who in groups.items()]
+    copies = partition_copies(data_c, window, combos, costs)
+    out: dict[str, Any] = {"window": [t.isoformat() for t in window], "copy": {}}
+    for name, _, _ in combos:
+        latency, group = name.split("/")
+        s = copy_summary(copies[name], samples)
+        if s["copies"]:
+            s["mean_ci_by_token"] = cluster_mean_ci(copies[name]["net"], copies[name]["mint"],
+                                                    samples)  # fmt: skip
+            s["leaders_copied"] = int(copies[name]["wallet"].nunique())
+        out["copy"].setdefault(latency, {})[group] = s
+    out["verdict"] = verdict(out["copy"][PASS_LATENCY]["leaders"])
+    return out
+
+
+def download(base_url: str, out: Path, start: datetime, end: datetime) -> list[Path]:
+    """The hourly archives of ``[start, end)`` into ``out/YYYY/MM/DD/HH.jsonl.zst`` (skipping the
+    ones present; written to ``.part`` and renamed once complete)."""
+    import urllib.request
+
+    got, hour = [], start.replace(minute=0, second=0, microsecond=0)
+    while hour < end:
+        rel = f"{hour:%Y/%m/%d/%H}.jsonl.zst"
+        path = out / rel
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            part = path.with_name(path.name + ".part")
+            with urllib.request.urlopen(f"{base_url.rstrip('/')}/{rel}") as resp:
+                with open(part, "wb") as f:
+                    while chunk := resp.read(1 << 20):
+                        f.write(chunk)
+            part.rename(path)
+            logger.info("downloaded %s", rel)
+        got.append(path)
+        hour += timedelta(hours=1)
+    return got
 
 
 def analyze(
@@ -769,33 +921,90 @@ def parser() -> argparse.ArgumentParser:
     a.add_argument("--a", type=_window, default=PERIOD_A, help="period A START/END (UTC)")
     a.add_argument("--b", type=_window, default=PERIOD_B, help="period B START/END (UTC)")
     a.add_argument("--samples", type=int, default=1000)
+    d = sub.add_parser("download", help="fetch hourly replay archives (free)")
+    d.add_argument("--out", required=True, type=Path)
+    d.add_argument("--window", type=_window, default=PERIOD_C, help="START/END (UTC)")
+    d.add_argument("--base-url", default="https://replay.pumpapi.io")
+    s = sub.add_parser("select", help="the slow winners of periods A and B (#271)")
+    s.add_argument("--data", required=True, type=Path)
+    s.add_argument("--out", required=True, type=Path, help="selection JSON")
+    c = sub.add_parser("copytest", help="copy the selected leaders on period C (#271)")
+    c.add_argument("--data", required=True, type=Path, help="period C extraction")
+    c.add_argument("--selection", required=True, type=Path)
+    c.add_argument("--window", type=_window, default=PERIOD_C, help="period C START/END (UTC)")
+    c.add_argument("--report", type=Path)
+    c.add_argument("--samples", type=int, default=1000)
     return p
+
+
+def _write(report: Mapping[str, Any], path: Path | None, text: str | None = None) -> None:
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2, default=_jsonable), encoding="utf-8")
+    if text is not None:
+        path.with_suffix(".txt").write_text(text, encoding="utf-8")
+
+
+def render_copytest(report: Mapping[str, Any]) -> str:
+    sel = report["selection"]
+    lines = [
+        "Slow persistent winners (#271): copy test on period C "
+        f"{report['window'][0]} .. {report['window'][1]}",
+        f"rule {sel['rule']}; {len(sel['leaders'])} leaders, {len(sel['control'])} control wallets",
+    ]
+    for latency, groups in report["copy"].items():
+        for name, s in groups.items():
+            if not s.get("copies"):
+                lines.append(f"  {latency:>4} {name:<8} no copy")
+                continue
+            lines.append(
+                f"  {latency:>4} {name:<8} {s['copies']:>6} copies ({s['leaders_copied']} wallets, "
+                f"{s['tokens']} tokens), mean {s['mean']:+.1%} [by token "
+                f"{_ci(s['mean_ci_by_token'], pct=True)}], median {s['median']:+.1%}, win "
+                f"{_p(s['win_rate'])}, total {s['sol_total_at_1sol']:+.1f} SOL"
+            )
+    v = report["verdict"]
+    lines.append(
+        f"VERDICT ({PASS_LATENCY} leaders): {'PASS' if v['passed'] else 'FAIL'} ({v['why']})"
+    )
+    return "\n".join(lines) + "\n"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
-    if args.command == "extract":
-        if args.jobs < 1 or args.parts < 1:
-            raise SystemExit(f"--jobs and --parts must be >= 1, got {args.jobs}, {args.parts}")
-        try:
-            extract(args.archives, args.out, args.jobs, args.parts)
-        except ValueError as exc:
-            raise SystemExit(str(exc)) from None
-        return 0
-    if not args.a[1] <= args.b[0]:
-        raise SystemExit("period A must end before period B starts")
     try:
+        if args.command == "extract":
+            if args.jobs < 1 or args.parts < 1:
+                raise SystemExit(f"--jobs and --parts must be >= 1, got {args.jobs}, {args.parts}")
+            extract(args.archives, args.out, args.jobs, args.parts)
+            return 0
+        if args.command == "download":
+            download(args.base_url, args.out, *args.window)
+            return 0
+        if args.command == "select":
+            selection = select_leaders(args.data)
+            print(f"{len(selection['leaders'])} leaders; A: {selection['leaders_a']}")
+            _write(selection, args.out)
+            return 0
+        if args.command == "copytest":
+            selection = json.loads(args.selection.read_text(encoding="utf-8"))
+            report = copy_test_c(args.data, selection, args.window, samples=args.samples)
+            report["selection"] = selection
+            text = render_copytest(report)
+            print(text)
+            _write(report, args.report, text)
+            return 0
+        if not args.a[1] <= args.b[0]:
+            raise SystemExit("period A must end before period B starts")
         report = study_partitions(args.data, args.a, args.b, samples=args.samples)
     except ValueError as exc:
         raise SystemExit(str(exc)) from None
     report["windows"] = {"A": [t.isoformat() for t in args.a], "B": [t.isoformat() for t in args.b]}
     text = render(report)
     print(text)
-    if args.report:
-        args.report.parent.mkdir(parents=True, exist_ok=True)
-        args.report.write_text(json.dumps(report, indent=2, default=_jsonable), encoding="utf-8")
-        args.report.with_suffix(".txt").write_text(text, encoding="utf-8")
+    _write(report, args.report, text)
     return 0
 
 
