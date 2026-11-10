@@ -1,0 +1,73 @@
+Rug guard (#260): LightGBM per target, first anchor per token per period
+anchors {'train': 2508165, 'val': 498217, 'p1': 742343, 'p2': 541481}; tokens {'train': 339416, 'val': 91700, 'p1': 114961, 'p2': 84948}
+
+target         iter  period/pop          n    rate    ROC     PR
+sudden_1h       518  p1/all          47339   91.5%  0.959  0.995
+sudden_1h       518  p1/survivors      428    3.7%  0.798  0.288
+sudden_1h       518  p2/all          41289   92.2%  0.961  0.996
+sudden_1h       518  p2/survivors      345    3.5%  0.858  0.264
+sudden_6h       370  p1/all          48526   90.6%  0.984  0.998
+sudden_6h       370  p1/survivors      427   10.8%  0.770  0.359
+sudden_6h       370  p2/all          42915   90.0%  0.989  0.999
+sudden_6h       370  p2/survivors      342   10.5%  0.811  0.383
+sudden_24h      308  p1/all          50567   88.2%  0.991  0.999
+sudden_24h      308  p1/survivors      424   27.8%  0.802  0.595
+sudden_24h      308  p2/all          43504   89.7%  0.992  0.999
+sudden_24h      308  p2/survivors      339   26.8%  0.791  0.529
+gradual_1h      316  p1/all          47773    9.1%  0.800  0.230
+gradual_1h      316  p1/survivors      428    0.9%  0.948  0.158
+gradual_1h      316  p2/all          41656    9.1%  0.808  0.237
+gradual_1h      316  p2/survivors      345    1.7%  0.929  0.292
+gradual_6h      265  p1/all          48975    9.0%  0.818  0.250
+gradual_6h      265  p1/survivors      428    5.6%  0.915  0.388
+gradual_6h      265  p2/all          43297    8.9%  0.816  0.248
+gradual_6h      265  p2/survivors      342    7.0%  0.923  0.413
+gradual_24h     170  p1/all          51049    8.8%  0.807  0.233
+gradual_24h     170  p1/survivors      426   10.8%  0.920  0.501
+gradual_24h     170  p2/all          43912    9.0%  0.813  0.253
+gradual_24h     170  p2/survivors      339   16.2%  0.940  0.707
+
+Criterion on sudden_24h, survivors (age >= 6 h): rate <= 3.0%, coverage >= 30.0%, beats 'LP burned >= 90 %'
+threshold (period 1): 0.046304942720861844
+  p1 safe set: 82/424 kept (19.3%), rate 2.4% (95 % upper 8.5%)
+  p2 safe set: 78/339 kept (23.0%), rate 7.7% (95 % upper 15.8%)
+  p2 rule safe set:  184/339 kept (54.3%), rate 28.8% (95 % upper 35.7%)
+  p2 model at the rule's coverage: 184/339 kept (54.3%), rate 9.8% (95 % upper 14.9%)
+  beats the rule: True (lower rate at the rule's coverage)
+VERDICT: FAIL (failed: rate, coverage)
+all tokens, p2, same threshold: 3189/43504 kept (7.3%), rate 1.9% (95 % upper 2.5%)
+p2 survivors also seen in training: 41.6%
+
+Top features (sudden_24h, gain share):
+  wal_creator_age_sec              26.3%
+  wal_creator_prev_launches        13.1%
+  burned_liquidity                 9.2%
+  wal_creator_buy_supply_share     7.8%
+  liquidity                        6.6%
+  pool_seed_sol                    5.5%
+  token_age_sec                    4.2%
+  venue_code                       4.1%
+  market_cap                       3.5%
+  buy_events                       2.6%
+  liquidity_vs_seed                2.4%
+  pool_seed_frac                   1.7%
+  wal_creator_buy_sol              1.5%
+  hs_top10_share                   1.1%
+  holders                          1.0%
+
+Examples (p2 survivors, highest then lowest scores):
+  1VJyBvUb pumpswap   score 0.991 sudden_24h=1: wal_creator_age_sec=2.229e+04 (+1.03), wal_creator_buy_supply_share=0 (+0.92), wal_creator_buy_sol=0 (+0.92)
+  GXKH2nRJ pumpswap   score 0.979 sudden_24h=0: wal_creator_age_sec=2.326e+04 (+0.94), wal_creator_buy_sol=0 (+0.80), wal_creator_buy_supply_share=0 (+0.79)
+  BvqKMJ4b pumpswap   score 0.976 sudden_24h=1: buy_events=246 (+1.26), wal_creator_age_sec=2.516e+04 (+0.71), rep_early_pnl_sol=-1.207 (+0.58)
+  v3DNinEc pumpswap   score 0.975 sudden_24h=0: buy_events=303 (+1.34), pool_seed_sol=5974 (+0.72), liquidity_vs_seed=2.088 (+0.63)
+  F1LQvm5b meteora    score 0.966 sudden_24h=0: volatility=0.4042 (+1.27), burned_liquidity=NULL (+1.02), events_per_trader=9.583 (+0.52)
+  BdouwEr3 meteora    score 0.960 sudden_24h=1: volatility=0.2089 (+0.99), wal_creator_buy_supply_share=0.1035 (+0.73), wal_creator_age_sec=8.64e+04 (+0.73)
+  83WuTBUf pumpfun    score 0.957 sudden_24h=1: liquidity=0.2926 (+1.85), burned_liquidity=0 (+1.25), market_cap=1.484e+04 (+0.72)
+  4vCf2N9X pumpswap   score 0.955 sudden_24h=0: buy_events=80 (+1.20), market_cap=2.575e+06 (+0.71), pool_seed_sol=5019 (+0.70)
+  pDmJ9fVM pumpswap   score 0.950 sudden_24h=0: pool_seed_sol=5084 (+1.23), buy_events=87 (+1.08), pool_seed_frac=0.02795 (+0.52)
+  gi2rCdj8 pumpswap   score 0.940 sudden_24h=0: buy_events=306 (+1.30), pool_seed_sol=8318 (+0.82), liquidity_vs_seed=1.996 (+0.59)
+  pumpCmXq orca       score 0.001 sudden_24h=0: buy_events=302 (+0.45), large_buy_count=30 (+0.17), events_per_trader=4.743 (+0.12)
+  Es9vMFrz raydium    score 0.001 sudden_24h=0: buy_events=107 (+0.32), volume=22.37 (+0.14), net_sol_flow=13.22 (+0.11)
+  cbbtcf3a orca       score 0.001 sudden_24h=0: buy_events=94 (+0.31), events_per_trader=5.885 (+0.17), burned_liquidity=NULL (+0.12)
+  EPjFWdd5 raydium    score 0.001 sudden_24h=0: buy_events=443 (+0.67), rep_early_win_rate=0.6999 (+0.28), large_buy_count=86 (+0.19)
+  Xsc9qvGR orca       score 0.003 sudden_24h=0: buy_events=19 (+0.20), burned_liquidity=NULL (+0.16), events_per_trader=5.286 (+0.14)

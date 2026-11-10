@@ -1,0 +1,1004 @@
+{
+  "anchors": {
+    "train": 2508165,
+    "val": 498217,
+    "p1": 742343,
+    "p2": 541481
+  },
+  "tokens": {
+    "train": 339416,
+    "val": 91700,
+    "p1": 114961,
+    "p2": 84948
+  },
+  "targets": {
+    "sudden_1h": {
+      "train_rows": 917155,
+      "train_rate": 0.22297103703022003,
+      "best_iteration": 518,
+      "importance": [
+        {
+          "feature": "wal_creator_buy_supply_share",
+          "share": 0.372030678108984
+        },
+        {
+          "feature": "wal_creator_buy_sol",
+          "share": 0.2030820943975304
+        },
+        {
+          "feature": "pool_seed_sol",
+          "share": 0.09807219990646313
+        },
+        {
+          "feature": "liquidity",
+          "share": 0.05000136388320357
+        },
+        {
+          "feature": "token_age_sec",
+          "share": 0.046451177694460305
+        },
+        {
+          "feature": "burned_liquidity",
+          "share": 0.04412135040516254
+        },
+        {
+          "feature": "liquidity_vs_seed",
+          "share": 0.029867138224001343
+        },
+        {
+          "feature": "market_cap",
+          "share": 0.01580609099386402
+        },
+        {
+          "feature": "rep_smart_traders",
+          "share": 0.014154623427919386
+        },
+        {
+          "feature": "venue_code",
+          "share": 0.010530079533082338
+        },
+        {
+          "feature": "hs_top10_net_flow",
+          "share": 0.009077129149220903
+        },
+        {
+          "feature": "max_buy_sol",
+          "share": 0.00780987211497585
+        },
+        {
+          "feature": "holders",
+          "share": 0.006864390451289725
+        },
+        {
+          "feature": "volume",
+          "share": 0.006567737302874885
+        },
+        {
+          "feature": "new_trader_ratio",
+          "share": 0.0059324172973576434
+        }
+      ],
+      "p1/all": {
+        "n": 47339,
+        "rate": 0.9151228374067893,
+        "roc_auc": 0.9590803205477938,
+        "pr_auc": 0.9954637141459016
+      },
+      "p1/survivors": {
+        "n": 428,
+        "rate": 0.037383177570093455,
+        "roc_auc": 0.7983919902912622,
+        "pr_auc": 0.2884630355677241
+      },
+      "p2/all": {
+        "n": 41289,
+        "rate": 0.9217709317251568,
+        "roc_auc": 0.9612049264881793,
+        "pr_auc": 0.9961456459400071
+      },
+      "p2/survivors": {
+        "n": 345,
+        "rate": 0.034782608695652174,
+        "roc_auc": 0.8583583583583584,
+        "pr_auc": 0.2637730476127134
+      }
+    },
+    "sudden_6h": {
+      "train_rows": 1088617,
+      "train_rate": 0.21767251193523407,
+      "best_iteration": 370,
+      "importance": [
+        {
+          "feature": "wal_creator_buy_supply_share",
+          "share": 0.47914131254260717
+        },
+        {
+          "feature": "pool_seed_sol",
+          "share": 0.08293165487003208
+        },
+        {
+          "feature": "wal_creator_buy_sol",
+          "share": 0.06464612220433551
+        },
+        {
+          "feature": "liquidity",
+          "share": 0.06169551915037065
+        },
+        {
+          "feature": "burned_liquidity",
+          "share": 0.05388907489822324
+        },
+        {
+          "feature": "token_age_sec",
+          "share": 0.033312869733343575
+        },
+        {
+          "feature": "liquidity_vs_seed",
+          "share": 0.02468677353782669
+        },
+        {
+          "feature": "market_cap",
+          "share": 0.023730942479733785
+        },
+        {
+          "feature": "venue_code",
+          "share": 0.019156429594401368
+        },
+        {
+          "feature": "buy_events",
+          "share": 0.017943237870387138
+        },
+        {
+          "feature": "rep_smart_traders",
+          "share": 0.012817816195458426
+        },
+        {
+          "feature": "holders",
+          "share": 0.009171468353814391
+        },
+        {
+          "feature": "events_per_trader",
+          "share": 0.008338695711219804
+        },
+        {
+          "feature": "large_buy_count",
+          "share": 0.008324044357719326
+        },
+        {
+          "feature": "pool_seed_frac",
+          "share": 0.007972837899657356
+        }
+      ],
+      "p1/all": {
+        "n": 48526,
+        "rate": 0.9063182623748094,
+        "roc_auc": 0.9843908296716081,
+        "pr_auc": 0.9980310976788658
+      },
+      "p1/survivors": {
+        "n": 427,
+        "rate": 0.10772833723653395,
+        "roc_auc": 0.7703412073490813,
+        "pr_auc": 0.3585419183081772
+      },
+      "p2/all": {
+        "n": 42915,
+        "rate": 0.9001281603169055,
+        "roc_auc": 0.9891210821605827,
+        "pr_auc": 0.9985421372939602
+      },
+      "p2/survivors": {
+        "n": 342,
+        "rate": 0.10526315789473684,
+        "roc_auc": 0.8107298474945533,
+        "pr_auc": 0.3830901932775724
+      }
+    },
+    "sudden_24h": {
+      "train_rows": 1130914,
+      "train_rate": 0.25114110112190247,
+      "best_iteration": 308,
+      "importance": [
+        {
+          "feature": "wal_creator_age_sec",
+          "share": 0.2627372687663291
+        },
+        {
+          "feature": "wal_creator_prev_launches",
+          "share": 0.13107071120891345
+        },
+        {
+          "feature": "burned_liquidity",
+          "share": 0.0917241780735168
+        },
+        {
+          "feature": "wal_creator_buy_supply_share",
+          "share": 0.07764874299941647
+        },
+        {
+          "feature": "liquidity",
+          "share": 0.06605236721032101
+        },
+        {
+          "feature": "pool_seed_sol",
+          "share": 0.05496251361122779
+        },
+        {
+          "feature": "token_age_sec",
+          "share": 0.04183624213308517
+        },
+        {
+          "feature": "venue_code",
+          "share": 0.04086376141735997
+        },
+        {
+          "feature": "market_cap",
+          "share": 0.034870860307283105
+        },
+        {
+          "feature": "buy_events",
+          "share": 0.025807078788087977
+        },
+        {
+          "feature": "liquidity_vs_seed",
+          "share": 0.023830471753658104
+        },
+        {
+          "feature": "pool_seed_frac",
+          "share": 0.017442347311249953
+        },
+        {
+          "feature": "wal_creator_buy_sol",
+          "share": 0.014725509631352697
+        },
+        {
+          "feature": "hs_top10_share",
+          "share": 0.011318187534510717
+        },
+        {
+          "feature": "holders",
+          "share": 0.010474544085877748
+        }
+      ],
+      "p1/all": {
+        "n": 50567,
+        "rate": 0.8818399351355627,
+        "roc_auc": 0.991213248375227,
+        "pr_auc": 0.9986028401496452
+      },
+      "p1/survivors": {
+        "n": 424,
+        "rate": 0.2783018867924528,
+        "roc_auc": 0.8020660241497729,
+        "pr_auc": 0.5949874804140957
+      },
+      "p2/all": {
+        "n": 43504,
+        "rate": 0.8965152629643252,
+        "roc_auc": 0.992116856780585,
+        "pr_auc": 0.9989793553043448
+      },
+      "p2/survivors": {
+        "n": 339,
+        "rate": 0.26843657817109146,
+        "roc_auc": 0.7912531017369727,
+        "pr_auc": 0.5285930804150849
+      }
+    },
+    "gradual_1h": {
+      "train_rows": 918771,
+      "train_rate": 0.021631069481372833,
+      "best_iteration": 316,
+      "importance": [
+        {
+          "feature": "wal_creator_buy_sol",
+          "share": 0.2134273627564489
+        },
+        {
+          "feature": "wal_creator_buy_supply_share",
+          "share": 0.137055619578639
+        },
+        {
+          "feature": "pool_seed_sol",
+          "share": 0.08980573070838081
+        },
+        {
+          "feature": "market_cap",
+          "share": 0.05638242848678541
+        },
+        {
+          "feature": "volatility",
+          "share": 0.05007335027036355
+        },
+        {
+          "feature": "liquidity",
+          "share": 0.04424016712788369
+        },
+        {
+          "feature": "liquidity_vs_seed",
+          "share": 0.03261190441994587
+        },
+        {
+          "feature": "rep_smart_traders",
+          "share": 0.03160227446372614
+        },
+        {
+          "feature": "hs_large_holders",
+          "share": 0.02381851127372279
+        },
+        {
+          "feature": "events_per_trader",
+          "share": 0.02024864488717206
+        },
+        {
+          "feature": "unique_traders",
+          "share": 0.019974671152624614
+        },
+        {
+          "feature": "token_age_sec",
+          "share": 0.017206536857361714
+        },
+        {
+          "feature": "volume",
+          "share": 0.01669438804386532
+        },
+        {
+          "feature": "hs_top10_share",
+          "share": 0.015461076793082439
+        },
+        {
+          "feature": "rep_smart_buy_share",
+          "share": 0.012481055855616794
+        }
+      ],
+      "p1/all": {
+        "n": 47773,
+        "rate": 0.09120214347016097,
+        "roc_auc": 0.800074083526214,
+        "pr_auc": 0.2299291090458828
+      },
+      "p1/survivors": {
+        "n": 428,
+        "rate": 0.009345794392523364,
+        "roc_auc": 0.9475235849056604,
+        "pr_auc": 0.15817448680351906
+      },
+      "p2/all": {
+        "n": 41656,
+        "rate": 0.09134338390628001,
+        "roc_auc": 0.8080957489757455,
+        "pr_auc": 0.23700179070782312
+      },
+      "p2/survivors": {
+        "n": 345,
+        "rate": 0.017391304347826087,
+        "roc_auc": 0.9287118977384463,
+        "pr_auc": 0.2917718855218855
+      }
+    },
+    "gradual_6h": {
+      "train_rows": 1091082,
+      "train_rate": 0.029696209356188774,
+      "best_iteration": 265,
+      "importance": [
+        {
+          "feature": "volatility",
+          "share": 0.23733093594118712
+        },
+        {
+          "feature": "liquidity_vs_seed",
+          "share": 0.10159798847881384
+        },
+        {
+          "feature": "market_cap",
+          "share": 0.08169029147376347
+        },
+        {
+          "feature": "liquidity",
+          "share": 0.0648035859944332
+        },
+        {
+          "feature": "pool_seed_sol",
+          "share": 0.05771567521176398
+        },
+        {
+          "feature": "wal_creator_buy_supply_share",
+          "share": 0.04841957221462565
+        },
+        {
+          "feature": "hs_large_holders",
+          "share": 0.047280635766961836
+        },
+        {
+          "feature": "hs_top10_share",
+          "share": 0.03249695109742887
+        },
+        {
+          "feature": "wal_creator_buy_sol",
+          "share": 0.03200566078016646
+        },
+        {
+          "feature": "volume",
+          "share": 0.021567992316375257
+        },
+        {
+          "feature": "token_age_sec",
+          "share": 0.018790558191292977
+        },
+        {
+          "feature": "holders",
+          "share": 0.01873279949130577
+        },
+        {
+          "feature": "hs_holders",
+          "share": 0.016178148310350634
+        },
+        {
+          "feature": "pool_seed_frac",
+          "share": 0.01608815904758993
+        },
+        {
+          "feature": "rep_early_win_rate",
+          "share": 0.014812166688020503
+        }
+      ],
+      "p1/all": {
+        "n": 48975,
+        "rate": 0.09012761613067892,
+        "roc_auc": 0.8183717417768774,
+        "pr_auc": 0.2497864415250758
+      },
+      "p1/survivors": {
+        "n": 428,
+        "rate": 0.056074766355140186,
+        "roc_auc": 0.9148102310231023,
+        "pr_auc": 0.38805890822818934
+      },
+      "p2/all": {
+        "n": 43297,
+        "rate": 0.08917476961452295,
+        "roc_auc": 0.8158778645516652,
+        "pr_auc": 0.24819979495335953
+      },
+      "p2/survivors": {
+        "n": 342,
+        "rate": 0.07017543859649122,
+        "roc_auc": 0.9226939203354299,
+        "pr_auc": 0.4125071945769068
+      }
+    },
+    "gradual_24h": {
+      "train_rows": 1136167,
+      "train_rate": 0.05435996502637863,
+      "best_iteration": 170,
+      "importance": [
+        {
+          "feature": "volatility",
+          "share": 0.1384154149319932
+        },
+        {
+          "feature": "market_cap",
+          "share": 0.11120024746768518
+        },
+        {
+          "feature": "liquidity_vs_seed",
+          "share": 0.10104187300249418
+        },
+        {
+          "feature": "liquidity",
+          "share": 0.09510482658500011
+        },
+        {
+          "feature": "pool_seed_sol",
+          "share": 0.08208597134045781
+        },
+        {
+          "feature": "volume",
+          "share": 0.06970174992573343
+        },
+        {
+          "feature": "hs_large_holders",
+          "share": 0.0417899878356064
+        },
+        {
+          "feature": "hs_top10_share",
+          "share": 0.037246038696915076
+        },
+        {
+          "feature": "venue_code",
+          "share": 0.033677061278877485
+        },
+        {
+          "feature": "pool_seed_frac",
+          "share": 0.028317613133989557
+        },
+        {
+          "feature": "burned_liquidity",
+          "share": 0.02796997915040776
+        },
+        {
+          "feature": "token_age_sec",
+          "share": 0.026605454700006113
+        },
+        {
+          "feature": "rep_early_win_rate",
+          "share": 0.01949046328582853
+        },
+        {
+          "feature": "hs_holders",
+          "share": 0.018385096407658712
+        },
+        {
+          "feature": "wal_creator_buy_supply_share",
+          "share": 0.016863969563733403
+        }
+      ],
+      "p1/all": {
+        "n": 51049,
+        "rate": 0.08834649062665283,
+        "roc_auc": 0.8074280284389665,
+        "pr_auc": 0.23316033767679326
+      },
+      "p1/survivors": {
+        "n": 426,
+        "rate": 0.107981220657277,
+        "roc_auc": 0.9201945080091534,
+        "pr_auc": 0.5011234656485224
+      },
+      "p2/all": {
+        "n": 43912,
+        "rate": 0.09027145199489889,
+        "roc_auc": 0.8127245256118525,
+        "pr_auc": 0.2530473091919219
+      },
+      "p2/survivors": {
+        "n": 339,
+        "rate": 0.16224188790560473,
+        "roc_auc": 0.9397567221510883,
+        "pr_auc": 0.70672204082562
+      }
+    }
+  },
+  "criterion": {
+    "criterion": {
+      "target": "sudden_24h",
+      "min_age_seconds": 21600,
+      "max_rate": 0.03,
+      "min_coverage": 0.3,
+      "rule_min_burned": 90.0
+    },
+    "threshold": 0.046304942720861844,
+    "p1": {
+      "n": 424,
+      "kept": 82,
+      "coverage": 0.19339622641509435,
+      "positives": 2,
+      "rate": 0.024390243902439025,
+      "rate_upper95": 0.08463541909007394
+    },
+    "p2": {
+      "n": 339,
+      "kept": 78,
+      "coverage": 0.23008849557522124,
+      "positives": 6,
+      "rate": 0.07692307692307693,
+      "rate_upper95": 0.15783417594024104
+    },
+    "rule_comparison": {
+      "beats": true,
+      "why": "lower rate at the rule's coverage",
+      "rule": {
+        "n": 339,
+        "kept": 184,
+        "coverage": 0.5427728613569321,
+        "positives": 53,
+        "rate": 0.28804347826086957,
+        "rate_upper95": 0.35728452777599184
+      },
+      "model_at_rule_coverage": {
+        "n": 339,
+        "kept": 184,
+        "coverage": 0.5427728613569321,
+        "positives": 18,
+        "rate": 0.09782608695652174,
+        "rate_upper95": 0.14932461207721773
+      }
+    },
+    "checks": {
+      "rate": false,
+      "coverage": false,
+      "beats_rule": true
+    },
+    "passed": false,
+    "why": "failed: rate, coverage"
+  },
+  "all_tokens_p2_at_threshold": {
+    "n": 43504,
+    "kept": 3189,
+    "coverage": 0.07330360426627437,
+    "positives": 62,
+    "rate": 0.019441831295076827,
+    "rate_upper95": 0.024844117955806565
+  },
+  "p2_survivors_seen_in_train": 0.415929203539823,
+  "examples": [
+    {
+      "mint": "1VJyBvUb83sDBjRvnVH2chd1bVzFCmrrJyFidbCM7KR",
+      "ts": "2026-11-07T20:45:05.755000+00:00",
+      "venue": "pumpswap",
+      "score": 0.9909081291424264,
+      "sudden_24h": 1.0,
+      "reasons": [
+        {
+          "feature": "wal_creator_age_sec",
+          "value": 22290.0,
+          "contribution": 1.0319972260960288
+        },
+        {
+          "feature": "wal_creator_buy_supply_share",
+          "value": 0.0,
+          "contribution": 0.924837783294838
+        },
+        {
+          "feature": "wal_creator_buy_sol",
+          "value": 0.0,
+          "contribution": 0.9227845997385125
+        }
+      ]
+    },
+    {
+      "mint": "GXKH2nRJqu7BznzSdUELcMwk7C3ebNDcqB5YEgM4bbpK",
+      "ts": "2026-11-07T12:00:07.568000+00:00",
+      "venue": "pumpswap",
+      "score": 0.9785272656860444,
+      "sudden_24h": 0.0,
+      "reasons": [
+        {
+          "feature": "wal_creator_age_sec",
+          "value": 23260.0,
+          "contribution": 0.9371045744634576
+        },
+        {
+          "feature": "wal_creator_buy_sol",
+          "value": 0.0,
+          "contribution": 0.8029575601124912
+        },
+        {
+          "feature": "wal_creator_buy_supply_share",
+          "value": 0.0,
+          "contribution": 0.7937780423235139
+        }
+      ]
+    },
+    {
+      "mint": "BvqKMJ4bwnDaSxQrDE9hsfz8397kNF1u2mRppNtipump",
+      "ts": "2026-11-07T12:00:07.568000+00:00",
+      "venue": "pumpswap",
+      "score": 0.9762203738396805,
+      "sudden_24h": 1.0,
+      "reasons": [
+        {
+          "feature": "buy_events",
+          "value": 246.0,
+          "contribution": 1.263907735851521
+        },
+        {
+          "feature": "wal_creator_age_sec",
+          "value": 25157.0,
+          "contribution": 0.712470380290064
+        },
+        {
+          "feature": "rep_early_pnl_sol",
+          "value": -1.2071748971939087,
+          "contribution": 0.5826173243406493
+        }
+      ]
+    },
+    {
+      "mint": "v3DNinEcVoHw9xawuGTQJDZtE6qo35cbdiSrVTrpump",
+      "ts": "2026-11-07T12:00:07.568000+00:00",
+      "venue": "pumpswap",
+      "score": 0.974944775661982,
+      "sudden_24h": 0.0,
+      "reasons": [
+        {
+          "feature": "buy_events",
+          "value": 303.0,
+          "contribution": 1.3383521850341547
+        },
+        {
+          "feature": "pool_seed_sol",
+          "value": 5974.29638671875,
+          "contribution": 0.7226213556245719
+        },
+        {
+          "feature": "liquidity_vs_seed",
+          "value": 2.0881574153900146,
+          "contribution": 0.6265063710130312
+        }
+      ]
+    },
+    {
+      "mint": "F1LQvm5biTdEXPrHokxhkR7sDwQcBnA8VTEmD5Gdpump",
+      "ts": "2026-11-07T15:30:01.348000+00:00",
+      "venue": "meteora",
+      "score": 0.9660873837533792,
+      "sudden_24h": 0.0,
+      "reasons": [
+        {
+          "feature": "volatility",
+          "value": 0.4041942059993744,
+          "contribution": 1.2736117909269162
+        },
+        {
+          "feature": "burned_liquidity",
+          "value": null,
+          "contribution": 1.017599537666464
+        },
+        {
+          "feature": "events_per_trader",
+          "value": 9.583333015441895,
+          "contribution": 0.5157312032365566
+        }
+      ]
+    },
+    {
+      "mint": "BdouwEr3mwXkT6S6EmHNCjn9oEtykRKCKiUSTRF9pump",
+      "ts": "2026-11-07T12:00:07.568000+00:00",
+      "venue": "meteora",
+      "score": 0.9603672956392211,
+      "sudden_24h": 1.0,
+      "reasons": [
+        {
+          "feature": "volatility",
+          "value": 0.20885711908340454,
+          "contribution": 0.9876285321554793
+        },
+        {
+          "feature": "wal_creator_buy_supply_share",
+          "value": 0.10351712256669998,
+          "contribution": 0.733907481968343
+        },
+        {
+          "feature": "wal_creator_age_sec",
+          "value": 86400.0,
+          "contribution": 0.7286517870236336
+        }
+      ]
+    },
+    {
+      "mint": "83WuTBUf1vMDShCZyMD2PrDbd5ZY9DZVQd6vpfy1pump",
+      "ts": "2026-11-07T14:15:03.217000+00:00",
+      "venue": "pumpfun",
+      "score": 0.9574342169115887,
+      "sudden_24h": 1.0,
+      "reasons": [
+        {
+          "feature": "liquidity",
+          "value": 0.2926487922668457,
+          "contribution": 1.8491995146357747
+        },
+        {
+          "feature": "burned_liquidity",
+          "value": 0.0,
+          "contribution": 1.2483791511503777
+        },
+        {
+          "feature": "market_cap",
+          "value": 14838.59375,
+          "contribution": 0.7212335825390939
+        }
+      ]
+    },
+    {
+      "mint": "4vCf2N9Xt2snZ4XuSbmeumdoKyFmTkdwNFp47ncbpump",
+      "ts": "2026-11-07T12:00:07.568000+00:00",
+      "venue": "pumpswap",
+      "score": 0.9545775291447876,
+      "sudden_24h": 0.0,
+      "reasons": [
+        {
+          "feature": "buy_events",
+          "value": 80.0,
+          "contribution": 1.1979966898590426
+        },
+        {
+          "feature": "market_cap",
+          "value": 2574718.5,
+          "contribution": 0.7077130208358717
+        },
+        {
+          "feature": "pool_seed_sol",
+          "value": 5019.4892578125,
+          "contribution": 0.696116318200344
+        }
+      ]
+    },
+    {
+      "mint": "pDmJ9fVMET1Vrafaid98XcnvvEiAs3d7nSStznRpump",
+      "ts": "2026-11-07T12:00:07.568000+00:00",
+      "venue": "pumpswap",
+      "score": 0.9504391930140613,
+      "sudden_24h": 0.0,
+      "reasons": [
+        {
+          "feature": "pool_seed_sol",
+          "value": 5084.02783203125,
+          "contribution": 1.2273833525978126
+        },
+        {
+          "feature": "buy_events",
+          "value": 87.0,
+          "contribution": 1.082504076145745
+        },
+        {
+          "feature": "pool_seed_frac",
+          "value": 0.027953490614891052,
+          "contribution": 0.5208033959609947
+        }
+      ]
+    },
+    {
+      "mint": "gi2rCdj8JSCSKzBpFDHQbMy2oeYg8qHUi7KQ7t6pump",
+      "ts": "2026-11-07T12:00:07.568000+00:00",
+      "venue": "pumpswap",
+      "score": 0.9403225948676186,
+      "sudden_24h": 0.0,
+      "reasons": [
+        {
+          "feature": "buy_events",
+          "value": 306.0,
+          "contribution": 1.3013601709510236
+        },
+        {
+          "feature": "pool_seed_sol",
+          "value": 8317.642578125,
+          "contribution": 0.8194250541907095
+        },
+        {
+          "feature": "liquidity_vs_seed",
+          "value": 1.996008038520813,
+          "contribution": 0.5873438325646271
+        }
+      ]
+    },
+    {
+      "mint": "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn",
+      "ts": "2026-11-07T12:00:07.568000+00:00",
+      "venue": "orca",
+      "score": 0.0006029700834003859,
+      "sudden_24h": 0.0,
+      "reasons": [
+        {
+          "feature": "buy_events",
+          "value": 302.0,
+          "contribution": 0.4541137260045185
+        },
+        {
+          "feature": "large_buy_count",
+          "value": 30.0,
+          "contribution": 0.1707307492025617
+        },
+        {
+          "feature": "events_per_trader",
+          "value": 4.743315696716309,
+          "contribution": 0.11638801422299365
+        }
+      ]
+    },
+    {
+      "mint": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+      "ts": "2026-11-07T12:00:07.568000+00:00",
+      "venue": "raydium",
+      "score": 0.0010000734736044326,
+      "sudden_24h": 0.0,
+      "reasons": [
+        {
+          "feature": "buy_events",
+          "value": 107.0,
+          "contribution": 0.3165751079113632
+        },
+        {
+          "feature": "volume",
+          "value": 22.37335205078125,
+          "contribution": 0.1448102176735407
+        },
+        {
+          "feature": "net_sol_flow",
+          "value": 13.221658706665039,
+          "contribution": 0.11444065897942034
+        }
+      ]
+    },
+    {
+      "mint": "cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij",
+      "ts": "2026-11-07T12:00:07.568000+00:00",
+      "venue": "orca",
+      "score": 0.0011741113500853201,
+      "sudden_24h": 0.0,
+      "reasons": [
+        {
+          "feature": "buy_events",
+          "value": 94.0,
+          "contribution": 0.3084667108561091
+        },
+        {
+          "feature": "events_per_trader",
+          "value": 5.884615421295166,
+          "contribution": 0.1732901455634428
+        },
+        {
+          "feature": "burned_liquidity",
+          "value": null,
+          "contribution": 0.12152858115836361
+        }
+      ]
+    },
+    {
+      "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "ts": "2026-11-07T12:00:07.568000+00:00",
+      "venue": "raydium",
+      "score": 0.0012608909215610384,
+      "sudden_24h": 0.0,
+      "reasons": [
+        {
+          "feature": "buy_events",
+          "value": 443.0,
+          "contribution": 0.6652627482482616
+        },
+        {
+          "feature": "rep_early_win_rate",
+          "value": 0.6998737454414368,
+          "contribution": 0.27842947787324557
+        },
+        {
+          "feature": "large_buy_count",
+          "value": 86.0,
+          "contribution": 0.1921038921001842
+        }
+      ]
+    },
+    {
+      "mint": "Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh",
+      "ts": "2026-11-07T12:00:07.568000+00:00",
+      "venue": "orca",
+      "score": 0.0026673809595814638,
+      "sudden_24h": 0.0,
+      "reasons": [
+        {
+          "feature": "buy_events",
+          "value": 19.0,
+          "contribution": 0.1970407102963033
+        },
+        {
+          "feature": "burned_liquidity",
+          "value": null,
+          "contribution": 0.1598351783992428
+        },
+        {
+          "feature": "events_per_trader",
+          "value": 5.285714149475098,
+          "contribution": 0.138816497637088
+        }
+      ]
+    }
+  ],
+  "split": {
+    "train": [
+      "2026-10-28T00:00:00+00:00",
+      "2026-11-02T00:00:00+00:00"
+    ],
+    "val": [
+      "2026-11-03T00:00:00+00:00",
+      "2026-11-04T00:00:00+00:00"
+    ],
+    "p1": [
+      "2026-11-05T00:00:00+00:00",
+      "2026-11-06T12:00:00+00:00"
+    ],
+    "p2": [
+      "2026-11-07T12:00:00+00:00",
+      "2026-11-08T18:00:00+00:00"
+    ]
+  }
+}

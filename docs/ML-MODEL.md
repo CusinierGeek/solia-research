@@ -316,6 +316,117 @@ column (remove-liquidity events and their signer) and a re-replay: a follow-up, 
   rates were 55–68 % at 1 h (pool switches read as drops); without the 30-min cross-pool rule, orca 16 % / raydium
   9 % (dust pools trading while the main pool rested).
 
+### Rug guard (#260)
+
+One risk score per token and label (`sudden` / `gradual` × 1 h / 6 h / 24 h): a LightGBM classifier on the
+labels above, with the reasons behind each score (`solia_ai/rug_guard.py`). It is meant as the veto of any
+future bot and the definition of the "established" universe; this task measures it, nothing serves it.
+
+- **Anchors**: each token's first `features` row of every 15-min bucket, labeled with its own future (the
+  dataset is built in day chunks, each read with 24 h of future).
+- **Inputs** (as stored, NULL kept as missing: LightGBM learns where an unknown value goes, so "no creator history"
+  never reads as a real 0):
+  - liquidity / activity context;
+  - `burned_liquidity`;
+  - the wallet and creator columns (`wal_creator_*`, `rep_creator_*`);
+  - bundling (`rep_bundle_*`) and early / smart buyers;
+  - metadata (`meta_*`; the social links are live-only, NULL on replayed rows);
+  - holder concentration (`hs_*`, `top_trader_share`, `trader_hhi`);
+  - venue (categorical).
+- **Derived inputs**:
+  - **pool seed**: the liquidity of the anchor's pool at its first observation, which shows round seeded
+    amounts. It is point-in-time, but unknown for pools first seen in the data's first hour, which may predate
+    it. It is the first *snapshot*, so trades before it are included.
+  - its fractional part, and the liquidity against it;
+  - a wash-trading proxy: trades per distinct trader.
+- **Not used**: coverage columns (replay bookkeeping) and market-wide aggregates.
+- **Reasons**: each score's top risk-raising TreeSHAP contributions (feature, value, + log-odds).
+
+**Split (fixed before the run).** Anchor windows (UTC), each starting ≥ 24 h (the longest horizon) after the
+previous one ends, so no label reads a later segment's prices:
+
+| Segment | Anchors |
+|---|---|
+| (seeds and wallet memory only) | 2026-10-27 |
+| train | 2026-10-28 → 11-02 |
+| validation (early stopping) | 11-03 → 11-04 |
+| period 1 (threshold) | 11-05 → 11-06 12:00 |
+| period 2 (verdict, unchanged) | 11-07 12:00 → 11-08 18:00 |
+
+**Criterion (fixed before the run).** On `sudden_24h`. *Survivors* of a period are each token's first
+anchor in it at `token_age_sec ≥ 6 h`, kept when the label is known.
+
+1. **Threshold, chosen on period 1**: the score cut keeping the most survivors (score ≤ cut, tied scores never
+   split) at a sudden-rug rate ≤ 3 %. If no such cut exists, the model fails.
+2. **Period 2**, threshold unchanged: the survivors scored ≤ cut must have
+   - (a) a 24 h sudden-rug rate ≤ 3 %;
+   - (b) at least 30 % of the period's survivors;
+   - (c) a result that **beats the plain rule** "LP burned ≥ 90 %" on the same survivors, NULL = not kept.
+     Say the rule keeps *n* survivors. The model beats it when any of these holds:
+     - its *n* lowest-scored survivors have a lower rate;
+     - its safe set keeps more than *n* survivors at a rate no higher;
+     - the rule keeps nobody.
+3. **Pass** = (a) and (b) and (c).
+4. **Reporting**:
+   - also reported on every token's first anchor of period 2 (any age), at the same threshold;
+   - each model's ROC-AUC / PR-AUC on both periods, for all tokens and for survivors;
+   - the 95 % Wilson upper bound of each rate (the periods hold a few hundred survivors);
+   - the share of period-2 survivors already seen in training.
+5. **If it fails**: recorded here, and the survivor study (#261) uses the plain rule instead.
+
+Known limits:
+
+- The replayed days (10-27 → 11-02) were replayed in slices whose wallet memory restarted. Their wallet and
+  reputation columns are NULL more often than on the live days.
+- The model keeps no single column's AUC as proof: `rep_creator_rug_share` is NULL on most young tokens.
+
+Run:
+
+- `python -m solia_ai.rug_guard build --out-dir <dir>` writes the anchors to parquet.
+- `python -m solia_ai.rug_guard evaluate --dataset <dir> --report docs/reports/rug-guard-260.json` trains,
+  scores and judges.
+- `lightgbm` is the optional `benchmark` extra.
+
+**Results (run 2026-11-09, `docs/reports/rug-guard-260.{json,txt}`): FAIL.** The model ranks risk well and
+beats the plain rule by far, but no period-1 threshold gives a safe set that is both large and clean enough on
+period 2.
+
+Dataset size: 4.29 M anchors (train 2.51 M, val 0.50 M, p1 0.74 M, p2 0.54 M). Survivors: 424 in period 1, 339 in
+period 2.
+
+| `sudden_24h`, survivors | Kept | Rate (95 % upper) |
+|---|---|---|
+| Period 1, at the chosen cut (score ≤ 0.046) | 82 / 424 (19.3 %) | 2.4 % (8.5 %) |
+| **Period 2, same cut** | 78 / 339 (23.0 %) | **7.7 % (15.8 %)** |
+| Period 2, rule "LP burned ≥ 90 %" | 184 / 339 (54.3 %) | 28.8 % (35.7 %) |
+| Period 2, model's 184 lowest scores | 184 / 339 (54.3 %) | 9.8 % (14.9 %) |
+| Period 2, every token's first anchor, same cut | 3 189 / 43 504 (7.3 %) | 1.9 % (2.5 %) |
+
+Checks:
+
+- (a) rate ≤ 3 %: **fails**, 7.7 %;
+- (b) coverage ≥ 30 %: **fails**, 23 %;
+- (c) beats the rule: **passes**, with a third of the rule's rate at the same coverage.
+
+What the run shows:
+
+- **Ranking.** Survivors' ROC-AUC is 0.79 to 0.86 for `sudden` (24 h: 0.80 on period 1, 0.79 on period 2) and 0.92
+  to 0.95 for `gradual`. The all-token AUCs (0.96 to 0.99) are not evidence: about 90 % of young tokens have a
+  one-step fall, so venue and age alone separate them.
+- **Top inputs** (`sudden_24h`, gain): creator wallet age 26 %, creator's earlier launches 13 %,
+  `burned_liquidity` 9 %, creator's dev-buy share 8 %, liquidity 7 %, pool seed 5.5 %.
+- **Reasons.** The highest scores read, for example, "creator wallet 6 h old, no dev buy". Some high scores are
+  large pools (seed ≥ 5 000 SOL, high `buy_events`) that did not rug: false alarms the reasons make visible.
+- **Overlap.** 41.6 % of the period-2 survivors were also seen in training.
+- **Sample.** A 3 % rate on ~80 tokens is 2 or 3 rugs, so the threshold is noisy. The period-1 safe set's upper
+  bound was already 8.5 %.
+
+**Decision**: as pre-registered, the score is not accepted as the survivor veto, and the survivor study (#261)
+uses the plain rule "LP burned ≥ 90 %".
+
+That rule is a weak filter on these days: 28.8 % of its survivors still rug within 24 h. The rule is not changed
+here. Using the score as a ranking (not a veto), or a criterion with more survivor days, is for #261 to decide.
+
 
 ## Token eligibility
 
@@ -1771,6 +1882,7 @@ the report under `docs/reports/`.
 | `eligibility_ablation.py` | Lift of eligibility rules (rule's model vs every-token model on the rule's population) |
 | `liquidity.py` | Venue-aware liquidity floor for labels & windows (recorded with the model) |
 | `rug_labels.py` | Rug-guard labels (sudden rug / drain / gradual dump at 1 h–24 h) and their quality report (#259) |
+| `rug_guard.py` | Rug guard: anchors dataset (labels + risk columns + pool seed), LightGBM risk score per label, TreeSHAP reasons, pre-registered criterion (#260) |
 | `liquidity_report.py` | Held-out metrics & entry rule split by anchor pool liquidity (one or several models, same windows) |
 | `search.py` | Hyperparameter, regularization, stride & labeling-threshold search (proposes a `config.yaml` diff; resumable); spaces in `sweeps/` |
 | `overnight.py` | Unattended #160 sweep: preflight, stage 1 → stage 2, summary (`infra/scripts/overnight-sweep.sh`) |
