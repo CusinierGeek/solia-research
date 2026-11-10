@@ -1,4 +1,9 @@
-# Roadmap — 8 sprints (+ gated Sprint 9)
+# Roadmap — 8 sprints and two research phases (concluded)
+
+> **Status (November 2026): concluded.** Sprints 1–8 and the feature-enrichment phase were delivered. The research
+> phase that followed ("Rug guard & established tokens", then the winning-wallets studies) found no tradeable edge, so
+> the remaining strategy tasks were closed and the planned live-trading sprint was cancelled. See
+> [`FINDINGS.md`](FINDINGS.md).
 
 Each sprint is a GitHub **milestone**, implemented on a feature branch and merged via PR (see [`../CONTRIBUTING.md`](../CONTRIBUTING.md)). Sprints are mostly sequential; some can overlap once contracts are frozen.
 
@@ -38,10 +43,14 @@ one-hot; plus hyperparameter/threshold tuning and probability calibration.
 Tracked by milestone **"Feature enrichment & tuning"** (epic #34). Not a numbered sprint — runs
 when the baseline exists and we can measure improvements.
 
-## Future phase — Live trading (gated)
+## Research phase — Rug guard & established tokens, winning wallets
 
-[Sprint 9](sprints/SPRINT-09-live-trading.md): real trading with micro-capital on a
-**human-approved, hash-pinned model**, never on the auto-promoted champion. Gated: it starts only
-when the retraining *process* passes the "not luck" gate in paper (walk-forward champions,
-statistically positive net P&L after full costs, measured model decay) and an ADR lifts `CLAUDE.md`'s paper-only rule. Until then, only its paper-safe
-tasks (model approval workflow, gate report, bot hardening) may be done.
+After the paper bot's setting failed on new data (November 2026), the work moved away from racing pool drains: an
+explainable rug-risk score (#260), a study of established tokens (#261), and two studies of winning wallets and copy
+trading (#269, #271). Each was judged against a criterion fixed in advance; none passed. Results:
+[`FINDINGS.md`](FINDINGS.md).
+
+## Cancelled — Live trading
+
+A gated live-trading sprint was planned, conditional on a paper edge that is "demonstrably not luck". That gate was never
+met, so the sprint was cancelled and its plan removed. The paper-only rule stands.

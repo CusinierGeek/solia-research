@@ -1,5 +1,8 @@
 # ML model specification
 
+> **Outcome.** No approach in this document produced a tradeable edge after costs on unseen data. The summary is in
+> [`FINDINGS.md`](FINDINGS.md); the sections below keep the full detail of each attempt.
+
 ## Problem framing
 
 A **signal model**: a multi-task, multi-horizon time-series **Transformer**. Given a *sequence* of
@@ -911,8 +914,7 @@ What follows:
   Transformer.
 - **It fails on that label too, on both models:** stop optimizing the model and review the project.
 
-A single report can't satisfy condition 3. Passing this criterion doesn't lift the paper-only rule, which stays until the
-Sprint 9 gate.
+A single report can't satisfy condition 3. Passing this criterion wouldn't have lifted the paper-only rule on its own.
 
 ### Exit-rule simulation (#221)
 
