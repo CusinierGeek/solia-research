@@ -427,6 +427,81 @@ uses the plain rule "LP burned ≥ 90 %".
 That rule is a weak filter on these days: 28.8 % of its survivors still rug within 24 h. The rule is not changed
 here. Using the score as a ranking (not a veto), or a criterion with more survivor days, is for #261 to decide.
 
+### Survivor study (#261): go / no-go
+
+Is there anything to trade on established tokens? This is a descriptive study, with no model and no tuned rule
+(`solia_ai/survivor_study.py`, report `docs/reports/survivor-study-261.{json,txt}`, run 2026-11-10 on 10-27 → 11-10).
+
+**Method:**
+
+- **Entry**: each token's first tradeable row at age ≥ 1 h / 6 h / 24 h.
+- **Exit**: held to 4 h / 24 h / 72 h, sold at the last row by then.
+- **Costs**: net of the bot's costs, i.e. exit_sim's fills for a 1 SOL position (constant-product impact on each
+  side, venue fee each side, network fees and rent). An emptied pool pays almost nothing, whatever price it reads.
+- **Censoring**: only horizons that end inside the data are counted.
+- **CIs**: bootstrap by token (one entry per token).
+- **Tail**: the share of entries whose net value (sold at that snapshot) reaches +50 % / +100 % before −30 %.
+
+| Entry (all tokens) | n at 24 h | Mean net, 24 h [95 % CI] | Median, 24 h | +50 % before −30 %, 24 h / 72 h |
+|---|---|---|---|---|
+| age ≥ 1 h | 9 564 | −42 % [−44, −40] | −45 % | 18 % / 19 % |
+| age ≥ 6 h | 1 720 | −28 % [−32, −23] | −29 % | 14 % / 20 % |
+| age ≥ 6 h, guard-safe (LP burned ≥ 90 %) | 1 064 | −32 % [−37, −26] | −46 % | 17 % / 27 % |
+| age ≥ 24 h | 655 | −28 % [−33, −24] | −13 % | 10 % / 17 % |
+
+- **Holding loses everywhere.**
+  - Every age, every split (guard-safe, burned < 90 %, burn unknown, migrated) and every horizon has a negative
+    mean net return, with its CI below 0.
+  - The one exception is the non-migrated 6 h tokens at 24 h and 72 h (69 and 63 tokens), whose CIs straddle 0.
+  - Losses grow with the horizon. Median at 72 h: −70 % for 6 h entries, −98 % for guard-safe ones.
+  - Burned LP doesn't protect the holder: a creator holding supply can sell the pool's SOL out.
+  - 4 h is about flat at the median (6 h entries −2 %, guard-safe +1.4 %, 24 h entries 0 %), but the mean is −12
+    to −14 % because of the rugs.
+- **There is a tail, but it doesn't pay with plain exits.**
+  - 14–27 % of 6 h entries reach +50 % before −30 % (5–12 % reach +100 %).
+  - Even as a lossless "+50 % target / −30 % stop" (a back-of-envelope figure, not a tested rule), 27 % × 0.5 −
+    73 % × 0.3 < 0. Sudden rugs also go through a stop to −100 %.
+- **Losses are mostly sudden.** Of the losses ≥ 30 % at 24 h, by cause:
+
+  | Entry age | Sudden rug first | Gradual dump first | Neither | Unknown |
+  |---|---|---|---|---|
+  | 1 h | 60 % | 22 % | 2 % | 16 % |
+  | 6 h | 57 % | 30 % | 5 % | 9 % |
+  | 24 h | 66 % | 23 % | 8 % | 3 % |
+
+  A sudden rug cannot be exited.
+- **Warning signs before gradual dumps.** For 6 h entries, the 282 dumps within 24 h are compared with 622 no-drop
+  tokens, looked at the same time after their entry (median onset 64 min). Each sign is taken over the hour before
+  the dump got under way (30 % under its peak):
+
+  | Sign | AUC | What it shows |
+  |---|---|---|
+  | **Liquidity trend** | **0.27** (0.73 inverted) | Median −11.5 % before dumps vs +0.4 % for the no-drop tokens: SOL leaves first. The one usable exit sign. |
+  | **Holder change** | 0.66 | Holders *grow* before dumps (+2.6 % vs +1.0 %): distribution to new buyers. |
+  | Volume decay | 0.57 | Little or no information. |
+  | Top-10 holders' net flow | 0.47 | Little or no information. |
+  | Buy/sell ratio | 0.45 | Little or no information. |
+
+  This is descriptive, on one period, with nothing tuned.
+
+**Caveats:**
+
+- **Last-traded pool.** A snapshot carries the last-traded pool's liquidity. An exit read on a dust side pool
+  overstates a loss; it can only sit in the "neither / unknown" causes, which are 2–16 % of the losses.
+- **Ages reset.** The pipeline resets a token's age when it is evicted, and the replayed days were replayed in
+  slices. A few entries come later than the token's true age.
+- **Coverage.** About 13 days: 13 075 tokens reach 1 h, 1 788 reach 6 h and 680 reach 24 h.
+
+**Decision: no-go** for a survivor trader that buys and holds, or that uses plain target and stop exits.
+
+- Survivors offer no positive expectancy after costs on these 13 days.
+- Most losses are sudden and cannot be exited.
+- The only clear gradual-dump sign is liquidity leaving the pool (and holders growing), which helps exit timing,
+  not entries.
+
+A trader on established tokens (#263) would need a pre-registered rule that wins despite ~60 % of losses being
+unexitable. Nothing here suggests one; revisit only with more days (#258 keeps them) or a new signal.
+
 
 ## Token eligibility
 
@@ -1883,6 +1958,7 @@ the report under `docs/reports/`.
 | `liquidity.py` | Venue-aware liquidity floor for labels & windows (recorded with the model) |
 | `rug_labels.py` | Rug-guard labels (sudden rug / drain / gradual dump at 1 h–24 h) and their quality report (#259) |
 | `rug_guard.py` | Rug guard: anchors dataset (labels + risk columns + pool seed), LightGBM risk score per label, TreeSHAP reasons, pre-registered criterion (#260) |
+| `survivor_study.py` | Survivor study: net returns of established tokens after costs, tail shares, loss causes, gradual-dump warning signs, over token partitions (#261) |
 | `liquidity_report.py` | Held-out metrics & entry rule split by anchor pool liquidity (one or several models, same windows) |
 | `search.py` | Hyperparameter, regularization, stride & labeling-threshold search (proposes a `config.yaml` diff; resumable); spaces in `sweeps/` |
 | `overnight.py` | Unattended #160 sweep: preflight, stage 1 → stage 2, summary (`infra/scripts/overnight-sweep.sh`) |
