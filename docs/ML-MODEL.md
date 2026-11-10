@@ -1101,7 +1101,184 @@ The result is then one of these, and **the decision stays with the project owner
 | No evidence, or the periods disagree | It can't be told from chance | Whether to keep investing in the model, or spend the effort on rules and data instead |
 
 Limits: it tests one threshold and one exit setting, the matching doesn't cover time of day, the read holds a subset of tokens,
-and 5 comparisons are read at once, so one can pass by chance. Not run on real data yet: a large read could disturb the paper test.
+and 5 comparisons are read at once, so one can pass by chance.
+
+**Results (2026-11-06), both periods: the model adds value.** At `pump ≥ 0.5`, against `matched`:
+
+| period (end, UTC) | model trades | model mean net | `matched` | difference [95 % CI] | best plain rule |
+|---|---:|---:|---:|---:|---:|
+| 11-06 02:11 | 308 | +17.2 % | −19.8 % | +36.9 [+19.6, +53.2] points | −8.9 % |
+| 11-04 02:11 | 494 | +17.7 % | −13.7 % | +31.4 [+15.9, +45.0] points | −10.2 % |
+
+The setting was chosen on the first period, so the second is the real confirmation. This says the model picks better than chance on
+paper, not what it picks: see the strategy review below.
+
+### Strategy review (2026-11-06/07)
+
+Paper sessions 5 and 6 and the backtests below led the project owner to review the strategy. The 300-trade test of the frozen
+setting no longer drives the work. Reports and scripts are in
+[`reports/strategy-review-20261107/`](reports/strategy-review-20261107/). The scripts are research records, not maintained code.
+
+**Scoring delay and floor (#255).** The queue scores one token at a time. Session 5's gap between two scores of an active token rose
+from about 3 min to about 5 min as the market got busier. With the floor of 20 traders / 5 SOL, it fell to a median of 10 s.
+
+**The simulator reproduces the bot** (`scripts/parity.py`). Replaying the same decisions through `exit_sim` gives the same exit reason
+on 95 of 95 trades, with a median difference of about 0. Scoring session 6's period offline finds 31 of its 33 entries within 30 s
+(mean −22 % vs −26 % live, total losses 44 % vs 45 %). One trade differs, unexplained: 838, booked `tp` at −7 %, simulated at +218 %.
+Offline scores match live ones exactly (n = 242). So backtests can answer most questions that paper trades were meant to.
+
+**The live setting, backtested** (`scripts/floor_backtest.py`, every row scored, re-entries allowed):
+
+| period | trades | mean net [95 % CI] | total losses |
+|---|---:|---:|---:|
+| to 11-04 02:11 UTC | 493 | +17.8 % [+6.5, +29.3] | 30 % |
+| to 11-06 02:11 UTC | 308 | +17.2 % [+4.1, +31.4] | 33 % |
+| 24 h to 11-07 01:40 UTC, never used to tune | 314 | **+2.0 % [−9.7, +13.2]** | 29 % |
+
+The third period fails the edge criterion. The floor removes no entry. Slower scoring means fewer trades at a similar mean. A pause
+before re-entering, one entry per token and a minimum age show no stable gain. Session 5 made +31.9 % on its 57 trades and session 6
+−18.6 % on 47.
+
+**What the tokens are** (`scripts/realsells.py`, `launch.py`; pumpapi's archives, session 5's 48 trades to 19:30 UTC on 11-06):
+
+- All 35 exits that paid had real sells within 30 s, 32 at half our size or more, 18 at full size (3 of 14 at the take-profit). The real
+  price was a median +1.7 % from ours.
+- Liquidity was removed on 47 of the 48 trades, by the wallet that created the pool on 46, and within 15 min after our exit on 22.
+  The 13 trades at −100 % sold after the removal.
+- 28 of the 45 tokens have a pool created with exactly 85, 78.9 or 55 SOL. 19 have a median trade under 0.02 SOL. 99 % of the volume
+  comes from wallets that both bought and sold around the position.
+- Not proven: whether these sellers are independent of the creator, whether an outside wallet could always sell, and whether a signer
+  is a person or a launchpad's automation.
+
+Later exits (`scripts/stress.py`, within 0.2 point of booked at no delay, median) cost points without removing the mean: +29.9 % at
+0 s, +23.2 % at 10 s, +22.2 % at 30 s, +15.2 % at 120 s, with every CI including 0. Entries weren't delayed and failed sales aren't modelled.
+
+**Other results.** Partial sales and trailing stops (`exit-variants-*`): no variant clearly beats the setting. A rug-score exit
+(`scripts/rugexit.py`) lowers the mean on the 48 trades: +17.9 / +13.3 / +22.3 % at 0.7 / 0.8 / 0.9 vs +30.5 %, all CIs including 0.
+`model_value` and `exit_sim --grid variants` differ slightly on one period (308 vs 304 trades) because the variants' 1 h hold censors
+more windows at the end of the read.
+
+**Direction A: plain rules without the operator pattern** (`scripts/rules_a.py`; rules and reading fixed before the runs). Population at
+the decision row: LP burned ≥ 90 %, ≥ 20 traders, ≥ 5 SOL, price under 0.001 SOL. All 12 cells (first entry, breakout, buy pressure, both;
+vol3 / 900 s, 30 % / 1 h, 30 % / 4 h) lose on all 3 periods, with every CI below 0. The cell chosen on the first period, breakout with
+vol3 / 900 s, gives −6.2 %, −8.2 % [−9.7, −6.7] and −8.2 % [−10.3, −6.4], against −26 to −28 % for random rows of the same population.
+So it fails. Total losses are far lower (0 to 7 %), but the take-profit is reached on only 1 to 14 % of trades. How much comes from costs
+on thin pools isn't separated, and only these rules are ruled out.
+
+**One LightGBM attempt on the same population** (`scripts/lgbm_a.py`; label, time split and reading fixed before training). The label is the
+take-profit reached before the stop. Trained to 11-02 02:11 UTC, the cell chosen on 11-02 to 11-04, tested on 11-04 to 11-06 and 11-06 to
+11-07 03:10. The chosen cell, stop 30 % / 1 h and the top 1 % of scores, fails: +2.5 % on validation (291 trades), then −15.7 % [−32.7, +2.0]
+(131 trades) and −31.2 % [−51.0, −9.4] (89 trades), against −32.3 % and −29.6 % for random rows. No cell is above 0 on a test period.
+
+The model does rank: at stop 30 % / 1 h the take-profit rate reaches 15 to 18 % in the test periods, against 2 to 3 % of population rows. It
+doesn't pay, because the median trade loses about 52 % under a 30 % stop. No second attempt on these periods: another hypothesis needs
+later data.
+
+**Why a 30 % stop loses about 50 % here** (`scripts/stopdiag.py`, `scripts/slcheck.py`; `stopdiag-p1.json.gz`, `stopdiag-smoke.json.gz` for the archive window, `slcheck.json`). Each trade
+of the 11-04 to 11-06 period, at stop 30 % / 1 h, is split into entry cost, price move, exit latency, exit cost and fixed costs. The
+breakout rule gives back its result exactly (1 573 trades, −14.1 %), so the split describes the same simulation. Costs are small:
+entry about +1.3 %, exit −1 to −2 %, latency about 0, fixed costs 0.2 %. The loss is the move. On the 432 stops of random entries, the
+mark before the stop is at a median 0 %, and the next mark, 10 s later, is at about −60 %. 56 % of these stops land below −50 %. With
+breakout entries it's a median −38 %, and 32 % of stops land below −50 %.
+
+Then 136 stops of 11-05 21:08 to 11-06 02:11 UTC were checked against pumpapi's real transactions. The simulator is right: the real
+price matches our mark at the entry fill on 99 % of them (within 2 %), and at the stop's trigger (both at a median −40.8 %). The stop
+is crossed by one sell every time. The price is at a median −27 % before it, −31.5 % after it and −35 % after its block, about 7 s
+before our mark. One block takes the price below −50 % on 28 % of stops. Those sells are a median 48 SOL, 40 % of the pool, by
+wallets that sold at least what they bought (92 %), and 45 % of them never bought in the archive at all. With LP burned, the crash
+is a holder dumping a large supply into the pool, not a liquidity pull. A stop that reacts to every transaction instead of every
+10 s snapshot would improve stops by about 5 to 8 points (mean −58 % → −53 % on breakout stops, −71 % → −63 % on random ones).
+That isn't enough to make these rules pay, and it can't avoid the single-block crashes. So the direction A results stand: the fills
+are real, and the population loses to one-transaction dumps a stop can't catch.
+
+**Were the dumps visible at entry?** (`scripts/holders.py`, `holders.json`; exploratory, on the same 5 h, so only leads for later
+data.) Of the window's 172 trades, 165 match the archive. Wallet token balances come from each transaction's post-balances. 77 trades
+had a one-block fall of 30 % or more during the hold. Their dumpers are 40 wallets, and 3 of them did 21 of the 77, across tokens.
+None created the token, and 73 % had bought at least 1 SOL in the archive before our entry, so they were visible. At entry, the
+largest known holder could have cut the price by a median 77 % by selling everything on the crash trades, against 26 % on the others.
+It's rarely the wallet that dumps, though (3 %), so it marks a concentrated token rather than the seller. Token age matters too: a
+crash happened on 67 % of entries under 5 min of age, falling to 5 % past 1 h (19 trades). Within each age band, the concentration
+still separates crashes (31 % vs 83 % under 5 min, 20 % vs 59 % after).
+
+Avoiding crashes isn't enough on its own, though. Even the trades with no such fall, picked with hindsight, lose on average: −5.7 %
+for breakout entries (63 trades, 5 take-profits) and −38 % for random ones. Leads for data after 2026-11-07 03:10 UTC: a minimum
+token age, the holders' concentration (not in `features`: it would need balances from the stream), and wallets that dump repeatedly.
+
+**Minimum token age, on unused data: fails** (`scripts/age_a.py`, `age-a.json`; rule and reading fixed before reading any row after
+2026-11-07 03:10 UTC). The 6 h gap of 11-07 (15:48 to 21:41 UTC, the stream lost its connection during a power cut) was replayed first:
+31 hours, 5.18 M rows, 0 failed, and the density check found no doubled series (highest 1.057). Window 11-07 03:10 to 11-08 05:00 UTC.
+Rule: direction A's population, token at least 1 h old, breakout, TP +200 %, stop vol3, 900 s. It gives 2 854 trades on 242 tokens
+at −5.6 % [−6.7, −4.6], against −16.7 % for random rows of the same population. It beats random but its CI is under 0, so it fails.
+
+| Breakout, stop | Age | Trades | Mean | 95 % CI | Median | Total losses | TP |
+|---|---|---:|---:|---:|---:|---:|---:|
+| vol3 / 900 s | ≥ 1 h | 2 854 | −5.6 % | [−6.7, −4.6] | −1.5 % | 1.2 % | 0.1 % |
+| vol3 / 900 s | < 1 h | 1 667 | −6.9 % | [−9.3, −4.5] | −7.6 % | 2.6 % | 1.4 % |
+| 30 % / 1 h | ≥ 1 h | 1 125 | −12.3 % | [−15.1, −10.0] | −4.5 % | 3.0 % | 1.2 % |
+| 30 % / 1 h | < 1 h | 985 | −15.2 % | [−20.1, −10.1] | −33.1 % | 2.3 % | 9.2 % |
+
+Age does remove most of the crashes, but the upside goes with them: past 1 h, the take-profit is reached on 1 trade in 1 000 at
+900 s. These tokens no longer move enough to pay +200 % before the costs eat the position. Direction A, avoiding the operator
+pattern with LP burned, now has no lead left that today's `features` can test.
+
+**The bot's setting, unchanged, on the same unused window** (`scripts/floor_backtest.py`, `bt-fresh2.json`; 11-07 03:12 to
+11-08 05:00 UTC, champion `solia-20261102T151927246570Z`, floor 20 traders / 5 SOL, a look at every row, pump ≥ 0.5, TP +200 %,
+SL vol3, 900 s). It gives 260 trades on 176 tokens at **+15.1 % [+1.1, +30.9]**, median −13.4 %, total losses 30 %, TP 21 %. The
+earlier periods gave +17.8 %, +17.2 % and +2.0 %, so the +2.0 % looks like a weak day rather than a decline, on one more day of data.
+The CI's lower bound is barely above 0, and total losses stay high. One entry per token gives +20.0 % [+1.1, +39.3] (176 trades),
+against +4.9 % [−17.6, +30.6] for re-entries. That's a lead to confirm on later data, not a change. The window includes the 6
+replayed hours (15:48 to 21:41 UTC). Columns only written live, like metadata link flags, may differ there.
+
+**Manual checks as filters on the bot's trades** (`scripts/filters_bt.py`, `scripts/read_filters.py`, `filt-a.json.gz`,
+`filt-b.json.gz`; cells and reading fixed before the runs). These are a trader's usual checks, all already in `features` but not
+model inputs: concentration (`hs_top10_share`, `hs_top1_share`), the top 10's net flow, an X page (`meta_has_twitter`) and a
+recent narrative (`meta_narrative_grads_3h`). The bot's setting gives 712 trades from 11-03 14:00 to 11-07 03:10 UTC (read as two
+windows) at +14.1 % [+5.6, +22.5], with 31 % total losses.
+
+| Filter (trades kept) | Kept | Mean kept | Mean refused | Total losses kept / refused |
+|---|---:|---:|---:|---:|
+| top 10 ≤ 50 % (chosen) | 319 | +14.2 % | +14.1 % | 29 % / 33 % |
+| top 1 ≤ 20 % | 466 | +11.7 % | +18.8 % | 36 % / 20 % |
+| top 10 not selling (flow ≥ 0) | 672 | +12.7 % | +38.0 % (40) | 32 % / 20 % |
+| X page | 168 | +14.0 % | +14.2 % | 15 % / 36 % |
+| narrative ≥ 1 | 188 | +9.9 % | +15.7 % | 15 % / 36 % |
+
+No filter raises the mean. The chosen cell gains 0.1 points, so its confirmation (+5 points required) isn't worth running.
+Concentration works backwards: tokens held by a few wallets do no worse, and often better. These are operator tokens, and
+the top 10 is accumulating in most of them (median flow +36 % on the first window). An X page or a recent narrative halves the
+total losses in both windows (15 % against 36 %), with fewer take-profits (17 % against 24 %), for the same mean: less risk, no
+more edge. The link is known for only 197 of 712 trades, because metadata is fetched once, only on a `create` seen live, and
+22 % of fetches fail (timeouts on the IPFS gateway, 404s before the file propagates).
+
+**Could the bot leave before the drain?** (`scripts/lpremove.py`, `lpremove.json`; session 5's 48 trades against pumpapi's
+archives.) Liquidity was removed after the entry on 47 tokens. On all 13 total losses, the first removal emptied the pool in one
+transaction: 89 % to 100 % of it, with no smaller removal before. That came a median 83 s after our entry, and our exit came about
+20 s later, on an empty pool. Reacting to a removal on the stream instead of the next snapshot wouldn't help: there's nothing
+left to sell after it. Avoiding these losses would mean predicting the drain before it happens (for example from the creator's
+past launches), not reacting faster.
+
+**Confirmation of two leads, and the bot's setting, on the next unused day** (`scripts/conf_bt.py`, `conf-bt.json`; reading fixed
+before the run; decisions 11-08 05:00 to 11-09 04:00 UTC). The bot's setting gives 222 trades at **−12.8 % [−26.0, +0.7]**, with
+39 % total losses and 14 % take-profits. One entry per token: −15.1 %, +1.0 point vs the bot [−3.9, +6.0]. Partial exit
+(stake at +200 %, rest at +300 % with the stop at entry): −13.3 %, −0.1 point [−6.5, +5.6]. Neither lead is confirmed. The
+setting's periods now read +17.8 %, +17.2 %, +2.0 %, +15.1 % and −12.8 %: positive on average, but one day in two is weak or
+negative, so a paper or live run has to hold through losing days.
+
+**What triggers the drain?** (`scripts/pullsignal.py`, `pullsignal.json`; exploratory, the 11-06 archives of session 5's
+tokens.) 51 pools were emptied by one removal, by the pool's creator in 30 of the 31 where the creation was seen. At the drain,
+the pool held a median ×1.9 its first SOL, the price was ×3.6 its first price but 35 % under its top, and buying had slowed
+(buy pace in its token's lowest quarter). Repeat drainers keep a near-constant delay after creating the pool: one wallet drained
+4 pools at 1 657 to 1 765 s, another 4 at 4 343 to 4 656 s, others 1 030 to 1 198 s, 1 240 / 1 249 s and 1 795 / 1 804 s. So
+the drain looks like a per-operator timer, possibly with a profit check, rather than chance.
+
+**The timer doesn't hold on a full day** (`scripts/timers.py`, `timers-seed50.json.gz`; every pool creation and liquidity event of
+2026-11-08 in pumpapi's archives, pools launched with ≥ 50 SOL). 5 578 such pools were created, and 78 % were emptied by one
+removal from their own creator (4 352 seen end to end), a median 385 s after creation (p10 33 s, p90 2 198 s). 1 974 wallets did
+it, most only once that day, and none of the 11-06 drainers came back. Wallets with several drains are only slightly more regular
+than chance: a median gap of 68 % between a life and the wallet's own median, against 81 % with lives shuffled between wallets.
+Predicting a drain from the wallet's earlier ones lands within ±20 % only 14 % of the time. An exit at 80 % of that prediction
+leaves before the drain on 57 % of drains, while a fixed exit at the same median hold (241 s) does so on 59 %. The tight delays of
+11-06 were a small sample. Drainers rotate wallets and vary their timing, so neither the wallet nor the clock warns of the drain.
 
 ### Live vs offline scoring (#239)
 

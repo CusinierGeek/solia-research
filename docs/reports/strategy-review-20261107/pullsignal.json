@@ -1,0 +1,1375 @@
+[
+ {
+  "pool": "CubjCjGK4oqjGpH8beYUNNXLrxNRVvvJQyryet3Q3CGb",
+  "mint": "AgrV7yzcnmmRdFXgd4gWgJCgqsUs5Uxx7b1wCEqGVjKU",
+  "creator": "13PyH3pxaytXvXWmjsM77VFJwPHnTZENxFAXQNpenjJh",
+  "remover": "13PyH3pxaytXvXWmjsM77VFJwPHnTZENxFAXQNpenjJh",
+  "creator_seen": true,
+  "events": 3369,
+  "at": {
+   "age": 448.24699997901917,
+   "growth": 1.5772854312928262,
+   "price_x": 2.487829294721111,
+   "off_top": -0.08952303935987038,
+   "flow60": 5.219861590999912,
+   "flow300": 36.19301285499977,
+   "buy_pace": 1.0966735966735968
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.9429928741092637,
+   "price_x": 0.9429928741092637,
+   "off_top": 0.30641330166270786,
+   "flow60": 0.4014251781472684,
+   "flow300": 0.3752969121140142,
+   "buy_pace": 0.36104513064133015
+  },
+  "sol_removed": 134.053650575
+ },
+ {
+  "pool": "4JnC79h2y7eYx17VLvKwano3n1o8dah4PD4crRZzmtC2",
+  "mint": "HqDGoPJJP8PsoHdiE5MzXcKqkHvnsYen4NgHyYrij2zu",
+  "creator": "BiQ2LWfYJeMhZgAoPNFdtGY7qc5zRpwTsYFBZxQZKKJq",
+  "remover": "BiQ2LWfYJeMhZgAoPNFdtGY7qc5zRpwTsYFBZxQZKKJq",
+  "creator_seen": true,
+  "events": 1296,
+  "at": {
+   "age": 195.09299993515015,
+   "growth": 1.2089130689269665,
+   "price_x": 1.4614707954563277,
+   "off_top": -0.12499002239690993,
+   "flow60": -4.704259295000014,
+   "flow300": 17.763068505999982,
+   "buy_pace": 1.738938053097345
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.4930555555555556,
+   "price_x": 0.4930555555555556,
+   "off_top": 0.08564814814814815,
+   "flow60": 0.016203703703703703,
+   "flow300": 0.48842592592592593,
+   "buy_pace": 0.0
+  },
+  "sol_removed": 102.753067807
+ },
+ {
+  "pool": "92e3fg5hvYT7i5KqXxrXwveeABmfV4M5kgxe4uzxDsRX",
+  "mint": "5MhBu7xBK8aJ5MvUV7T9ddNQ3km2dvPWSEz7gexeSXsR",
+  "creator": null,
+  "remover": "APSwqegH2NBgDK3BJtYtrjnYytKv1JYR5YVN9gHGXENN",
+  "creator_seen": false,
+  "events": 5081,
+  "at": {
+   "age": 1059.5140001773834,
+   "growth": 4.030133703993887,
+   "price_x": 16.24197738919673,
+   "off_top": -0.4933092554278746,
+   "flow60": -5.448035164000061,
+   "flow300": 0.844128611999821,
+   "buy_pace": 0.9849521203830369
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.7122641509433962,
+   "price_x": 0.7122641509433962,
+   "off_top": 0.04245283018867924,
+   "flow60": 0.1179245283018868,
+   "flow300": 0.07783018867924528,
+   "buy_pace": 0.25
+  },
+  "sol_removed": 42.123530555
+ },
+ {
+  "pool": "4YzBSgz19frm8NvVf4NcTabhm1vDJMAN13HiZL8ZqGAT",
+  "mint": "B128ccwe7xLAVMtAbNMMtf9jYAiu9MyxkfRpMXuj2ak4",
+  "creator": null,
+  "remover": "4V5vmfZQndUH7gAvwcWsLmLWPPiHRvZYF2YuUtZDQq4B",
+  "creator_seen": false,
+  "events": 23804,
+  "at": {
+   "age": 3741.577000141144,
+   "growth": 2.475147185270558,
+   "price_x": 6.126353504205972,
+   "off_top": -0.9069859208855604,
+   "flow60": 1.1980427529999922,
+   "flow300": -66.06494335300005,
+   "buy_pace": 1.0977948226270375
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.10396039603960396,
+   "price_x": 0.10396039603960396,
+   "off_top": 0.05198019801980198,
+   "flow60": 0.5396039603960396,
+   "flow300": 0.009900990099009901,
+   "buy_pace": 0.6575682382133995
+  },
+  "sol_removed": 31.029637324
+ },
+ {
+  "pool": "4AeveUfV4ZzGVfSPw8WcDn4DbUUoDZQgrAeXiSGU34q8",
+  "mint": "2Jux1Yn96TqfrfWLjrjnmMpZEseSJCqMN9NwvynbN73G",
+  "creator": "C2Ar8JqNBKUbh6Gn3oLTBrw4ovXz5q1r9UUENPawWkPQ",
+  "remover": "C2Ar8JqNBKUbh6Gn3oLTBrw4ovXz5q1r9UUENPawWkPQ",
+  "creator_seen": true,
+  "events": 6119,
+  "at": {
+   "age": 918.8550000190735,
+   "growth": 2.5582755965211548,
+   "price_x": 11.635153411544213,
+   "off_top": -0.0038456800455545226,
+   "flow60": 34.3617022819999,
+   "flow300": 40.193857794999474,
+   "buy_pace": 0.9667359667359668
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.946078431372549,
+   "price_x": 1.0,
+   "off_top": 0.8774509803921569,
+   "flow60": 0.8504901960784313,
+   "flow300": 0.5269607843137255,
+   "buy_pace": 0.31862745098039214
+  },
+  "sol_removed": 217.443571613
+ },
+ {
+  "pool": "CorEg17ow7hTcwLGYxpqKS596xtamoW1BJw7D5utpawq",
+  "mint": "BDoX96XvpmvzuFrU5XcqcAA8WmmqrUyGD7AE9Q9v9Kkw",
+  "creator": null,
+  "remover": "28cnqZfax7gNXrTdJy6w79JWV3LcB42ujrXPcu4ap1GX",
+  "creator_seen": false,
+  "events": 332,
+  "at": {
+   "age": 1665.7910001277924,
+   "growth": 1.796021024602818,
+   "price_x": 3.2256910312525227,
+   "off_top": -0.35153597926753943,
+   "flow60": -0.0002537099999999938,
+   "flow300": 0.0001156270000000105,
+   "buy_pace": 1.1363636363636362
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.7,
+   "price_x": 0.7,
+   "off_top": 0.2787878787878788,
+   "flow60": 0.30303030303030304,
+   "flow300": 0.3,
+   "buy_pace": 0.6303030303030303
+  },
+  "sol_removed": 0.015981392
+ },
+ {
+  "pool": "553dxZH9jJjYKDFiQdPSrs786iYkKSQaFQh8UvXvaKgW",
+  "mint": "BDoX96XvpmvzuFrU5XcqcAA8WmmqrUyGD7AE9Q9v9Kkw",
+  "creator": "28cnqZfax7gNXrTdJy6w79JWV3LcB42ujrXPcu4ap1GX",
+  "remover": "28cnqZfax7gNXrTdJy6w79JWV3LcB42ujrXPcu4ap1GX",
+  "creator_seen": true,
+  "events": 13453,
+  "at": {
+   "age": 1656.9399998188019,
+   "growth": 1.5840794855872875,
+   "price_x": 1.7752130077235166,
+   "off_top": -0.3560902266742878,
+   "flow60": -2.134760924999952,
+   "flow300": 5.3016913750002175,
+   "buy_pace": 1.046712802768166
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.8578431372549019,
+   "price_x": 0.7058823529411765,
+   "off_top": 0.3161764705882353,
+   "flow60": 0.2867647058823529,
+   "flow300": 0.3382352941176471,
+   "buy_pace": 0.6911764705882353
+  },
+  "sol_removed": 142.551312903
+ },
+ {
+  "pool": "B8oKGjJkzAE2zXLULcyWnXNn1xmtZqwmFyxZZWqFzAiK",
+  "mint": "HA6b84BWKFvn4GcGMUunuD5p3HtgbUSq64PpDQ4UXbKC",
+  "creator": "6Dm9uiEcM8vsSmwPYybphtDp1B7F9zecSvXFZjda2HXx",
+  "remover": "6Dm9uiEcM8vsSmwPYybphtDp1B7F9zecSvXFZjda2HXx",
+  "creator_seen": true,
+  "events": 6945,
+  "at": {
+   "age": 939.6970000267029,
+   "growth": 2.1138130016361245,
+   "price_x": 4.942633690876365,
+   "off_top": -0.29032727808890135,
+   "flow60": -5.8361321839999505,
+   "flow300": 34.126167857000084,
+   "buy_pace": 0.9187442289935366
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.823960880195599,
+   "price_x": 0.823960880195599,
+   "off_top": 0.2591687041564792,
+   "flow60": 0.19070904645476772,
+   "flow300": 0.7017114914425427,
+   "buy_pace": 0.20048899755501223
+  },
+  "sol_removed": 166.760249732
+ },
+ {
+  "pool": "FdMxdPsskDm66pWm8Km9WRMsutD9atTo1TvLXoQoSBhz",
+  "mint": "3Y79Dg28aUa55diVt8YYCbH58FRcjCXjQFD95v8z4CzS",
+  "creator": "C2Ar8JqNBKUbh6Gn3oLTBrw4ovXz5q1r9UUENPawWkPQ",
+  "remover": "C2Ar8JqNBKUbh6Gn3oLTBrw4ovXz5q1r9UUENPawWkPQ",
+  "creator_seen": true,
+  "events": 6557,
+  "at": {
+   "age": 969.9560000896454,
+   "growth": 1.9827758821914816,
+   "price_x": 3.931400100508582,
+   "off_top": -0.4891230899316097,
+   "flow60": -45.289576509,
+   "flow300": -10.62041606599999,
+   "buy_pace": 0.9320288362512873
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.4121951219512195,
+   "price_x": 0.4121951219512195,
+   "off_top": 0.1048780487804878,
+   "flow60": 0.06341463414634146,
+   "flow300": 0.16097560975609757,
+   "buy_pace": 0.22682926829268293
+  },
+  "sol_removed": 168.529052022
+ },
+ {
+  "pool": "6S8W2JAbPPhzBU2341QvTPP7enq6MC9f4A22FgQfga9j",
+  "mint": "D9e1tSkX3XsB1o6EhXxgsFAXotDsXxNwPTUuM5Pm4dUx",
+  "creator": null,
+  "remover": "3ycwToPKzXQ9sqF63EXuPy6g4qaLca2W8ZBff57idvoL",
+  "creator_seen": false,
+  "events": 2888,
+  "at": {
+   "age": 537.6310000419617,
+   "growth": 0.7120809633827331,
+   "price_x": 0.507059303013513,
+   "off_top": -0.9642148351218138,
+   "flow60": -26.878915160000002,
+   "flow300": -20.632985816000062,
+   "buy_pace": 1.032967032967033
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.0048543689320388345,
+   "price_x": 0.0048543689320388345,
+   "off_top": 0.0048543689320388345,
+   "flow60": 0.009708737864077669,
+   "flow300": 0.0024271844660194173,
+   "buy_pace": 0.2766990291262136
+  },
+  "sol_removed": 7.429054181
+ },
+ {
+  "pool": "BfRpJiHfWErsEj8QpgD1ePFPHqGo2xtZpdF5RY9Wy7NR",
+  "mint": "C796KAf1niYdPcqvMWNd9DZsJEGyG52vqXqDcmUdUDTC",
+  "creator": null,
+  "remover": "8SLF4FP6hcZKo5niHcr14JGuywnboHEPEu1MenDYwS6v",
+  "creator_seen": false,
+  "events": 11821,
+  "at": {
+   "age": 1812.641000032425,
+   "growth": 4.28701281615092,
+   "price_x": 18.378478558203806,
+   "off_top": -0.6197248758684226,
+   "flow60": -8.008651854,
+   "flow300": -22.831767905000092,
+   "buy_pace": 0.9812206572769954
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.6274509803921569,
+   "price_x": 0.6274509803921569,
+   "off_top": 0.0,
+   "flow60": 0.12745098039215685,
+   "flow300": 0.02696078431372549,
+   "buy_pace": 0.2727272727272727
+  },
+  "sol_removed": 53.744059109
+ },
+ {
+  "pool": "ErcgXnmXTKMksvwJ3biuaZdaxBeZUDguUtgwvScdXFpE",
+  "mint": "6GVNH1vNrvg8aWEcPRot4GZvvt9x9emC4teFqnSHb6X",
+  "creator": null,
+  "remover": "9rSoGD9NksPnSMKuxayS5v48Hvn31e4Amg3FLC8MdNWe",
+  "creator_seen": false,
+  "events": 188,
+  "at": {
+   "age": 1040.7910001277924,
+   "growth": 2.1116521686680896,
+   "price_x": 4.459074219249665,
+   "off_top": -0.6480302116815142,
+   "flow60": 0.0021124360000000023,
+   "flow300": 0.009905879000000003,
+   "buy_pace": 0.9459459459459459
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.989247311827957,
+   "price_x": 0.989247311827957,
+   "off_top": 0.7849462365591398,
+   "flow60": 0.8440860215053764,
+   "flow300": 0.8064516129032258,
+   "buy_pace": 0.3709677419354839
+  },
+  "sol_removed": 0.024428058
+ },
+ {
+  "pool": "6dThkHc5g65DGspmhLbP4AerVHfrvgd4DYeZr5Z4TPRR",
+  "mint": "6GVNH1vNrvg8aWEcPRot4GZvvt9x9emC4teFqnSHb6X",
+  "creator": "9rSoGD9NksPnSMKuxayS5v48Hvn31e4Amg3FLC8MdNWe",
+  "remover": "9rSoGD9NksPnSMKuxayS5v48Hvn31e4Amg3FLC8MdNWe",
+  "creator_seen": true,
+  "events": 7942,
+  "at": {
+   "age": 1030.4820001125336,
+   "growth": 2.3056282176373695,
+   "price_x": 4.579852658606739,
+   "off_top": -0.04248562501390318,
+   "flow60": 13.787659113999936,
+   "flow300": 73.08460910499981,
+   "buy_pace": 1.0095642933049946
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.9880382775119617,
+   "price_x": 0.9880382775119617,
+   "off_top": 0.638755980861244,
+   "flow60": 0.7129186602870813,
+   "flow300": 0.9665071770334929,
+   "buy_pace": 0.3133971291866029
+  },
+  "sol_removed": 195.955342211
+ },
+ {
+  "pool": "F7nnmjj5YbjD8BTAkqggQ9EkmgAFxGPjrFeDXqEKoGds",
+  "mint": "5QUQ8DFSpbrm1vxmT8p5BoaoVGPqxvs5GBp9CoDeYgjA",
+  "creator": null,
+  "remover": "GhnFzZ53yiDbnS1UQ2vyjuJqVh32MBxrUfCCRx3aeK21",
+  "creator_seen": false,
+  "events": 1074,
+  "at": {
+   "age": 402.8140001296997,
+   "growth": 1.466191244523883,
+   "price_x": 2.1497167496071428,
+   "off_top": -0.5300210450929841,
+   "flow60": 0.459102474999999,
+   "flow300": -5.3219997639999965,
+   "buy_pace": 0.8397932816537467
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.308411214953271,
+   "price_x": 0.308411214953271,
+   "off_top": 0.13271028037383178,
+   "flow60": 0.48411214953271026,
+   "flow300": 0.007476635514018692,
+   "buy_pace": 0.14392523364485982
+  },
+  "sol_removed": 15.002526558
+ },
+ {
+  "pool": "FsxGxWYvtonPSssbuNG5GVcWvRqFz39jagNkveyFE9Rf",
+  "mint": "5R6sVoKH2FSy85X78cAwtmZkPy2P3ZdjTb8UiF4cyKd9",
+  "creator": null,
+  "remover": "APSwqegH2NBgDK3BJtYtrjnYytKv1JYR5YVN9gHGXENN",
+  "creator_seen": false,
+  "events": 17625,
+  "at": {
+   "age": 3952.7309999465942,
+   "growth": 3.855164272746987,
+   "price_x": 14.862291314699377,
+   "off_top": -0.5941779970430733,
+   "flow60": -4.708907712000034,
+   "flow300": -6.0734146530000075,
+   "buy_pace": 0.9180327868852459
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.22443890274314215,
+   "price_x": 0.22443890274314215,
+   "off_top": 0.014962593516209476,
+   "flow60": 0.14713216957605985,
+   "flow300": 0.17206982543640897,
+   "buy_pace": 0.10224438902743142
+  },
+  "sol_removed": 40.294725179
+ },
+ {
+  "pool": "7DnjcZZ2No1aTok2qSSPbni48qLtEnv54jjhHoonkBQZ",
+  "mint": "3oWPwAqRuKjxyPNXn9BYpgZfJE4ytof5y1YeZZSTR5at",
+  "creator": "9J9SoGwLnwb5orkzwArDeZjbEoe6eyabkgKa1Sx8ByHM",
+  "remover": "9J9SoGwLnwb5orkzwArDeZjbEoe6eyabkgKa1Sx8ByHM",
+  "creator_seen": true,
+  "events": 8372,
+  "at": {
+   "age": 955.4730000495911,
+   "growth": 1.7680341471792917,
+   "price_x": 3.1259447083440435,
+   "off_top": -0.3815174136420143,
+   "flow60": 41.69543219900014,
+   "flow300": 21.21936645600013,
+   "buy_pace": 1.2796208530805686
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.7279236276849642,
+   "price_x": 0.7279236276849642,
+   "off_top": 0.36515513126491644,
+   "flow60": 0.8926014319809069,
+   "flow300": 0.33651551312649164,
+   "buy_pace": 0.6992840095465394
+  },
+  "sol_removed": 151.333327948
+ },
+ {
+  "pool": "7ovRoEurquSqymXhmChkivY3patuph8tEtJBGnBjLuzp",
+  "mint": "B2fHavChBjb3FofEHy3h8qvST4PiLhYQbUiKvUbdxzgo",
+  "creator": null,
+  "remover": "BUggeSBqEngFqdiY8VazWCY25Bn8jDazkFQTcA84XEA",
+  "creator_seen": false,
+  "events": 5240,
+  "at": {
+   "age": 1001.9270000457764,
+   "growth": 3.773864700290918,
+   "price_x": 14.24205453369857,
+   "off_top": -0.17098446422450286,
+   "flow60": -1.8311426320001871,
+   "flow300": 16.06887988699963,
+   "buy_pace": 1.1927034611786715
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.8610421836228288,
+   "price_x": 0.8610421836228288,
+   "off_top": 0.3052109181141439,
+   "flow60": 0.12158808933002481,
+   "flow300": 0.6377171215880894,
+   "buy_pace": 0.47512437810945274
+  },
+  "sol_removed": 47.26799848
+ },
+ {
+  "pool": "AnUqHUErSS4QRvn8XjNjezQ5481arHzUkS1q2CdxPmvD",
+  "mint": "BzLXHe8zHaPdTL2RBpkvpEDx369iuii2WSuFvx5rDdTt",
+  "creator": null,
+  "remover": "28cnqZfax7gNXrTdJy6w79JWV3LcB42ujrXPcu4ap1GX",
+  "creator_seen": false,
+  "events": 311,
+  "at": {
+   "age": 1765.358999967575,
+   "growth": 2.7777653752985225,
+   "price_x": 7.715979275376678,
+   "off_top": -0.030445719247907954,
+   "flow60": 0.0013034809999999952,
+   "flow300": 0.0061798899999999934,
+   "buy_pace": 1.0416666666666665
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.9967637540453075,
+   "price_x": 0.9967637540453075,
+   "off_top": 0.7799352750809061,
+   "flow60": 0.6601941747572816,
+   "flow300": 0.7119741100323624,
+   "buy_pace": 0.48220064724919093
+  },
+  "sol_removed": 0.02471717
+ },
+ {
+  "pool": "9PyQ4JUsvoZJy5QggfdBCDXnZuQe63ErdsvKtDuGnaBG",
+  "mint": "BzLXHe8zHaPdTL2RBpkvpEDx369iuii2WSuFvx5rDdTt",
+  "creator": "28cnqZfax7gNXrTdJy6w79JWV3LcB42ujrXPcu4ap1GX",
+  "remover": "28cnqZfax7gNXrTdJy6w79JWV3LcB42ujrXPcu4ap1GX",
+  "creator_seen": true,
+  "events": 14599,
+  "at": {
+   "age": 1753.625,
+   "growth": 2.44733136920769,
+   "price_x": 4.256890800462266,
+   "off_top": -0.03270515222922554,
+   "flow60": 11.652865769999664,
+   "flow300": 54.21010342600012,
+   "buy_pace": 1.0046367851622873
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.9950738916256158,
+   "price_x": 0.9926108374384236,
+   "off_top": 0.8472906403940886,
+   "flow60": 0.6822660098522167,
+   "flow300": 0.7881773399014779,
+   "buy_pace": 0.5344827586206896
+  },
+  "sol_removed": 220.235349908
+ },
+ {
+  "pool": "9KZ8o4jHXb4Rmj3XqDGtDufpCFMAfXcxobEd4oFdbLy3",
+  "mint": "8YgiQRC2E4g4rb14zrrHCxtLhQmcJT3iNJy9DrLJpjFT",
+  "creator": null,
+  "remover": "APSwqegH2NBgDK3BJtYtrjnYytKv1JYR5YVN9gHGXENN",
+  "creator_seen": false,
+  "events": 435,
+  "at": {
+   "age": 110.83699989318848,
+   "growth": 1.4816804716965901,
+   "price_x": 2.1953770036499693,
+   "off_top": -0.3113968917964661,
+   "flow60": 1.6161646449999987,
+   "flow300": 5.689536943999998,
+   "buy_pace": 3.07909604519774
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.6889400921658986,
+   "price_x": 0.6889400921658986,
+   "off_top": 0.10368663594470046,
+   "flow60": 0.22119815668202766,
+   "flow300": 0.6820276497695853,
+   "buy_pace": 0.0
+  },
+  "sol_removed": 15.472197971
+ },
+ {
+  "pool": "34N81xJGVScExMX1zCWumaXMMEKkJiapCd1TmSTX1UMA",
+  "mint": "AbnDv1gVypKK1RfSWNfCDVNMtJfWkV9uSPaznipATV98",
+  "creator": "8TCBjRW7dvhXCfGMA5ispMUkN9QK6HN5Yu759VDuVxH6",
+  "remover": "8TCBjRW7dvhXCfGMA5ispMUkN9QK6HN5Yu759VDuVxH6",
+  "creator_seen": true,
+  "events": 1882,
+  "at": {
+   "age": 257.8550000190735,
+   "growth": 1.2763231733644027,
+   "price_x": 1.6620761388534742,
+   "off_top": -0.025750144335923375,
+   "flow60": 8.980973185000002,
+   "flow300": 22.654020642000024,
+   "buy_pace": 1.2674581005586592
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.9787234042553191,
+   "price_x": 0.9787234042553191,
+   "off_top": 0.6127659574468085,
+   "flow60": 0.8936170212765957,
+   "flow300": 0.9744680851063829,
+   "buy_pace": 0.0
+  },
+  "sol_removed": 100.689979968
+ },
+ {
+  "pool": "GTpvKqw46wJ26vGLCHgvivQMJt4GEda6gs99eEFLMgS4",
+  "mint": "CjHLrSGDWEYfFFfyYcJM7A3anag2MTu6iTvpP7LXDrzq",
+  "creator": null,
+  "remover": "APSwqegH2NBgDK3BJtYtrjnYytKv1JYR5YVN9gHGXENN",
+  "creator_seen": false,
+  "events": 6834,
+  "at": {
+   "age": 1406.1929998397827,
+   "growth": 2.8760282637467047,
+   "price_x": 8.271538448676852,
+   "off_top": -0.4963416380941138,
+   "flow60": -5.465668242999957,
+   "flow300": -10.730153036999841,
+   "buy_pace": 1.0335570469798658
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.2860696517412935,
+   "price_x": 0.2860696517412935,
+   "off_top": 0.014925373134328358,
+   "flow60": 0.10199004975124377,
+   "flow300": 0.004975124378109453,
+   "buy_pace": 0.44029850746268656
+  },
+  "sol_removed": 30.060656381
+ },
+ {
+  "pool": "4xCR8xoUHbaEcfkgq1rgpZ59vpbAMdFyPx4htsPmyBfZ",
+  "mint": "9Es6CPeHsNQ82j2RNSR25vvFeU2NGfgzsMyqw8ioAbvt",
+  "creator": "DuA9bZtjf2cpYUo465nfeSg1282nWXgAHhUm6h1Bg3Pp",
+  "remover": "DuA9bZtjf2cpYUo465nfeSg1282nWXgAHhUm6h1Bg3Pp",
+  "creator_seen": true,
+  "events": 4322,
+  "at": {
+   "age": 470.42199993133545,
+   "growth": 2.190708162861171,
+   "price_x": 4.896645359488121,
+   "off_top": -0.219897685219979,
+   "flow60": -8.670874459999894,
+   "flow300": 84.09952412600045,
+   "buy_pace": 1.1252747252747253
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.8657407407407407,
+   "price_x": 0.8657407407407407,
+   "off_top": 0.08333333333333333,
+   "flow60": 0.06944444444444445,
+   "flow300": 0.8518518518518519,
+   "buy_pace": 0.12268518518518519
+  },
+  "sol_removed": 172.826271353
+ },
+ {
+  "pool": "CmzrLeDvHjLFGyapb1JDCqR9ZxML6FeohTTU9nKrjgCT",
+  "mint": "6F3e8i9dbWG9cKhUgGPsog3Deim38EYLwYK63xpssiZw",
+  "creator": null,
+  "remover": "7HFEDey8yVZvSyKafpQG65vw426CijHWX5afSYbnj2oJ",
+  "creator_seen": false,
+  "events": 12627,
+  "at": {
+   "age": 1788.944000005722,
+   "growth": 12.654984759708604,
+   "price_x": 160.1486358378121,
+   "off_top": -0.6655044008285271,
+   "flow60": -16.59099749199993,
+   "flow300": -57.27817454500044,
+   "buy_pace": 0.956813104988831
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.7450980392156863,
+   "price_x": 0.7450980392156863,
+   "off_top": 0.0,
+   "flow60": 0.10049019607843138,
+   "flow300": 0.01715686274509804,
+   "buy_pace": 0.26715686274509803
+  },
+  "sol_removed": 158.945036821
+ },
+ {
+  "pool": "HYXkoemYnd39LJ6NAhA2f1VLD434aRutM7PzyvqSFkgX",
+  "mint": "FxBEUrVmv1sA5F1c9ziErB9HRy8fBKGi9QmbUzxuyG92",
+  "creator": "FD1rzB1xHJuoJvoHqip2gr9jfqqUsMcVo18qtd2DADQa",
+  "remover": "FD1rzB1xHJuoJvoHqip2gr9jfqqUsMcVo18qtd2DADQa",
+  "creator_seen": true,
+  "events": 11383,
+  "at": {
+   "age": 1305.9279999732971,
+   "growth": 3.1585417901783357,
+   "price_x": 638.488688397724,
+   "off_top": -0.07780287403698227,
+   "flow60": 88.89143952400059,
+   "flow300": 33.47830771600297,
+   "buy_pace": 1.7692307692307694
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.9287469287469288,
+   "price_x": 0.9557739557739557,
+   "off_top": 0.4176904176904177,
+   "flow60": 0.9385749385749386,
+   "flow300": 0.10565110565110565,
+   "buy_pace": 0.8574938574938575
+  },
+  "sol_removed": 268.476052162
+ },
+ {
+  "pool": "BvLBUMSbjtUTuoF5gm2j7fFc5G1tBmUgjaAnqsy3XPU4",
+  "mint": "2J8NYUDAFmvGTsjF4yFijJ1HrLAy3y7s68BDUh3bYnev",
+  "creator": null,
+  "remover": "72LSfA8Sbu4YWp884AJEWLmCA5puYqm4c9xgPrzfJyHE",
+  "creator_seen": false,
+  "events": 3302,
+  "at": {
+   "age": 484.8510000705719,
+   "growth": 1.2174270337713282,
+   "price_x": 1.4821285764592018,
+   "off_top": -0.5517212540910486,
+   "flow60": 0.5488297079999969,
+   "flow300": -1.9946994040000074,
+   "buy_pace": 0.9139264990328819
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.3196125907990315,
+   "price_x": 0.3196125907990315,
+   "off_top": 0.2711864406779661,
+   "flow60": 0.5569007263922519,
+   "flow300": 0.1089588377723971,
+   "buy_pace": 0.0
+  },
+  "sol_removed": 12.894196851
+ },
+ {
+  "pool": "98kkedSy2gHfQB5q7BuRWpmBaBsmdDxnAA9dK9YqgSvw",
+  "mint": "AqqGBBnZ37bBLmftRuVPhZ5WPL6gbuZWATQ2oUzKj45o",
+  "creator": "DuA9bZtjf2cpYUo465nfeSg1282nWXgAHhUm6h1Bg3Pp",
+  "remover": "DuA9bZtjf2cpYUo465nfeSg1282nWXgAHhUm6h1Bg3Pp",
+  "creator_seen": true,
+  "events": 7482,
+  "at": {
+   "age": 1132.3540000915527,
+   "growth": 2.4367172070585226,
+   "price_x": 5.937590563528748,
+   "off_top": -0.22418134793601852,
+   "flow60": -1.0113893600001234,
+   "flow300": 41.58665002399957,
+   "buy_pace": 0.9350463954318343
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.8317307692307693,
+   "price_x": 0.8317307692307693,
+   "off_top": 0.30288461538461536,
+   "flow60": 0.24759615384615385,
+   "flow300": 0.6995192307692307,
+   "buy_pace": 0.18269230769230768
+  },
+  "sol_removed": 192.232515513
+ },
+ {
+  "pool": "yLNzkMwcmKtnpyGM6GLJBi6kmbN5aHNqoTvgxyKwTEL",
+  "mint": "9q8HsEHNCQq38YWn5d9WZiN2VV8QmmXRfEGZDwz3GLLN",
+  "creator": "BU3rA8HjzASdTNDtwpX6fALMtkd79bJ1A7X9hfi9cLnK",
+  "remover": "BU3rA8HjzASdTNDtwpX6fALMtkd79bJ1A7X9hfi9cLnK",
+  "creator_seen": true,
+  "events": 3240,
+  "at": {
+   "age": 404.6289999485016,
+   "growth": 1.400833225195445,
+   "price_x": 2.002177018379581,
+   "off_top": -0.4832293631287853,
+   "flow60": -6.475028990999881,
+   "flow300": 24.90646365400009,
+   "buy_pace": 1.0947712418300655
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.5061728395061729,
+   "price_x": 0.5061728395061729,
+   "off_top": 0.02962962962962963,
+   "flow60": 0.2716049382716049,
+   "flow300": 0.49135802469135803,
+   "buy_pace": 0.2
+  },
+  "sol_removed": 119.06570044
+ },
+ {
+  "pool": "G94SPzFgCnZrDgJQVz2eVWD8Cvw68U2WQyf3Lw1rFLoW",
+  "mint": "EeAwm1wAzbpxJFr9PF9FnRDnamk9KP4hqsCeVcGV54E8",
+  "creator": null,
+  "remover": "DCPRaA1zc12P6PM4x2JpUDGBSSZ1K55WaLtSuoX8u7Z1",
+  "creator_seen": false,
+  "events": 8392,
+  "at": {
+   "age": 1125.462000131607,
+   "growth": 3.45259624257931,
+   "price_x": 11.920420617202074,
+   "off_top": -0.48527538276119053,
+   "flow60": -3.183311976999846,
+   "flow300": -3.7452514279996976,
+   "buy_pace": 1.089975845410628
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.6476190476190476,
+   "price_x": 0.6476190476190476,
+   "off_top": 0.047619047619047616,
+   "flow60": 0.22857142857142856,
+   "flow300": 0.0,
+   "buy_pace": 0.3738095238095238
+  },
+  "sol_removed": 43.364179991
+ },
+ {
+  "pool": "xxyjxmtxsnQqvQrknYFBmmCSyQSVso2dArNuftLwy8T",
+  "mint": "7NdbNZB32TqSm4tQDAQfE6MBoJyGkAnbPEqU1fxNrqu5",
+  "creator": null,
+  "remover": "FqoGxqLh28royGF3vCGvToaENjP2PZSssrscUYuvQGeN",
+  "creator_seen": false,
+  "events": 1112,
+  "at": {
+   "age": 4656.362999916077,
+   "growth": 5.154615607659972,
+   "price_x": 26.570056273268058,
+   "off_top": -0.5113103906225074,
+   "flow60": 0.0,
+   "flow300": 0.0,
+   "buy_pace": null
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.6720720720720721,
+   "price_x": 0.6720720720720721,
+   "off_top": 0.06846846846846846,
+   "flow60": 0.4648648648648649,
+   "flow300": 0.31891891891891894
+  },
+  "sol_removed": 0.045866908
+ },
+ {
+  "pool": "9AveiGibuU6txStu6ku2aFGSbUYB4Ap6vnEvi83P4XAV",
+  "mint": "7NdbNZB32TqSm4tQDAQfE6MBoJyGkAnbPEqU1fxNrqu5",
+  "creator": "FqoGxqLh28royGF3vCGvToaENjP2PZSssrscUYuvQGeN",
+  "remover": "FqoGxqLh28royGF3vCGvToaENjP2PZSssrscUYuvQGeN",
+  "creator_seen": true,
+  "events": 29851,
+  "at": {
+   "age": 4648.37299990654,
+   "growth": 2.083008443793755,
+   "price_x": 14.395103527188777,
+   "off_top": -0.5236049585770016,
+   "flow60": 0.0,
+   "flow300": 0.0,
+   "buy_pace": null
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.556930693069307,
+   "price_x": 0.7103960396039604,
+   "off_top": 0.04207920792079208,
+   "flow60": 0.43564356435643564,
+   "flow300": 0.22772277227722773
+  },
+  "sol_removed": 187.449929844
+ },
+ {
+  "pool": "2TE47E3hqgSrD6Mmbsr2BjPbX1CEMDgucFpLGqrftyah",
+  "mint": "MVmXreqqNh1XKknHYRXHACdEBEYtm12zMgbdD1bUdHs",
+  "creator": null,
+  "remover": "iV9KtMwE3urdxt628D4ijtdQF11duKz97HAt71gYtcn",
+  "creator_seen": false,
+  "events": 80,
+  "at": {
+   "age": 231.80800008773804,
+   "growth": 0.3346906254167223,
+   "price_x": 0.11201782543535434,
+   "off_top": -0.915399502824165,
+   "flow60": -0.010034255999999998,
+   "flow300": 0.0045425779999999985,
+   "buy_pace": 2.2222222222222223
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.01282051282051282,
+   "price_x": 0.01282051282051282,
+   "off_top": 0.01282051282051282,
+   "flow60": 0.0,
+   "flow300": 0.0,
+   "buy_pace": 0.21794871794871795
+  },
+  "sol_removed": 0.004467524
+ },
+ {
+  "pool": "3QGmfSfdg2N6RhjsMr74QQa43aeg5WBkRz2MkKChKvzp",
+  "mint": "MVmXreqqNh1XKknHYRXHACdEBEYtm12zMgbdD1bUdHs",
+  "creator": "iV9KtMwE3urdxt628D4ijtdQF11duKz97HAt71gYtcn",
+  "remover": "iV9KtMwE3urdxt628D4ijtdQF11duKz97HAt71gYtcn",
+  "creator_seen": true,
+  "events": 1906,
+  "at": {
+   "age": 221.8880000114441,
+   "growth": 0.6283131882574421,
+   "price_x": 0.6974052335832662,
+   "off_top": -0.5067755536537593,
+   "flow60": -21.705946904999987,
+   "flow300": 22.975076186,
+   "buy_pace": 1.4751098096632502
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.08823529411764706,
+   "price_x": 0.09033613445378151,
+   "off_top": 0.09033613445378151,
+   "flow60": 0.01680672268907563,
+   "flow300": 0.08823529411764706,
+   "buy_pace": 0.0
+  },
+  "sol_removed": 53.400337867
+ },
+ {
+  "pool": "5yNCLF7L6URBx5yBqXDqicVuckNKbhHJsg4Hbng2LskG",
+  "mint": "C7SCfvNc4M4wP6QPg1EGbp2zxJ6gveSrpNH6ybJkbiPg",
+  "creator": null,
+  "remover": "AD1r7HrYxCn2HLWR1Gx1r5vvVtXy4Z1By8mNfW6Jvakv",
+  "creator_seen": false,
+  "events": 268,
+  "at": {
+   "age": 1249.470999956131,
+   "growth": 1.9538878517135618,
+   "price_x": 3.817677210689486,
+   "off_top": -0.35566400105379925,
+   "flow60": 0.0037462690000000035,
+   "flow300": -0.0027076280000000036,
+   "buy_pace": 1.6666666666666667
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.8082706766917294,
+   "price_x": 0.8082706766917294,
+   "off_top": 0.2932330827067669,
+   "flow60": 0.8421052631578947,
+   "flow300": 0.19548872180451127,
+   "buy_pace": 0.7218045112781954
+  },
+  "sol_removed": 0.026080924
+ },
+ {
+  "pool": "AQpaL8DXKPwyScaMgeKvWR5FaLmiUtUByxTD78nwiRwp",
+  "mint": "C7SCfvNc4M4wP6QPg1EGbp2zxJ6gveSrpNH6ybJkbiPg",
+  "creator": "AD1r7HrYxCn2HLWR1Gx1r5vvVtXy4Z1By8mNfW6Jvakv",
+  "remover": "AD1r7HrYxCn2HLWR1Gx1r5vvVtXy4Z1By8mNfW6Jvakv",
+  "creator_seen": true,
+  "events": 9946,
+  "at": {
+   "age": 1239.6369998455048,
+   "growth": 2.14177284884104,
+   "price_x": 5.215326102382514,
+   "off_top": -0.38057562937687295,
+   "flow60": 21.97146869399984,
+   "flow300": -18.147251322000443,
+   "buy_pace": 1.119047619047619
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.7590361445783133,
+   "price_x": 0.8313253012048193,
+   "off_top": 0.1686746987951807,
+   "flow60": 0.7614457831325301,
+   "flow300": 0.15903614457831325,
+   "buy_pace": 0.708433734939759
+  },
+  "sol_removed": 182.029274416
+ },
+ {
+  "pool": "J9ezGx67cftKuCMX3MEffYQvw61yCtxruM9UtirFK6pt",
+  "mint": "2oSQipF6w5fXx3UELNRoKVB97F1aUQqfhXoFdWWbUhau",
+  "creator": "3a1jSpXZGm5n9S4bXLCGMRWJASWt5UZ4TgBrsiaUmiYL",
+  "remover": "3a1jSpXZGm5n9S4bXLCGMRWJASWt5UZ4TgBrsiaUmiYL",
+  "creator_seen": true,
+  "events": 8967,
+  "at": {
+   "age": 601.643000125885,
+   "growth": 1.6954037979294119,
+   "price_x": 2.7913491532323778,
+   "off_top": -0.29714117312937594,
+   "flow60": -8.737757672000008,
+   "flow300": -24.245055039999933,
+   "buy_pace": 0.8423423423423423
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.6323529411764706,
+   "price_x": 0.6151960784313726,
+   "off_top": 0.4411764705882353,
+   "flow60": 0.2549019607843137,
+   "flow300": 0.06862745098039216,
+   "buy_pace": 0.029411764705882353
+  },
+  "sol_removed": 144.109322822
+ },
+ {
+  "pool": "7A7zUpY5YCneHt6FYuY7Y2DZBZGKV3qeMkSG5zMBU9VR",
+  "mint": "Eupqgar5ijmzPc18LVndtUwYVzqfjXwLvaCTsuzzjU6M",
+  "creator": "28Mcv6dj5NggPnuECVaLGpRyWn3iBfN2yPWVLmeeXZcx",
+  "remover": "28Mcv6dj5NggPnuECVaLGpRyWn3iBfN2yPWVLmeeXZcx",
+  "creator_seen": true,
+  "events": 3733,
+  "at": {
+   "age": 248.9800000190735,
+   "growth": 1.3254248137176472,
+   "price_x": 1.7326139916478573,
+   "off_top": -0.14057219872939508,
+   "flow60": 4.440068797000016,
+   "flow300": 27.67110916600006,
+   "buy_pace": 1.278334211913548
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.7132530120481928,
+   "price_x": 0.6987951807228916,
+   "off_top": 0.5325301204819277,
+   "flow60": 0.5614457831325301,
+   "flow300": 0.7132530120481928,
+   "buy_pace": 0.0
+  },
+  "sol_removed": 112.661109164
+ },
+ {
+  "pool": "Hoo8VTHiDb7GirNaknuj2GKLp4W813i5yTSNKK2kK2yY",
+  "mint": "CJqdxc2Z9TXepjs3GHme9aRrwpxhfE5LmSTT2YDkreph",
+  "creator": null,
+  "remover": "CtVmAM2PJbcp18ctaJcDfymhSjw7aBz5q8AdRDrn2U6y",
+  "creator_seen": false,
+  "events": 306,
+  "at": {
+   "age": 1804.2360000610352,
+   "growth": 1.0827689691958928,
+   "price_x": 1.1723885136399914,
+   "off_top": -0.3207233947260315,
+   "flow60": 0.0,
+   "flow300": 0.0,
+   "buy_pace": null
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.4491803278688525,
+   "price_x": 0.4491803278688525,
+   "off_top": 0.25245901639344265,
+   "flow60": 0.40327868852459015,
+   "flow300": 0.5049180327868853
+  },
+  "sol_removed": 0.014453038
+ },
+ {
+  "pool": "8LDun1Ad5iFwYyioDLZUBhog4h99b6rKotBrevw4wp69",
+  "mint": "CJqdxc2Z9TXepjs3GHme9aRrwpxhfE5LmSTT2YDkreph",
+  "creator": "CtVmAM2PJbcp18ctaJcDfymhSjw7aBz5q8AdRDrn2U6y",
+  "remover": "CtVmAM2PJbcp18ctaJcDfymhSjw7aBz5q8AdRDrn2U6y",
+  "creator_seen": true,
+  "events": 11685,
+  "at": {
+   "age": 1795.0550000667572,
+   "growth": 1.4275982865631252,
+   "price_x": 1.6424144155647429,
+   "off_top": -0.3300340478642828,
+   "flow60": 0.0,
+   "flow300": -0.011167752000005748,
+   "buy_pace": null
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.7096774193548387,
+   "price_x": 0.4665012406947891,
+   "off_top": 0.2679900744416873,
+   "flow60": 0.3424317617866005,
+   "flow300": 0.41935483870967744
+  },
+  "sol_removed": 121.331578371
+ },
+ {
+  "pool": "5SegGFW5DmaDi2XkHv8wTKY78LeoVHBEH1TnRvbm7qu1",
+  "mint": "Foy2gwjSNV9JJbmLXEyjtZ5vuNb6LPKDHw9u8qViewZh",
+  "creator": "4SwA4EQGMXHTkjni2t6wqnXb6dbi2TKKzu7TodKvRGBe",
+  "remover": "4SwA4EQGMXHTkjni2t6wqnXb6dbi2TKKzu7TodKvRGBe",
+  "creator_seen": true,
+  "events": 4379,
+  "at": {
+   "age": 274.76700019836426,
+   "growth": 1.387563232235294,
+   "price_x": 1.8911179610873368,
+   "off_top": -0.26985774201304424,
+   "flow60": -0.5238107400000231,
+   "flow300": 32.952874739999906,
+   "buy_pace": 1.144048170449282
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.4863013698630137,
+   "price_x": 0.4817351598173516,
+   "off_top": 0.2762557077625571,
+   "flow60": 0.271689497716895,
+   "flow300": 0.4908675799086758,
+   "buy_pace": 0.0
+  },
+  "sol_removed": 117.942874738
+ },
+ {
+  "pool": "F8cAKnJxNUEpBwT7ZGJN3BYFe5QZopHBK6t7LnNMb3WN",
+  "mint": "E4MxgEFaAraPD4wL4u9aDm2GqWTK7tQSyW2pPB8KwaaQ",
+  "creator": "8fcJyw579BTVGPnGMPnYp8i5Fqu269C4yBSrRkJmV295",
+  "remover": "8fcJyw579BTVGPnGMPnYp8i5Fqu269C4yBSrRkJmV295",
+  "creator_seen": true,
+  "events": 8004,
+  "at": {
+   "age": 1045.9539999961853,
+   "growth": 1.7171098969058822,
+   "price_x": 2.8463940773513814,
+   "off_top": -0.08313149094648653,
+   "flow60": 5.6575004990000295,
+   "flow300": 38.352291864000094,
+   "buy_pace": 1.3256369426751593
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.972568578553616,
+   "price_x": 0.9675810473815462,
+   "off_top": 0.6134663341645885,
+   "flow60": 0.5361596009975063,
+   "flow300": 0.9077306733167082,
+   "buy_pace": 0.314214463840399
+  },
+  "sol_removed": 145.954341235
+ },
+ {
+  "pool": "GSxdwBsUmPpsDhi5qhKztGQ6dJuVMCzKo3451ZbC9Qr1",
+  "mint": "4rYFBjgmRHKdGuf3WuGYApwzrZ9M98oRXahXyLPCyqsu",
+  "creator": "5oSw6fPUXAuSGio5zzLs2KeBXby2GFhEAaCEciwN1SE5",
+  "remover": "5oSw6fPUXAuSGio5zzLs2KeBXby2GFhEAaCEciwN1SE5",
+  "creator_seen": true,
+  "events": 5200,
+  "at": {
+   "age": 303.83200001716614,
+   "growth": 1.4868529749764707,
+   "price_x": 2.164541333461258,
+   "off_top": -0.08406466071123819,
+   "flow60": 11.039470688000005,
+   "flow300": 41.37242286700011,
+   "buy_pace": 1.048136645962733
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.9493087557603687,
+   "price_x": 0.9331797235023042,
+   "off_top": 0.7788018433179723,
+   "flow60": 0.5483870967741935,
+   "flow300": 0.9470046082949308,
+   "buy_pace": 0.002304147465437788
+  },
+  "sol_removed": 126.382502871
+ },
+ {
+  "pool": "Ah6YC6Bvqf3N6sLYYfxxth1szEmvZ1XkMeZa5Ta5P4bk",
+  "mint": "2NJNc63uFGiihgCTynmuBDkFwW5ikER1JasZ8ykv848H",
+  "creator": "Fs1N975BuAZdYtBMRACbUfmgYRaMupMTmBGUdLTZi7ZK",
+  "remover": "Fs1N975BuAZdYtBMRACbUfmgYRaMupMTmBGUdLTZi7ZK",
+  "creator_seen": true,
+  "events": 8155,
+  "at": {
+   "age": 557.8639998435974,
+   "growth": 1.307191860035294,
+   "price_x": 1.6552863716231636,
+   "off_top": -0.38634948469722563,
+   "flow60": -0.5601438440000059,
+   "flow300": -9.093546631000084,
+   "buy_pace": 0.22100884035361415
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.4583333333333333,
+   "price_x": 0.44607843137254904,
+   "off_top": 0.38235294117647056,
+   "flow60": 0.3431372549019608,
+   "flow300": 0.0784313725490196,
+   "buy_pace": 0.0
+  },
+  "sol_removed": 111.111308101
+ },
+ {
+  "pool": "CnkjqHqwLSJ115pcWMDs7LjHFqu9Tf84NdBXM1Wfpz4t",
+  "mint": "BrU1g3PzHWo7YKmVakqx6qcjXwLSskRcHrCe3Hx6P89u",
+  "creator": "J8PHQPzrmbKiMHBEvHnEkoVobj6LMEgp2xvRR6kmawbN",
+  "remover": "J8PHQPzrmbKiMHBEvHnEkoVobj6LMEgp2xvRR6kmawbN",
+  "creator_seen": true,
+  "events": 5343,
+  "at": {
+   "age": 683.4179999828339,
+   "growth": 1.3487669477667397,
+   "price_x": 2.1414309303043457,
+   "off_top": -0.1090554381380372,
+   "flow60": 10.985621036999973,
+   "flow300": 10.05611839199998,
+   "buy_pace": 0.5503978779840849
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.9416058394160584,
+   "price_x": 0.9416058394160584,
+   "off_top": 0.6374695863746959,
+   "flow60": 0.9172749391727494,
+   "flow300": 0.40632603406326034,
+   "buy_pace": 0.051094890510948905
+  },
+  "sol_removed": 106.405270791
+ },
+ {
+  "pool": "9RJ4vxny9NhZX5kfBsuVena5yGJr2fPd4w2ZtqsuS8RG",
+  "mint": "BvihJibnHT5tuASo9tBj4UsonfEq8SQXxqKSLq5stEYd",
+  "creator": null,
+  "remover": "FqoGxqLh28royGF3vCGvToaENjP2PZSssrscUYuvQGeN",
+  "creator_seen": false,
+  "events": 1398,
+  "at": {
+   "age": 4352.431999921799,
+   "growth": 6.299160402164393,
+   "price_x": 39.679413102540046,
+   "off_top": -0.36176183961141894,
+   "flow60": 0.008534774000000002,
+   "flow300": 0.030454735999999975,
+   "buy_pace": 1.016949152542373
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.944206008583691,
+   "price_x": 0.944206008583691,
+   "off_top": 0.40772532188841204,
+   "flow60": 0.9163090128755365,
+   "flow300": 0.9849785407725322,
+   "buy_pace": 0.3583690987124464
+  },
+  "sol_removed": 0.05605132
+ },
+ {
+  "pool": "FWJa1Snsp1JrirUdMDfNmm6siDU5ZBVpMRsYHGZuLVZF",
+  "mint": "BvihJibnHT5tuASo9tBj4UsonfEq8SQXxqKSLq5stEYd",
+  "creator": "FqoGxqLh28royGF3vCGvToaENjP2PZSssrscUYuvQGeN",
+  "remover": "FqoGxqLh28royGF3vCGvToaENjP2PZSssrscUYuvQGeN",
+  "creator_seen": true,
+  "events": 30976,
+  "at": {
+   "age": 4343.473000049591,
+   "growth": 2.3387341759417715,
+   "price_x": 22.1191684797207,
+   "off_top": -0.3596102543962365,
+   "flow60": 29.101609741000345,
+   "flow300": 102.63613173900109,
+   "buy_pace": 0.9937238493723849
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.9478908188585607,
+   "price_x": 0.9478908188585607,
+   "off_top": 0.5285359801488834,
+   "flow60": 0.9032258064516129,
+   "flow300": 0.9255583126550868,
+   "buy_pace": 0.40198511166253104
+  },
+  "sol_removed": 210.462688477
+ },
+ {
+  "pool": "BfLyahbMnaVc4jxVxrDCU1i7NudV2h8DueKEqwCZPJBA",
+  "mint": "BhkhVVc4ZhCYmnKTkEsFMk6tUttU8DguiVLtEgCGHq3A",
+  "creator": "4cTqB8e6FFbse1Vgy2rkeViu4zUvxtsWYzLzCZcm4QHW",
+  "remover": "4cTqB8e6FFbse1Vgy2rkeViu4zUvxtsWYzLzCZcm4QHW",
+  "creator_seen": true,
+  "events": 9496,
+  "at": {
+   "age": 846.3970000743866,
+   "growth": 1.9833915227586372,
+   "price_x": 3.93384183155757,
+   "off_top": -0.22737926881447723,
+   "flow60": 33.90859733800003,
+   "flow300": 2.441790091999991,
+   "buy_pace": 1.0209135938359934
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.7094430992736077,
+   "price_x": 0.7094430992736077,
+   "off_top": 0.2687651331719128,
+   "flow60": 0.9782082324455206,
+   "flow300": 0.1791767554479419,
+   "buy_pace": 0.41646489104116224
+  },
+  "sol_removed": 160.635871122
+ },
+ {
+  "pool": "3b6LdrhJrAqmSAyj26E7qekiwd5hEmNF1RYjBkSq9QJ7",
+  "mint": "DmMLDdaEFpM9rmi7i57uSemmXC4MyP8py2zXE5Ag7tkB",
+  "creator": "9rSoGD9NksPnSMKuxayS5v48Hvn31e4Amg3FLC8MdNWe",
+  "remover": "9rSoGD9NksPnSMKuxayS5v48Hvn31e4Amg3FLC8MdNWe",
+  "creator_seen": true,
+  "events": 6546,
+  "at": {
+   "age": 1198.1980001926422,
+   "growth": 1.8952057443651213,
+   "price_x": 3.591804727735612,
+   "off_top": -0.022706957828046548,
+   "flow60": 1.907559126999928,
+   "flow300": 14.798284092999872,
+   "buy_pace": 0.9210526315789475
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.9926829268292683,
+   "price_x": 0.9926829268292683,
+   "off_top": 0.6487804878048781,
+   "flow60": 0.35121951219512193,
+   "flow300": 0.3853658536585366,
+   "buy_pace": 0.16341463414634147
+  },
+  "sol_removed": 162.172907334
+ },
+ {
+  "pool": "FfxRFWqTvJSbxKgnJw2CKd9Avu5cLiJfDNJpJhxxqEVK",
+  "mint": "5KDWm8wZF6YmMmeTF2oQNZKQ8QkcQ81RVRE4BBgA8uPp",
+  "creator": "CMgEuJftDbq5g5d81Nev9Na7gjc3VSTWr7SWNHWBrtyw",
+  "remover": "6SEGzadMskcGeMgAcHELV3MQKvErBKeFTG9vc8oUEs9X",
+  "creator_seen": true,
+  "events": 3087,
+  "at": {
+   "age": 327.6010000705719,
+   "growth": 1.4283771829120344,
+   "price_x": 2.040261345710894,
+   "off_top": -0.2510740771112041,
+   "flow60": 1.7995256319999768,
+   "flow300": 20.613256814999872,
+   "buy_pace": 0.9654115586690017
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.4399092970521542,
+   "price_x": 0.4399092970521542,
+   "off_top": 0.19727891156462585,
+   "flow60": 0.3492063492063492,
+   "flow300": 0.1292517006802721,
+   "buy_pace": 0.011337868480725623
+  },
+  "sol_removed": 121.407119718
+ },
+ {
+  "pool": "6MTmQvxVT2EAYYEq1ETCbHxNYJxJhwJBz3u3k8XJkbie",
+  "mint": "Avas6H2c8XiDpLfTjdb4JHEXkwBzgbY5XeWP6SeAEYf6",
+  "creator": "9htPmH9kerm85bYDtnFfnoMbhhmi6T9TkoGVoMTRMX2y",
+  "remover": "9htPmH9kerm85bYDtnFfnoMbhhmi6T9TkoGVoMTRMX2y",
+  "creator_seen": true,
+  "events": 5608,
+  "at": {
+   "age": 611.1429998874664,
+   "growth": 1.238545714527408,
+   "price_x": 1.5339954714631772,
+   "off_top": -0.6514368744811487,
+   "flow60": -25.319592357000037,
+   "flow300": -41.25594031000014,
+   "buy_pace": 0.6029637199795606
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.16708229426433915,
+   "price_x": 0.16708229426433915,
+   "off_top": 0.004987531172069825,
+   "flow60": 0.017456359102244388,
+   "flow300": 0.0,
+   "buy_pace": 0.0798004987531172
+  },
+  "sol_removed": 97.708786788
+ },
+ {
+  "pool": "62Px8HXKzWbM7XGn3sySVFZL13C7t88BSLfxRGZEXzAn",
+  "mint": "HJ9MjKk2GNxMLD15b3EfcTYTJ9BTU9wuP5wnvnrisgTq",
+  "creator": "9htPmH9kerm85bYDtnFfnoMbhhmi6T9TkoGVoMTRMX2y",
+  "remover": "9htPmH9kerm85bYDtnFfnoMbhhmi6T9TkoGVoMTRMX2y",
+  "creator_seen": true,
+  "events": 2425,
+  "at": {
+   "age": 284.8110001087189,
+   "growth": 1.4658361967523579,
+   "price_x": 2.1486757223465083,
+   "off_top": -0.016534651312448023,
+   "flow60": 10.534847742999968,
+   "flow300": 42.401015489999985,
+   "buy_pace": 1.1050442017680706
+  },
+  "pct": {
+   "age": 1.0,
+   "growth": 0.995049504950495,
+   "price_x": 0.995049504950495,
+   "off_top": 0.8415841584158416,
+   "flow60": 0.7673267326732673,
+   "flow300": 0.995049504950495,
+   "buy_pace": 0.0
+  },
+  "sol_removed": 133.391014355
+ }
+]

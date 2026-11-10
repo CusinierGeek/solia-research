@@ -1,0 +1,257 @@
+{
+  "model_version": "solia-20261102T151927246570Z",
+  "generated_at": "2026-11-06T19:38:27.752650+00:00",
+  "settings": {
+    "pump_threshold": 0.5,
+    "exit_rule": "TP 2.0 / SL vol3 / 900s",
+    "window_stride_seconds": 0.0,
+    "read": {
+      "lookback_days": 2.0,
+      "max_rows": 8000000,
+      "window_start": "2026-11-04T02:11:00+00:00",
+      "window_end": "2026-11-06T02:11:00+00:00",
+      "rows_in_window": 41826979,
+      "tokens_in_window": 152653,
+      "tokens_partial": 46564,
+      "tokens_capped": 40904,
+      "tokens_kept": 65185,
+      "rows_read": 7999682
+    },
+    "draws": 200,
+    "bootstrap_samples": 1000,
+    "ci": 0.95,
+    "seed": 0,
+    "execution": {
+      "realistic_fills": true,
+      "entry_latency_s": 3.0,
+      "exit_latency_s": 2.0,
+      "max_mark_age_s": 60.0,
+      "position_size": 1.0,
+      "min_position_size": 0.01,
+      "max_pool_fraction": 0.02,
+      "network_fee": 0.0002,
+      "account_rent": 0.00203928,
+      "max_slippage": 0.15,
+      "max_exit_retries": 3,
+      "fee_pct": {
+        "default": 0.0025,
+        "pumpfun": 0.0125,
+        "pumpswap": 0.003,
+        "raydium-launchpad": 0.01,
+        "meteora-launchpad": 0.01,
+        "bonk": 0.01
+      },
+      "virtual_sol": {
+        "pumpfun": 30.0,
+        "raydium-launchpad": 30.0,
+        "meteora-launchpad": 30.0,
+        "bonk": 30.0
+      }
+    }
+  },
+  "n_windows": 5293293,
+  "n_censored": 27883,
+  "model": {
+    "take_profit": 2.0,
+    "stop_loss": "vol3",
+    "timeout_s": 900,
+    "partial_at": null,
+    "partial_share": null,
+    "rest_stop": null,
+    "rest_timeout_s": null,
+    "trail": null,
+    "trail_after": null,
+    "label": "TP 2.0 / SL vol3 / 900s",
+    "is_bot_default": false,
+    "n_trades": 308,
+    "n_tokens": 209,
+    "failed_entries": 0,
+    "abandoned_entries": 0,
+    "declined_entries": 0,
+    "win_rate": 0.31493506493506496,
+    "mean_return": 0.17207902112222434,
+    "median_return": -0.13249895927147565,
+    "mean_return_ci": [
+      0.03957431804734192,
+      0.31222727749581297
+    ],
+    "total_pnl_sol": 53.252050667278965,
+    "exit_share": {
+      "tp": 0.288961038961039,
+      "sl": 0.5454545454545454,
+      "timeout": 0.16558441558441558,
+      "trail": 0.0
+    },
+    "median_hold_s": 160.30449998378754,
+    "top_token_profit_share": 0.03136790120954089,
+    "partial_fill_share": 0.0,
+    "n_windows": 2032
+  },
+  "baselines": {
+    "breakout": {
+      "take_profit": 2.0,
+      "stop_loss": "vol3",
+      "timeout_s": 900,
+      "partial_at": null,
+      "partial_share": null,
+      "rest_stop": null,
+      "rest_timeout_s": null,
+      "trail": null,
+      "trail_after": null,
+      "label": "TP 2.0 / SL vol3 / 900s",
+      "is_bot_default": false,
+      "n_trades": 308,
+      "n_tokens": 288,
+      "failed_entries": 78,
+      "abandoned_entries": 2,
+      "declined_entries": 0,
+      "win_rate": 0.18831168831168832,
+      "mean_return": -0.1442585133428799,
+      "median_return": -0.350970201191276,
+      "mean_return_ci": [
+        -0.25707767773549195,
+        -0.02622495890017567
+      ],
+      "total_pnl_sol": -22.987833053177777,
+      "exit_share": {
+        "tp": 0.08441558441558442,
+        "sl": 0.6038961038961039,
+        "timeout": 0.3116883116883117,
+        "trail": 0.0
+      },
+      "median_hold_s": 90.26499998569489,
+      "top_token_profit_share": 0.10547309570586885,
+      "partial_fill_share": 0.0,
+      "n_windows": 399,
+      "difference": 0.31633753446510426,
+      "difference_ci": [
+        0.1412393114391492,
+        0.5135786963151571
+      ]
+    },
+    "buy_pressure": {
+      "take_profit": 2.0,
+      "stop_loss": "vol3",
+      "timeout_s": 900,
+      "partial_at": null,
+      "partial_share": null,
+      "rest_stop": null,
+      "rest_timeout_s": null,
+      "trail": null,
+      "trail_after": null,
+      "label": "TP 2.0 / SL vol3 / 900s",
+      "is_bot_default": false,
+      "n_trades": 308,
+      "n_tokens": 294,
+      "failed_entries": 0,
+      "abandoned_entries": 6,
+      "declined_entries": 0,
+      "win_rate": 0.08766233766233766,
+      "mean_return": -0.0884674917635783,
+      "median_return": -0.06596421605979208,
+      "mean_return_ci": [
+        -0.10966303667863185,
+        -0.07013460388459353
+      ],
+      "total_pnl_sol": -19.45187362125836,
+      "exit_share": {
+        "tp": 0.0,
+        "sl": 0.04220779220779221,
+        "timeout": 0.9577922077922078,
+        "trail": 0.0
+      },
+      "median_hold_s": 962.0,
+      "top_token_profit_share": 0.13202965775806225,
+      "partial_fill_share": 0.0,
+      "n_windows": 319,
+      "difference": 0.26054651288580266,
+      "difference_ci": [
+        0.124614478358262,
+        0.4164675315955613
+      ]
+    },
+    "volatility": {
+      "take_profit": 2.0,
+      "stop_loss": "vol3",
+      "timeout_s": 900,
+      "partial_at": null,
+      "partial_share": null,
+      "rest_stop": null,
+      "rest_timeout_s": null,
+      "trail": null,
+      "trail_after": null,
+      "label": "TP 2.0 / SL vol3 / 900s",
+      "is_bot_default": false,
+      "n_trades": 308,
+      "n_tokens": 308,
+      "failed_entries": 2,
+      "abandoned_entries": 1,
+      "declined_entries": 0,
+      "win_rate": 0.6331168831168831,
+      "mean_return": -0.20954007262531507,
+      "median_return": 0.17802377365107172,
+      "mean_return_ci": [
+        -0.2779263607457282,
+        -0.14210078548676322
+      ],
+      "total_pnl_sol": -64.53874236859704,
+      "exit_share": {
+        "tp": 0.06818181818181818,
+        "sl": 0.048701298701298704,
+        "timeout": 0.8831168831168831,
+        "trail": 0.0
+      },
+      "median_hold_s": 911.5075000524521,
+      "top_token_profit_share": 0.011067927791440025,
+      "partial_fill_share": 0.0,
+      "n_windows": 397,
+      "difference": 0.38161909374753944,
+      "difference_ci": [
+        0.2306385248969046,
+        0.5524843578208641
+      ]
+    },
+    "random": {
+      "draws": 200,
+      "mean_trades": 302.745,
+      "mean_return": -0.08546786034509728,
+      "mean_return_range": [
+        -0.11717292187681728,
+        -0.04983770148070235
+      ],
+      "p_value": 0.004975124378109453,
+      "difference": 0.25754688146732163,
+      "difference_ci": [
+        0.12326311667556246,
+        0.4093121214922229
+      ]
+    },
+    "matched": {
+      "draws": 200,
+      "mean_trades": 274.305,
+      "mean_return": -0.19750009855478431,
+      "mean_return_range": [
+        -0.2847156404298079,
+        -0.09373608945120647
+      ],
+      "p_value": 0.004975124378109453,
+      "difference": 0.3695791196770086,
+      "difference_ci": [
+        0.19562197208166698,
+        0.5315835555416234
+      ],
+      "match_levels": {
+        "venue+age+volatility": 61600,
+        "venue+age": 0,
+        "venue": 0,
+        "any": 0
+      }
+    }
+  },
+  "reading": {
+    "enough_trades": true,
+    "beats_matched": true,
+    "beaten_by": [],
+    "verdict": "the model adds value"
+  }
+}

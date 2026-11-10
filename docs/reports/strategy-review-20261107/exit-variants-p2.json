@@ -1,0 +1,725 @@
+{
+  "model_version": "solia-20261102T151927246570Z",
+  "generated_at": "2026-11-06T20:40:39.223482+00:00",
+  "n_samples": 5082706,
+  "horizon": "15m",
+  "settings": {
+    "pump_thresholds": [
+      0.5
+    ],
+    "window_stride_seconds": 0.0,
+    "grid": "variants",
+    "read": {
+      "lookback_days": 2.0,
+      "max_rows": 8000000,
+      "window_start": "2026-11-02T02:11:00+00:00",
+      "window_end": "2026-11-04T02:11:00+00:00",
+      "rows_in_window": 40237529,
+      "tokens_in_window": 151965,
+      "tokens_partial": 45704,
+      "tokens_capped": 37831,
+      "tokens_kept": 68430,
+      "rows_read": 7999975
+    },
+    "min_trades": 30,
+    "bootstrap_samples": 1000,
+    "ci": 0.95,
+    "seed": 0,
+    "execution": {
+      "realistic_fills": true,
+      "entry_latency_s": 3.0,
+      "exit_latency_s": 2.0,
+      "max_mark_age_s": 60.0,
+      "position_size": 1.0,
+      "min_position_size": 0.01,
+      "max_pool_fraction": 0.02,
+      "network_fee": 0.0002,
+      "account_rent": 0.00203928,
+      "max_slippage": 0.15,
+      "max_exit_retries": 3,
+      "fee_pct": {
+        "default": 0.0025,
+        "pumpfun": 0.0125,
+        "pumpswap": 0.003,
+        "raydium-launchpad": 0.01,
+        "meteora-launchpad": 0.01,
+        "bonk": 0.01
+      },
+      "virtual_sol": {
+        "pumpfun": 30.0,
+        "raydium-launchpad": 30.0,
+        "meteora-launchpad": 30.0,
+        "bonk": 30.0
+      }
+    }
+  },
+  "rules": [
+    {
+      "pump_threshold": 0.5,
+      "n_censored": 164,
+      "selection": {
+        "labeled_windows": {
+          "n": 4670,
+          "n_tokens": 352,
+          "precision": 0.5364025695931478,
+          "win_rate": 0.7301927194860813,
+          "mean_return": 1.189469052799466,
+          "median_return": 0.41676694308862816,
+          "mean_return_ci": [
+            0.9144051664753813,
+            1.4994998175316776
+          ],
+          "labeled_share": 1.0,
+          "flat_share": 0.0006423982869379015
+        },
+        "all_windows": {
+          "n": 5100,
+          "n_tokens": 374,
+          "precision": 0.49549019607843137,
+          "win_rate": 0.6764705882352942,
+          "mean_return": 1.0891582906222912,
+          "median_return": 0.30707998439100026,
+          "mean_return_ci": [
+            0.8376877259706003,
+            1.361160591815238
+          ],
+          "labeled_share": 0.9156862745098039,
+          "flat_share": 0.07156862745098039
+        },
+        "one_per_mint": {
+          "n": 393,
+          "n_tokens": 374,
+          "precision": 0.44529262086513993,
+          "win_rate": 0.6793893129770993,
+          "mean_return": 1.1692383729827027,
+          "median_return": 0.3247188837366277,
+          "mean_return_ci": [
+            0.9708344342593176,
+            1.3928312933682878
+          ],
+          "labeled_share": 0.9083969465648855,
+          "flat_share": 0.08142493638676845
+        },
+        "first_per_mint": {
+          "n": 374,
+          "n_tokens": 374,
+          "precision": 0.45989304812834225,
+          "win_rate": 0.7085561497326203,
+          "mean_return": 1.2181245746317606,
+          "median_return": 0.3872259083784212,
+          "mean_return_ci": [
+            1.0109320827486201,
+            1.4334444825749786
+          ],
+          "labeled_share": 0.9385026737967914,
+          "flat_share": 0.053475935828877004
+        }
+      },
+      "cells": [
+        {
+          "take_profit": 2.0,
+          "stop_loss": "vol3",
+          "timeout_s": 900,
+          "partial_at": null,
+          "partial_share": null,
+          "rest_stop": null,
+          "rest_timeout_s": null,
+          "trail": null,
+          "trail_after": null,
+          "label": "TP 2.0 / SL vol3 / 900s",
+          "is_bot_default": false,
+          "n_trades": 475,
+          "n_tokens": 324,
+          "failed_entries": 66,
+          "abandoned_entries": 0,
+          "declined_entries": 561,
+          "win_rate": 0.32421052631578945,
+          "mean_return": 0.17594536189304694,
+          "median_return": -0.17574524947088507,
+          "mean_return_ci": [
+            0.057902033426077054,
+            0.2983884889606973
+          ],
+          "total_pnl_sol": 71.36110780343209,
+          "exit_share": {
+            "tp": 0.2736842105263158,
+            "sl": 0.5810526315789474,
+            "timeout": 0.14526315789473684,
+            "trail": 0.0
+          },
+          "median_hold_s": 180.42199993133545,
+          "top_token_profit_share": 0.02531692195871297,
+          "partial_fill_share": 0.0,
+          "vs_reference": {
+            "n_tokens": 324,
+            "mean_diff": 0.0,
+            "mean_diff_ci": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        {
+          "take_profit": 3.0,
+          "stop_loss": "vol3",
+          "timeout_s": 900,
+          "partial_at": null,
+          "partial_share": null,
+          "rest_stop": null,
+          "rest_timeout_s": null,
+          "trail": null,
+          "trail_after": null,
+          "label": "TP 3.0 / SL vol3 / 900s",
+          "is_bot_default": false,
+          "n_trades": 459,
+          "n_tokens": 324,
+          "failed_entries": 62,
+          "abandoned_entries": 0,
+          "declined_entries": 561,
+          "win_rate": 0.2962962962962963,
+          "mean_return": 0.21042017590958642,
+          "median_return": -0.20620431764537164,
+          "mean_return_ci": [
+            0.07107998369495358,
+            0.3559472439684993
+          ],
+          "total_pnl_sol": 76.77215372292682,
+          "exit_share": {
+            "tp": 0.19389978213507625,
+            "sl": 0.599128540305011,
+            "timeout": 0.20697167755991286,
+            "trail": 0.0
+          },
+          "median_hold_s": 230.2759997844696,
+          "top_token_profit_share": 0.026955233959359455,
+          "partial_fill_share": 0.0,
+          "vs_reference": {
+            "n_tokens": 324,
+            "mean_diff": 0.08075098768180021,
+            "mean_diff_ci": [
+              -0.0010115298017995932,
+              0.16145107413729437
+            ]
+          }
+        },
+        {
+          "take_profit": 3.0,
+          "stop_loss": "vol3",
+          "timeout_s": 900,
+          "partial_at": 2.0,
+          "partial_share": "stake",
+          "rest_stop": "none",
+          "rest_timeout_s": null,
+          "trail": null,
+          "trail_after": null,
+          "label": "TP 3.0 / SL vol3 / 900s / sell stake at +2, rest SL none",
+          "is_bot_default": false,
+          "n_trades": 459,
+          "n_tokens": 324,
+          "failed_entries": 62,
+          "abandoned_entries": 0,
+          "declined_entries": 561,
+          "win_rate": 0.3137254901960784,
+          "mean_return": 0.21032240718574444,
+          "median_return": -0.17695886462728802,
+          "mean_return_ci": [
+            0.07782477377682076,
+            0.3452193207507064
+          ],
+          "total_pnl_sol": 76.91167766964854,
+          "exit_share": {
+            "tp": 0.19825708061002179,
+            "sl": 0.5838779956427015,
+            "timeout": 0.2178649237472767,
+            "trail": 0.0
+          },
+          "median_hold_s": 210.56300020217896,
+          "top_token_profit_share": 0.031699398402740143,
+          "partial_fill_share": 0.23311546840958605,
+          "vs_reference": {
+            "n_tokens": 324,
+            "mean_diff": 0.07395981573579309,
+            "mean_diff_ci": [
+              0.013753270942642334,
+              0.13157261094831493
+            ]
+          }
+        },
+        {
+          "take_profit": 3.0,
+          "stop_loss": "vol3",
+          "timeout_s": 900,
+          "partial_at": 2.0,
+          "partial_share": "stake",
+          "rest_stop": "none",
+          "rest_timeout_s": 3600,
+          "trail": null,
+          "trail_after": null,
+          "label": "TP 3.0 / SL vol3 / 900s / sell stake at +2, rest SL none 3600s",
+          "is_bot_default": false,
+          "n_trades": 458,
+          "n_tokens": 324,
+          "failed_entries": 62,
+          "abandoned_entries": 0,
+          "declined_entries": 561,
+          "win_rate": 0.3034934497816594,
+          "mean_return": 0.19905527475015702,
+          "median_return": -0.17795809856402783,
+          "mean_return_ci": [
+            0.06445270511350026,
+            0.34115673769405597
+          ],
+          "total_pnl_sol": 71.45127493651961,
+          "exit_share": {
+            "tp": 0.22270742358078602,
+            "sl": 0.5829694323144105,
+            "timeout": 0.1943231441048035,
+            "trail": 0.0
+          },
+          "median_hold_s": 210.55100011825562,
+          "top_token_profit_share": 0.03234840426710116,
+          "partial_fill_share": 0.2336244541484716,
+          "vs_reference": {
+            "n_tokens": 324,
+            "mean_diff": 0.05886316930525837,
+            "mean_diff_ci": [
+              -0.01263752541433867,
+              0.12681249442192286
+            ]
+          }
+        },
+        {
+          "take_profit": 3.0,
+          "stop_loss": "vol3",
+          "timeout_s": 900,
+          "partial_at": 2.0,
+          "partial_share": "stake",
+          "rest_stop": "entry",
+          "rest_timeout_s": null,
+          "trail": null,
+          "trail_after": null,
+          "label": "TP 3.0 / SL vol3 / 900s / sell stake at +2, rest SL entry",
+          "is_bot_default": false,
+          "n_trades": 460,
+          "n_tokens": 324,
+          "failed_entries": 62,
+          "abandoned_entries": 0,
+          "declined_entries": 561,
+          "win_rate": 0.31521739130434784,
+          "mean_return": 0.21724161163140426,
+          "median_return": -0.17635205704908655,
+          "mean_return_ci": [
+            0.08912710808312792,
+            0.3600622428574979
+          ],
+          "total_pnl_sol": 80.18437682001687,
+          "exit_share": {
+            "tp": 0.2,
+            "sl": 0.6021739130434782,
+            "timeout": 0.19782608695652174,
+            "trail": 0.0
+          },
+          "median_hold_s": 210.56700015068054,
+          "top_token_profit_share": 0.03125333970012272,
+          "partial_fill_share": 0.23478260869565218,
+          "vs_reference": {
+            "n_tokens": 324,
+            "mean_diff": 0.07755374355713578,
+            "mean_diff_ci": [
+              0.016348158139636946,
+              0.14177189770461904
+            ]
+          }
+        },
+        {
+          "take_profit": 3.0,
+          "stop_loss": "vol3",
+          "timeout_s": 900,
+          "partial_at": 2.0,
+          "partial_share": "stake",
+          "rest_stop": "entry",
+          "rest_timeout_s": 3600,
+          "trail": null,
+          "trail_after": null,
+          "label": "TP 3.0 / SL vol3 / 900s / sell stake at +2, rest SL entry 3600s",
+          "is_bot_default": false,
+          "n_trades": 459,
+          "n_tokens": 324,
+          "failed_entries": 62,
+          "abandoned_entries": 0,
+          "declined_entries": 561,
+          "win_rate": 0.30718954248366015,
+          "mean_return": 0.20408133853376004,
+          "median_return": -0.17695886462728802,
+          "mean_return_ci": [
+            0.07689881310612144,
+            0.3561306180708317
+          ],
+          "total_pnl_sol": 73.34110690541263,
+          "exit_share": {
+            "tp": 0.22004357298474944,
+            "sl": 0.6187363834422658,
+            "timeout": 0.16122004357298475,
+            "trail": 0.0
+          },
+          "median_hold_s": 210.56300020217896,
+          "top_token_profit_share": 0.032147774365722394,
+          "partial_fill_share": 0.23529411764705882,
+          "vs_reference": {
+            "n_tokens": 324,
+            "mean_diff": 0.05835115471753874,
+            "mean_diff_ci": [
+              -0.010357124863795683,
+              0.1265851484157736
+            ]
+          }
+        },
+        {
+          "take_profit": 5.0,
+          "stop_loss": "vol3",
+          "timeout_s": 900,
+          "partial_at": 2.0,
+          "partial_share": "stake",
+          "rest_stop": "none",
+          "rest_timeout_s": null,
+          "trail": null,
+          "trail_after": null,
+          "label": "TP 5.0 / SL vol3 / 900s / sell stake at +2, rest SL none",
+          "is_bot_default": false,
+          "n_trades": 444,
+          "n_tokens": 324,
+          "failed_entries": 60,
+          "abandoned_entries": 0,
+          "declined_entries": 561,
+          "win_rate": 0.30855855855855857,
+          "mean_return": 0.22082746327883926,
+          "median_return": -0.18445733601476327,
+          "mean_return_ci": [
+            0.060357588539508726,
+            0.3740181190012512
+          ],
+          "total_pnl_sol": 67.21101849027188,
+          "exit_share": {
+            "tp": 0.12612612612612611,
+            "sl": 0.5765765765765766,
+            "timeout": 0.2972972972972973,
+            "trail": 0.0
+          },
+          "median_hold_s": 250.2995001077652,
+          "top_token_profit_share": 0.02881508519264854,
+          "partial_fill_share": 0.23648648648648649,
+          "vs_reference": {
+            "n_tokens": 324,
+            "mean_diff": 0.09531261173597651,
+            "mean_diff_ci": [
+              0.0021579038472432388,
+              0.19712758124565655
+            ]
+          }
+        },
+        {
+          "take_profit": 3.0,
+          "stop_loss": "vol3",
+          "timeout_s": 900,
+          "partial_at": 1.0,
+          "partial_share": 0.5,
+          "rest_stop": "none",
+          "rest_timeout_s": null,
+          "trail": null,
+          "trail_after": null,
+          "label": "TP 3.0 / SL vol3 / 900s / sell 0.5 at +1, rest SL none",
+          "is_bot_default": false,
+          "n_trades": 454,
+          "n_tokens": 324,
+          "failed_entries": 60,
+          "abandoned_entries": 0,
+          "declined_entries": 561,
+          "win_rate": 0.3568281938325991,
+          "mean_return": 0.15941974428346414,
+          "median_return": -0.12495740548676627,
+          "mean_return_ci": [
+            0.05168973538674879,
+            0.26244445770439334
+          ],
+          "total_pnl_sol": 59.92241782071605,
+          "exit_share": {
+            "tp": 0.1894273127753304,
+            "sl": 0.5088105726872246,
+            "timeout": 0.30176211453744495,
+            "trail": 0.0
+          },
+          "median_hold_s": 260.65500009059906,
+          "top_token_profit_share": 0.025557281994668613,
+          "partial_fill_share": 0.394273127753304,
+          "vs_reference": {
+            "n_tokens": 324,
+            "mean_diff": 0.009564538438884638,
+            "mean_diff_ci": [
+              -0.0513675435155356,
+              0.07089948000216163
+            ]
+          }
+        },
+        {
+          "take_profit": 3.0,
+          "stop_loss": "vol3",
+          "timeout_s": 900,
+          "partial_at": 1.0,
+          "partial_share": 0.5,
+          "rest_stop": "entry",
+          "rest_timeout_s": null,
+          "trail": null,
+          "trail_after": null,
+          "label": "TP 3.0 / SL vol3 / 900s / sell 0.5 at +1, rest SL entry",
+          "is_bot_default": false,
+          "n_trades": 458,
+          "n_tokens": 324,
+          "failed_entries": 61,
+          "abandoned_entries": 0,
+          "declined_entries": 561,
+          "win_rate": 0.3777292576419214,
+          "mean_return": 0.16491189185778068,
+          "median_return": -0.11121333620700215,
+          "mean_return_ci": [
+            0.058372339423244074,
+            0.2714981034318935
+          ],
+          "total_pnl_sol": 62.712187271275546,
+          "exit_share": {
+            "tp": 0.18777292576419213,
+            "sl": 0.6048034934497817,
+            "timeout": 0.2074235807860262,
+            "trail": 0.0
+          },
+          "median_hold_s": 230.5420000553131,
+          "top_token_profit_share": 0.025310441250216302,
+          "partial_fill_share": 0.39737991266375544,
+          "vs_reference": {
+            "n_tokens": 324,
+            "mean_diff": 0.006988787072522092,
+            "mean_diff_ci": [
+              -0.05067881157349575,
+              0.06352851281278132
+            ]
+          }
+        },
+        {
+          "take_profit": null,
+          "stop_loss": "vol3",
+          "timeout_s": 900,
+          "partial_at": null,
+          "partial_share": null,
+          "rest_stop": null,
+          "rest_timeout_s": null,
+          "trail": 0.3,
+          "trail_after": 1.0,
+          "label": "TP none / SL vol3 / 900s / trail 0.3 after +1",
+          "is_bot_default": false,
+          "n_trades": 482,
+          "n_tokens": 324,
+          "failed_entries": 67,
+          "abandoned_entries": 0,
+          "declined_entries": 561,
+          "win_rate": 0.3630705394190871,
+          "mean_return": 0.18621003536539993,
+          "median_return": -0.14786002874830806,
+          "mean_return_ci": [
+            0.03802263130958923,
+            0.3621196778440862
+          ],
+          "total_pnl_sol": 68.53908363480069,
+          "exit_share": {
+            "tp": 0.0,
+            "sl": 0.5373443983402489,
+            "timeout": 0.1908713692946058,
+            "trail": 0.2717842323651452
+          },
+          "median_hold_s": 200.41799998283386,
+          "top_token_profit_share": 0.11503050667405618,
+          "partial_fill_share": 0.0,
+          "vs_reference": {
+            "n_tokens": 324,
+            "mean_diff": 0.042641816082189525,
+            "mean_diff_ci": [
+              -0.10671888063310779,
+              0.23259901614609121
+            ]
+          }
+        },
+        {
+          "take_profit": null,
+          "stop_loss": "vol3",
+          "timeout_s": 900,
+          "partial_at": null,
+          "partial_share": null,
+          "rest_stop": null,
+          "rest_timeout_s": null,
+          "trail": 0.5,
+          "trail_after": 1.0,
+          "label": "TP none / SL vol3 / 900s / trail 0.5 after +1",
+          "is_bot_default": false,
+          "n_trades": 444,
+          "n_tokens": 324,
+          "failed_entries": 65,
+          "abandoned_entries": 0,
+          "declined_entries": 561,
+          "win_rate": 0.2972972972972973,
+          "mean_return": 0.17755833008404354,
+          "median_return": -0.2127221922513014,
+          "mean_return_ci": [
+            0.003443951585582307,
+            0.3846613436031978
+          ],
+          "total_pnl_sol": 55.9264932083029,
+          "exit_share": {
+            "tp": 0.0,
+            "sl": 0.5675675675675675,
+            "timeout": 0.2927927927927928,
+            "trail": 0.13963963963963963
+          },
+          "median_hold_s": 270.470999956131,
+          "top_token_profit_share": 0.1106556070527589,
+          "partial_fill_share": 0.0,
+          "vs_reference": {
+            "n_tokens": 324,
+            "mean_diff": 0.0834310059608973,
+            "mean_diff_ci": [
+              -0.09064244762206453,
+              0.28630233537563343
+            ]
+          }
+        },
+        {
+          "take_profit": null,
+          "stop_loss": "vol3",
+          "timeout_s": 900,
+          "partial_at": null,
+          "partial_share": null,
+          "rest_stop": null,
+          "rest_timeout_s": null,
+          "trail": 0.3,
+          "trail_after": 2.0,
+          "label": "TP none / SL vol3 / 900s / trail 0.3 after +2",
+          "is_bot_default": false,
+          "n_trades": 458,
+          "n_tokens": 324,
+          "failed_entries": 63,
+          "abandoned_entries": 0,
+          "declined_entries": 561,
+          "win_rate": 0.3034934497816594,
+          "mean_return": 0.19606848408045688,
+          "median_return": -0.20539877123809863,
+          "mean_return_ci": [
+            0.031777391322924335,
+            0.3887473419758273
+          ],
+          "total_pnl_sol": 69.89894433365139,
+          "exit_share": {
+            "tp": 0.0,
+            "sl": 0.5851528384279476,
+            "timeout": 0.2423580786026201,
+            "trail": 0.17248908296943233
+          },
+          "median_hold_s": 260.5370000600815,
+          "top_token_profit_share": 0.10652047120517298,
+          "partial_fill_share": 0.0,
+          "vs_reference": {
+            "n_tokens": 324,
+            "mean_diff": 0.0588787973377946,
+            "mean_diff_ci": [
+              -0.08816323425884218,
+              0.24153126603720484
+            ]
+          }
+        },
+        {
+          "take_profit": 3.0,
+          "stop_loss": "vol3",
+          "timeout_s": 900,
+          "partial_at": null,
+          "partial_share": null,
+          "rest_stop": null,
+          "rest_timeout_s": null,
+          "trail": 0.3,
+          "trail_after": 1.0,
+          "label": "TP 3.0 / SL vol3 / 900s / trail 0.3 after +1",
+          "is_bot_default": false,
+          "n_trades": 496,
+          "n_tokens": 324,
+          "failed_entries": 68,
+          "abandoned_entries": 0,
+          "declined_entries": 561,
+          "win_rate": 0.3709677419354839,
+          "mean_return": 0.15637293234474467,
+          "median_return": -0.14054851719085235,
+          "mean_return_ci": [
+            0.03738122051532991,
+            0.2636384869192796
+          ],
+          "total_pnl_sol": 62.10280247056727,
+          "exit_share": {
+            "tp": 0.13911290322580644,
+            "sl": 0.5403225806451613,
+            "timeout": 0.12903225806451613,
+            "trail": 0.19153225806451613
+          },
+          "median_hold_s": 159.26949989795685,
+          "top_token_profit_share": 0.031974950678772464,
+          "partial_fill_share": 0.0,
+          "vs_reference": {
+            "n_tokens": 324,
+            "mean_diff": -0.021294864735392716,
+            "mean_diff_ci": [
+              -0.09569139303913421,
+              0.05244992024482579
+            ]
+          }
+        }
+      ],
+      "marginals": {
+        "stop_loss": [
+          {
+            "value": "vol3",
+            "cells": 13,
+            "mean_return": 0.1906488500921868,
+            "median_return": -0.17056423377854146
+          }
+        ],
+        "take_profit": [
+          {
+            "value": 2.0,
+            "cells": 1,
+            "mean_return": 0.17594536189304694,
+            "median_return": -0.17574524947088507
+          },
+          {
+            "value": 3.0,
+            "cells": 8,
+            "mean_return": 0.1902281720620802,
+            "median_return": -0.16139393267471036
+          },
+          {
+            "value": 5.0,
+            "cells": 1,
+            "mean_return": 0.22082746327883926,
+            "median_return": -0.18445733601476327
+          },
+          {
+            "value": null,
+            "cells": 3,
+            "mean_return": 0.18661228317663345,
+            "median_return": -0.18866033074590272
+          }
+        ],
+        "timeout_s": [
+          {
+            "value": 900,
+            "cells": 13,
+            "mean_return": 0.1906488500921868,
+            "median_return": -0.17056423377854146
+          }
+        ]
+      }
+    }
+  ]
+}

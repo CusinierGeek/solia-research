@@ -1,0 +1,13 @@
+Is the model useful? solia-20261102T151927246570Z, entries at pump >= 0.5, exits TP 2.0 / SL vol3 / 900s, generated 2026-11-06T19:38:27.752650+00:00
+5293293 held-out windows, 27883 censored by the read. Differences are the model minus the baseline, with a 95% CI.
+
+  arm             trades  tokens     win     mean   median   mean CI / range difference            its CI      p
+  model              308     209  0.3149   0.1721  -0.1325   [+0.040,+0.312]
+  breakout           308     288  0.1883  -0.1443  -0.3510   [-0.257,-0.026]     0.3163   [+0.141,+0.514]
+  buy_pressure       308     294  0.0877  -0.0885  -0.0660   [-0.110,-0.070]     0.2605   [+0.125,+0.416]
+  volatility         308     308  0.6331  -0.2095   0.1780   [-0.278,-0.142]     0.3816   [+0.231,+0.552]
+  random             303                  -0.0855            [-0.117,-0.050]     0.2575   [+0.123,+0.409] 0.0050
+  matched            274                  -0.1975            [-0.285,-0.094]     0.3696   [+0.196,+0.532] 0.0050
+
+  matched at: venue+age+volatility 61600, venue+age 0, venue 0, any 0
+  this period: the model adds value

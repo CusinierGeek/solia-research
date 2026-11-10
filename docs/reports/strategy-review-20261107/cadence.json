@@ -1,0 +1,238 @@
+{
+ "A 09-12 UTC (live 3 min)": {
+  "tokens": 357,
+  "windows": 18039,
+  "cadences": {
+   "10": {
+    "looks": 18476,
+    "tokens_entered": 12,
+    "with_100_traders": 12,
+    "median_age_s": 220.419499874115,
+    "replayed": 12,
+    "mean_net": 0.39574903397611755,
+    "ci": [
+     -0.3238040582630506,
+     1.2201010881408108
+    ],
+    "tp": 3,
+    "sl": 8,
+    "time": 1,
+    "total_loss": 3
+   },
+   "30": {
+    "looks": 6284,
+    "tokens_entered": 12,
+    "with_100_traders": 12,
+    "median_age_s": 230.46350002288818,
+    "replayed": 12,
+    "mean_net": 0.5662623206692398,
+    "ci": [
+     -0.25047337663898767,
+     1.416036440629996
+    ],
+    "tp": 4,
+    "sl": 7,
+    "time": 1,
+    "total_loss": 3
+   },
+   "60": {
+    "looks": 3162,
+    "tokens_entered": 9,
+    "with_100_traders": 9,
+    "median_age_s": 230.51199984550476,
+    "replayed": 9,
+    "mean_net": 1.1226684350890999,
+    "ci": [
+     0.205288735850237,
+     2.062203853785181
+    ],
+    "tp": 4,
+    "sl": 5,
+    "time": 0,
+    "total_loss": 1
+   },
+   "120": {
+    "looks": 1769,
+    "tokens_entered": 4,
+    "with_100_traders": 4,
+    "median_age_s": 170.34099996089935,
+    "replayed": 4,
+    "mean_net": -0.06031923703677225,
+    "ci": [
+     -0.7670669653644239,
+     0.6547571862539524
+    ],
+    "tp": 0,
+    "sl": 4,
+    "time": 0,
+    "total_loss": 1
+   },
+   "172": {
+    "looks": 1063,
+    "tokens_entered": 5,
+    "with_100_traders": 5,
+    "median_age_s": 170.36700010299683,
+    "replayed": 5,
+    "mean_net": 1.2889351348347913,
+    "ci": [
+     -0.14248974449576676,
+     2.554273859770363
+    ],
+    "tp": 3,
+    "sl": 1,
+    "time": 1,
+    "total_loss": 1
+   },
+   "280": {
+    "looks": 713,
+    "tokens_entered": 2,
+    "with_100_traders": 2,
+    "median_age_s": 410.9084998369217,
+    "replayed": 2,
+    "mean_net": -0.04045154703452902,
+    "ci": [
+     -0.05809163137685536,
+     -0.02281146269220269
+    ],
+    "tp": 0,
+    "sl": 2,
+    "time": 0,
+    "total_loss": 0
+   },
+   "420": {
+    "looks": 357,
+    "tokens_entered": 2,
+    "with_100_traders": 2,
+    "median_age_s": 410.908499956131,
+    "replayed": 2,
+    "mean_net": 1.2833147202413497,
+    "ci": [
+     -0.11970679438007525,
+     2.686336234862775
+    ],
+    "tp": 1,
+    "sl": 1,
+    "time": 0,
+    "total_loss": 0
+   }
+  }
+ },
+ "B 21-23:40 UTC (live 5 min)": {
+  "tokens": 432,
+  "windows": 21107,
+  "cadences": {
+   "10": {
+    "looks": 22731,
+    "tokens_entered": 5,
+    "with_100_traders": 5,
+    "median_age_s": 260.297000169754,
+    "replayed": 5,
+    "mean_net": 0.2951434294149502,
+    "ci": [
+     -0.19284849982470273,
+     0.8822566513768588
+    ],
+    "tp": 0,
+    "sl": 3,
+    "time": 2,
+    "total_loss": 0
+   },
+   "30": {
+    "looks": 7723,
+    "tokens_entered": 5,
+    "with_100_traders": 5,
+    "median_age_s": 260.297000169754,
+    "replayed": 5,
+    "mean_net": 0.8969052074867786,
+    "ci": [
+     -0.03298476938247861,
+     1.9670155061984567
+    ],
+    "tp": 1,
+    "sl": 2,
+    "time": 2,
+    "total_loss": 0
+   },
+   "60": {
+    "looks": 3867,
+    "tokens_entered": 4,
+    "with_100_traders": 4,
+    "median_age_s": 290.40850007534027,
+    "replayed": 4,
+    "mean_net": 0.21449792425887276,
+    "ci": [
+     -0.2193412709110225,
+     0.9258104188624032
+    ],
+    "tp": 0,
+    "sl": 3,
+    "time": 1,
+    "total_loss": 0
+   },
+   "120": {
+    "looks": 2151,
+    "tokens_entered": 4,
+    "with_100_traders": 4,
+    "median_age_s": 470.64250004291534,
+    "replayed": 4,
+    "mean_net": 0.16308081451823722,
+    "ci": [
+     -0.14305063777647048,
+     0.6790274985308569
+    ],
+    "tp": 0,
+    "sl": 3,
+    "time": 1,
+    "total_loss": 0
+   },
+   "172": {
+    "looks": 1292,
+    "tokens_entered": 3,
+    "with_100_traders": 3,
+    "median_age_s": 170.34899997711182,
+    "replayed": 3,
+    "mean_net": 0.24857090543341706,
+    "ci": [
+     -0.27584324783727665,
+     1.2597856952222926
+    ],
+    "tp": 0,
+    "sl": 2,
+    "time": 1,
+    "total_loss": 0
+   },
+   "280": {
+    "looks": 862,
+    "tokens_entered": 2,
+    "with_100_traders": 2,
+    "median_age_s": 270.3735001087189,
+    "replayed": 2,
+    "mean_net": -0.157566703550503,
+    "ci": [
+     -0.18943292770558595,
+     -0.12570047939542006
+    ],
+    "tp": 0,
+    "sl": 2,
+    "time": 0,
+    "total_loss": 0
+   },
+   "420": {
+    "looks": 432,
+    "tokens_entered": 1,
+    "with_100_traders": 1,
+    "median_age_s": 410.4680001735687,
+    "replayed": 1,
+    "mean_net": -0.07611541021726487,
+    "ci": [
+     -0.07611541021726487,
+     -0.07611541021726487
+    ],
+    "tp": 0,
+    "sl": 1,
+    "time": 0,
+    "total_loss": 0
+   }
+  }
+ }
+}

@@ -1,0 +1,29 @@
+Exit-rule simulation — model solia-20261102T151927246570Z (5082706 held-out windows), horizon 15m, generated 2026-11-06T20:40:39.223482+00:00
+execution: bot defaults, 95% bootstrap CI by token. Many cells share the same trades: read the marginals and the stable zones, not the best cell.
+
+[pump >= 0.5] 164 windows censored by the end of the read
+  from the sweep to the entries (held to the horizon, no exits, no costs)
+  step                   n tokens    prec     win     mean   median           mean CI labeled  flat
+  labeled_windows     4670    352  0.5364  0.7302   1.1895   0.4168   [+0.914,+1.499]    100%    0%
+  all_windows         5100    374  0.4955  0.6765   1.0892   0.3071   [+0.838,+1.361]     92%    7%
+  one_per_mint         393    374  0.4453  0.6794   1.1692   0.3247   [+0.971,+1.393]     91%    8%
+  first_per_mint       374    374  0.4599  0.7086   1.2181   0.3872   [+1.011,+1.433]     94%    5%
+  exits (net of costs)
+  cell                                                       trades tokens     win     mean   median           mean CI   tp   sl time trail hold s fail
+  TP 2.0 / SL vol3 / 900s                                       475    324  0.3242   0.1759  -0.1757   [+0.058,+0.298]  27%  58%  15%    0%    180   66  vs ref +0.000 [+0.000,+0.000]
+  TP 3.0 / SL vol3 / 900s                                       459    324  0.2963   0.2104  -0.2062   [+0.071,+0.356]  19%  60%  21%    0%    230   62  vs ref +0.081 [-0.001,+0.161]
+  TP 3.0 / SL vol3 / 900s / sell stake at +2, rest SL none      459    324  0.3137   0.2103  -0.1770   [+0.078,+0.345]  20%  58%  22%    0%    211   62  vs ref +0.074 [+0.014,+0.132]
+  TP 3.0 / SL vol3 / 900s / sell stake at +2, rest SL none 3600s    458    324  0.3035   0.1991  -0.1780   [+0.064,+0.341]  22%  58%  19%    0%    211   62  vs ref +0.059 [-0.013,+0.127]
+  TP 3.0 / SL vol3 / 900s / sell stake at +2, rest SL entry     460    324  0.3152   0.2172  -0.1764   [+0.089,+0.360]  20%  60%  20%    0%    211   62  vs ref +0.078 [+0.016,+0.142]
+  TP 3.0 / SL vol3 / 900s / sell stake at +2, rest SL entry 3600s    459    324  0.3072   0.2041  -0.1770   [+0.077,+0.356]  22%  62%  16%    0%    211   62  vs ref +0.058 [-0.010,+0.127]
+  TP 5.0 / SL vol3 / 900s / sell stake at +2, rest SL none      444    324  0.3086   0.2208  -0.1845   [+0.060,+0.374]  13%  58%  30%    0%    250   60  vs ref +0.095 [+0.002,+0.197]
+  TP 3.0 / SL vol3 / 900s / sell 0.5 at +1, rest SL none        454    324  0.3568   0.1594  -0.1250   [+0.052,+0.262]  19%  51%  30%    0%    261   60  vs ref +0.010 [-0.051,+0.071]
+  TP 3.0 / SL vol3 / 900s / sell 0.5 at +1, rest SL entry       458    324  0.3777   0.1649  -0.1112   [+0.058,+0.271]  19%  60%  21%    0%    231   61  vs ref +0.007 [-0.051,+0.064]
+  TP none / SL vol3 / 900s / trail 0.3 after +1                 482    324  0.3631   0.1862  -0.1479   [+0.038,+0.362]   0%  54%  19%   27%    200   67  vs ref +0.043 [-0.107,+0.233]
+  TP none / SL vol3 / 900s / trail 0.5 after +1                 444    324  0.2973   0.1776  -0.2127   [+0.003,+0.385]   0%  57%  29%   14%    270   65  vs ref +0.083 [-0.091,+0.286]
+  TP none / SL vol3 / 900s / trail 0.3 after +2                 458    324  0.3035   0.1961  -0.2054   [+0.032,+0.389]   0%  59%  24%   17%    261   63  vs ref +0.059 [-0.088,+0.242]
+  TP 3.0 / SL vol3 / 900s / trail 0.3 after +1                  496    324  0.3710   0.1564  -0.1405   [+0.037,+0.264]  14%  54%  13%   19%    159   68  vs ref -0.021 [-0.096,+0.052]
+  marginals (mean of the cells with >= 30 trades)
+    stop_loss (mean / median): vol3: 0.1906 / -0.1706
+    take_profit (mean / median): 2.0: 0.1759 / -0.1757, 3.0: 0.1902 / -0.1614, 5.0: 0.2208 / -0.1845, None: 0.1866 / -0.1887
+    timeout_s (mean / median): 900: 0.1906 / -0.1706
