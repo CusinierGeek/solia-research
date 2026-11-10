@@ -104,3 +104,9 @@ Add `--mirror /replay-archives` to keep the archives (~400 MB per hour). Details
 
 **Tests.** `dotnet test` (add `--filter "Category!=Integration"` to skip Testcontainers) and, in `services/ai-service`,
 `pytest`.
+
+## About this repository
+
+This is the public copy of a private research repository. Issue and PR numbers in commit messages and docs (`#260`,
+`#271`, …) refer to that private tracker. The code is released under the [MIT license](LICENSE): use it freely, keeping
+in mind it was written to answer a research question, not as a product.
