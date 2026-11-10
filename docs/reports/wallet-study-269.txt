@@ -1,0 +1,22 @@
+Winning wallets (#269): per-trade replay archives, period A vs period B
+
+period A: 57,404,921 trades, 1,657,147 wallets, 126,653 tokens; positions {'open': 6224709, 'closed': 2494805, 'transferred': 2263750, 'unbacked': 839277}; closed P&L -169,882.5 SOL
+period B: 38,463,194 trades, 1,090,412 wallets, 90,045 tokens; positions {'open': 4027553, 'closed': 1625496, 'transferred': 1617318, 'unbacked': 501495}; closed P&L -66,230.2 SOL
+
+Who wins in A (wallets with >= 10 closed positions, by total P&L):
+bucket     wallets    P&L SOL   pos   win     hold    delay  seen same blk  creator
+top1%          379   +32037.5    66   63%      16s       5s  100%       1%       0%
+top10%        3793   +57067.2    35   55%      61s      42s   96%       0%       0%
+middle       30346    -7208.0    18   36%       2m     104s   99%       0%       0%
+bottom10%     3793   -50232.0    22   24%       3m      99s   97%       0%       0%
+
+Persistence: 37932 eligible wallets in A; on B:
+  top      91/100   active, P&L +12592.6 SOL over 34655 positions (+0.3634/pos), wallet mean +1.5375/pos [+1.1287, +1.9414], profitable 96%, win rate 59%
+  rest  23511/37832 active, P&L +553.5 SOL over 654912 positions (+0.0008/pos), wallet mean +0.0376/pos [+0.0024, +0.0777], profitable 38%, win rate 43%
+  Spearman(A, B) of P&L per position, 17825 wallets: +0.394
+
+Copy test on B (1 SOL, bot costs), A's top wallets vs random eligible ones:
+    3s top     55106 copies, mean -8.6% [-8.8%, -8.3%], median -8.8%, win 19%, total -4724.2 SOL, exit on leader sell 96%
+    3s random   2053 copies, mean -16.4% [-18.4%, -14.4%], median -9.5%, win 24%, total -336.6 SOL, exit on leader sell 88%
+   10s top     53557 copies, mean -9.3% [-9.5%, -9.2%], median -8.1%, win 8%, total -5007.4 SOL, exit on leader sell 97%
+   10s random   2039 copies, mean -15.8% [-17.9%, -13.7%], median -7.7%, win 18%, total -322.7 SOL, exit on leader sell 89%

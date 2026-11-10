@@ -34,11 +34,14 @@ dev = [
     "testcontainers[postgres]==4.15.0",
     "httpx==0.28.1", # FastAPI's TestClient transport (tests/test_api.py)
 ]
-# The GBDT benchmark (python -m solia_ai.benchmark_gbdt, #205) and the rug guard (rug_guard, #260,
-# parquet dataset): measurement only, never served, so it stays out of the image locks.
+# The GBDT benchmark (python -m solia_ai.benchmark_gbdt, #205), the rug guard (rug_guard, #260,
+# parquet dataset) and the wallet study (wallet_study, #269, raw replay archives): measurement only,
+# never served, so it stays out of the image locks.
 benchmark = [
     "lightgbm==4.7.0",
+    "orjson==3.11.4",
     "pyarrow==21.0.0",
+    "zstandard==0.25.0",
 ]
 
 [tool.hatch.build.targets.wheel]

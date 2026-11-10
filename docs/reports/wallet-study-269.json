@@ -1,0 +1,528 @@
+{
+  "periods": {
+    "A": {
+      "trades": 57404921,
+      "wallets": 1657147,
+      "tokens": 126653,
+      "positions": {
+        "open": 6224709,
+        "closed": 2494805,
+        "transferred": 2263750,
+        "unbacked": 839277
+      },
+      "closed_pnl_total": -169882.533887178
+    },
+    "B": {
+      "trades": 38463194,
+      "wallets": 1090412,
+      "tokens": 90045,
+      "positions": {
+        "open": 4027553,
+        "closed": 1625496,
+        "transferred": 1617318,
+        "unbacked": 501495
+      },
+      "closed_pnl_total": -66230.227663281
+    }
+  },
+  "who_wins_a": {
+    "top1%": {
+      "wallets": 379,
+      "pnl_total": 32037.48702643,
+      "positions_median": 66.0,
+      "win_rate_median": 0.6274509803921569,
+      "hold_median_s": 16.443,
+      "delay_median_s": 5.239,
+      "same_block_median": 0.014084507042253521,
+      "create_seen_median": 0.9971489665003563,
+      "creator_share_median": 0.0
+    },
+    "top10%": {
+      "wallets": 3793,
+      "pnl_total": 57067.197842511996,
+      "positions_median": 35.0,
+      "win_rate_median": 0.5526315789473685,
+      "hold_median_s": 61.05,
+      "delay_median_s": 41.56725,
+      "same_block_median": 0.0,
+      "create_seen_median": 0.9583333333333334,
+      "creator_share_median": 0.0
+    },
+    "middle": {
+      "wallets": 30346,
+      "pnl_total": -7208.028853850001,
+      "positions_median": 18.0,
+      "win_rate_median": 0.36363636363636365,
+      "hold_median_s": 130.68025,
+      "delay_median_s": 104.07575,
+      "same_block_median": 0.0,
+      "create_seen_median": 0.9862541332073689,
+      "creator_share_median": 0.0
+    },
+    "bottom10%": {
+      "wallets": 3793,
+      "pnl_total": -50231.950171949,
+      "positions_median": 22.0,
+      "win_rate_median": 0.23770491803278687,
+      "hold_median_s": 199.0815,
+      "delay_median_s": 99.245,
+      "same_block_median": 0.0,
+      "create_seen_median": 0.9696969696969697,
+      "creator_share_median": 0.0
+    }
+  },
+  "persistence": {
+    "eligible_in_a": 37932,
+    "top_in_a": {
+      "wallets": 100,
+      "pnl_total": 19881.338266724,
+      "positions_median": 95.0,
+      "win_rate_median": 0.8222705424582284,
+      "hold_median_s": 8.35,
+      "delay_median_s": 0.0,
+      "same_block_median": 0.9597297297297297,
+      "create_seen_median": 1.0,
+      "creator_share_median": 0.9000302480338778
+    },
+    "top": {
+      "wallets": 100,
+      "active_in_b": 91,
+      "pnl_total": 12592.601385594,
+      "positions": 34655,
+      "pnl_per_position": 0.36337040500920503,
+      "wallet_mean_per_position": 1.537545982149615,
+      "wallet_mean_per_position_ci": [
+        1.1287014707207503,
+        1.9414186396397097
+      ],
+      "share_profitable": 0.9560439560439561,
+      "win_rate": 0.5881113836387246
+    },
+    "rest": {
+      "wallets": 37832,
+      "active_in_b": 23511,
+      "pnl_total": 553.5453841339984,
+      "positions": 654912,
+      "pnl_per_position": 0.0008452210131040482,
+      "wallet_mean_per_position": 0.03760885885176296,
+      "wallet_mean_per_position_ci": [
+        0.002413519522551164,
+        0.07766840723867642
+      ],
+      "share_profitable": 0.38475607162604736,
+      "win_rate": 0.4282453215088439
+    },
+    "spearman_pnl_mean_a_b": 0.3943387559698787,
+    "wallets_in_both": 17825
+  },
+  "copy": {
+    "3s": {
+      "top": {
+        "copies": 55106,
+        "tokens": 29873,
+        "mean": -0.0857289555791441,
+        "mean_ci": [
+          -0.0878004733531581,
+          -0.08349922372469691
+        ],
+        "median": -0.08751549288636486,
+        "win_rate": 0.18595071317097955,
+        "sol_total_at_1sol": -4724.179826144315,
+        "exited_on_leader_sell": 0.9588066635212137
+      },
+      "random": {
+        "copies": 2053,
+        "tokens": 1637,
+        "mean": -0.16396263384932572,
+        "mean_ci": [
+          -0.1836289453983519,
+          -0.14401109617105998
+        ],
+        "median": -0.09515937810115978,
+        "win_rate": 0.23721383341451535,
+        "sol_total_at_1sol": -336.6152872926657,
+        "exited_on_leader_sell": 0.8830979055041402
+      }
+    },
+    "10s": {
+      "top": {
+        "copies": 53557,
+        "tokens": 28346,
+        "mean": -0.09349698695709742,
+        "mean_ci": [
+          -0.09501768086075349,
+          -0.091912228291619
+        ],
+        "median": -0.08126466428084829,
+        "win_rate": 0.08321974718524189,
+        "sol_total_at_1sol": -5007.418130461267,
+        "exited_on_leader_sell": 0.9702186455552029
+      },
+      "random": {
+        "copies": 2039,
+        "tokens": 1624,
+        "mean": -0.15824779865579858,
+        "mean_ci": [
+          -0.17864905814303972,
+          -0.13712461162050726
+        ],
+        "median": -0.07684720363954307,
+        "win_rate": 0.17704757233938204,
+        "sol_total_at_1sol": -322.6672614591733,
+        "exited_on_leader_sell": 0.8881804806277587
+      }
+    }
+  },
+  "top_wallets_a": [
+    {
+      "wallet": "bwamJzztZsepfkteWRChggmXuiiCQvpLqPietdNfSXa",
+      "positions": 595.0,
+      "pnl": 1629.5862926700004,
+      "pnl_mean": 2.7388004918823534,
+      "win_rate": 0.9008403361344538,
+      "sol_in": 4399.370369832,
+      "hold_median_s": 5.501,
+      "delay_median_s": 0.0,
+      "create_seen": 0.9983193277310924,
+      "same_block": 1.0,
+      "creator_share": 0.9983193277310924,
+      "open_positions": 21.0,
+      "open_pnl": -0.5848099104597497,
+      "b_pnl": 1493.9889085280001,
+      "b_positions": 543
+    },
+    {
+      "wallet": "5KhMUK6yK6FtDkXVmS5Tdy3Jnkd8yuRuUKWQKmGua1WV",
+      "positions": 257.0,
+      "pnl": 1472.876091498,
+      "pnl_mean": 5.7310353754786,
+      "win_rate": 0.8210116731517509,
+      "sol_in": 1450.407210074,
+      "hold_median_s": 6.453,
+      "delay_median_s": 0.0,
+      "create_seen": 0.9922178988326849,
+      "same_block": 0.9921568627450981,
+      "creator_share": 0.9844357976653697,
+      "open_positions": 25.0,
+      "open_pnl": 0.14581487941456783,
+      "b_pnl": 716.560953039,
+      "b_positions": 123
+    },
+    {
+      "wallet": "HAteznh3F16Qg1cHQvJhEcPyKLd4dRFyU9bwE2kjmXbK",
+      "positions": 55.0,
+      "pnl": 527.379371473,
+      "pnl_mean": 9.588715844963636,
+      "win_rate": 0.5818181818181818,
+      "sol_in": 2.388870816,
+      "hold_median_s": 16.546,
+      "delay_median_s": 3.587,
+      "create_seen": 1.0,
+      "same_block": 0.0,
+      "creator_share": 0.0,
+      "open_positions": 23.0,
+      "open_pnl": 0.30543100276645085,
+      "b_pnl": null,
+      "b_positions": null
+    },
+    {
+      "wallet": "sssssDdMNAWKingjpEojkTNdVuZrBe7FsJLaGtexe7d",
+      "positions": 2508.0,
+      "pnl": 492.68056257800004,
+      "pnl_mean": 0.19644360549362042,
+      "win_rate": 0.49920255183413076,
+      "sol_in": 10424.982185247,
+      "hold_median_s": 156.80200000000002,
+      "delay_median_s": 25.54,
+      "create_seen": 0.8855661881977671,
+      "same_block": 0.0,
+      "creator_share": 0.0,
+      "open_positions": 10.0,
+      "open_pnl": 2.2269487103866865,
+      "b_pnl": 338.17347258499996,
+      "b_positions": 1610
+    },
+    {
+      "wallet": "ssssswdk4RR8HqkE3uwUWzDbd6mXFTTPjcXBKNzQ57E",
+      "positions": 3144.0,
+      "pnl": 467.809547145,
+      "pnl_mean": 0.14879438522423666,
+      "win_rate": 0.4993638676844784,
+      "sol_in": 10718.037576986,
+      "hold_median_s": 191.8315,
+      "delay_median_s": 16.585,
+      "create_seen": 0.8708651399491094,
+      "same_block": 0.001095690284879474,
+      "creator_share": 0.0,
+      "open_positions": 28.0,
+      "open_pnl": 11.361051357626959,
+      "b_pnl": 285.540818588,
+      "b_positions": 1981
+    },
+    {
+      "wallet": "8ZN71XTdVo8yRovnGLmNgW3Tgniw6A4J3JGLvPD686FP",
+      "positions": 95.0,
+      "pnl": 413.929299787,
+      "pnl_mean": 4.357150524073684,
+      "win_rate": 0.9578947368421052,
+      "sol_in": 380.005078492,
+      "hold_median_s": 3.039,
+      "delay_median_s": 0.0,
+      "create_seen": 1.0,
+      "same_block": 1.0,
+      "creator_share": 1.0,
+      "open_positions": 0.0,
+      "open_pnl": 0.0,
+      "b_pnl": 383.33804479,
+      "b_positions": 80
+    },
+    {
+      "wallet": "G3eWaBWuboTjBARo2otA6o3GEg9LFkd1Pf7N3yw8sSz1",
+      "positions": 116.0,
+      "pnl": 394.896400557,
+      "pnl_mean": 3.404279315146552,
+      "win_rate": 0.7241379310344828,
+      "sol_in": 743.314946529,
+      "hold_median_s": 5.875,
+      "delay_median_s": 0.0,
+      "create_seen": 1.0,
+      "same_block": 0.9655172413793104,
+      "creator_share": 0.9655172413793104,
+      "open_positions": 13.0,
+      "open_pnl": -1.720351928720356,
+      "b_pnl": 311.849484374,
+      "b_positions": 135
+    },
+    {
+      "wallet": "dtrzJPj7yDdvm6eRqBAgxsK2sMJeD9HhBEBB3XMedXy",
+      "positions": 125.0,
+      "pnl": 386.77062919700006,
+      "pnl_mean": 3.0941650335760005,
+      "win_rate": 0.872,
+      "sol_in": 916.542842955,
+      "hold_median_s": 3.884,
+      "delay_median_s": 0.0,
+      "create_seen": 1.0,
+      "same_block": 1.0,
+      "creator_share": 1.0,
+      "open_positions": 18.0,
+      "open_pnl": -3.090671170423426,
+      "b_pnl": 490.18069402300006,
+      "b_positions": 196
+    },
+    {
+      "wallet": "EBx24uAPtaS1SvHwRhKEktSgzaXdiVEyHuSVpAMVwrcD",
+      "positions": 117.0,
+      "pnl": 381.5251578830001,
+      "pnl_mean": 3.260898785324787,
+      "win_rate": 0.9658119658119658,
+      "sol_in": 625.2781866299999,
+      "hold_median_s": 8.196,
+      "delay_median_s": 0.0,
+      "create_seen": 0.9914529914529915,
+      "same_block": 0.9827586206896551,
+      "creator_share": 0.9743589743589743,
+      "open_positions": 20.0,
+      "open_pnl": -3.7237755746856376,
+      "b_pnl": 226.156032809,
+      "b_positions": 71
+    },
+    {
+      "wallet": "omegoMAe1AMY5MFKQQr3JwXVy8F4eCvmBAfcpo8XAfq",
+      "positions": 1693.0,
+      "pnl": 365.776329454,
+      "pnl_mean": 0.21605217333372712,
+      "win_rate": 0.6001181334908446,
+      "sol_in": 7544.329922076,
+      "hold_median_s": 318.403,
+      "delay_median_s": 145.7,
+      "create_seen": 0.9633786178381571,
+      "same_block": 0.0,
+      "creator_share": 0.0,
+      "open_positions": 16.0,
+      "open_pnl": 3.811607576497058,
+      "b_pnl": 238.028114416,
+      "b_positions": 1088
+    },
+    {
+      "wallet": "9pQQc1xyqwPzYdHztDHEYkgNucYWSQsZTrzNRzdCrRdN",
+      "positions": 5441.0,
+      "pnl": 363.81125661999977,
+      "pnl_mean": 0.06686477791214845,
+      "win_rate": 0.4383385407094284,
+      "sol_in": 9639.604915235,
+      "hold_median_s": 104.481,
+      "delay_median_s": 7.5695,
+      "create_seen": 0.9626906818599522,
+      "same_block": 0.0,
+      "creator_share": 0.0,
+      "open_positions": 4.0,
+      "open_pnl": 0.2898907320568294,
+      "b_pnl": 433.0237208189995,
+      "b_positions": 4226
+    },
+    {
+      "wallet": "5FqUo9aBjsp7QeeyN6Vi2ZmF2fjS4H5EU7wnAQwPy17z",
+      "positions": 134.0,
+      "pnl": 360.414740201,
+      "pnl_mean": 2.68966224030597,
+      "win_rate": 0.8731343283582089,
+      "sol_in": 915.591119226,
+      "hold_median_s": 7.8875,
+      "delay_median_s": 0.0,
+      "create_seen": 0.9925373134328358,
+      "same_block": 0.9924812030075187,
+      "creator_share": 0.9850746268656716,
+      "open_positions": 1.0,
+      "open_pnl": -0.14973851768767865,
+      "b_pnl": 221.258251023,
+      "b_positions": 105
+    },
+    {
+      "wallet": "6Z91Dgiz9E44bMW11rQuMBjt1NwwPoQGXFNZieGfVtAb",
+      "positions": 1751.0,
+      "pnl": 330.10415388399986,
+      "pnl_mean": 0.18852321752370066,
+      "win_rate": 0.5842375785265562,
+      "sol_in": 5876.577803326,
+      "hold_median_s": 8.331,
+      "delay_median_s": 0.127,
+      "create_seen": 0.9674471730439749,
+      "same_block": 0.43860684769775676,
+      "creator_share": 0.0,
+      "open_positions": 12.0,
+      "open_pnl": -1.8079444460202623,
+      "b_pnl": 355.6678355389999,
+      "b_positions": 1287
+    },
+    {
+      "wallet": "grok1r9rhYXqniD79L3eeBB6bBLd8ytGrhDRa6kgRNt",
+      "positions": 110.0,
+      "pnl": 315.2070428210001,
+      "pnl_mean": 2.865518571100001,
+      "win_rate": 0.8363636363636363,
+      "sol_in": 749.516987548,
+      "hold_median_s": 5.461,
+      "delay_median_s": 0.0,
+      "create_seen": 1.0,
+      "same_block": 1.0,
+      "creator_share": 1.0,
+      "open_positions": 7.0,
+      "open_pnl": 0.5275472522000366,
+      "b_pnl": 240.84104862600003,
+      "b_positions": 88
+    },
+    {
+      "wallet": "GdRSPexhxbQz5H2zFQrNN2BAZUqEjAULBigTPvQ6oDMP",
+      "positions": 99.0,
+      "pnl": 302.79522275200003,
+      "pnl_mean": 3.058537603555556,
+      "win_rate": 0.9696969696969697,
+      "sol_in": 492.472500464,
+      "hold_median_s": 8.694,
+      "delay_median_s": 0.0,
+      "create_seen": 1.0,
+      "same_block": 0.9696969696969697,
+      "creator_share": 0.9696969696969697,
+      "open_positions": 0.0,
+      "open_pnl": 0.0,
+      "b_pnl": 258.100613423,
+      "b_positions": 78
+    },
+    {
+      "wallet": "gVDXhoGbePACvSqN7CZBtQXFW9eyJwsgudPEwSydAkx",
+      "positions": 18.0,
+      "pnl": 285.62711670699997,
+      "pnl_mean": 15.868173150388888,
+      "win_rate": 1.0,
+      "sol_in": 324.0,
+      "hold_median_s": 6.918,
+      "delay_median_s": 0.0,
+      "create_seen": 1.0,
+      "same_block": 1.0,
+      "creator_share": 1.0,
+      "open_positions": 0.0,
+      "open_pnl": 0.0,
+      "b_pnl": 251.227513379,
+      "b_positions": 33
+    },
+    {
+      "wallet": "m82n2SEHbGjsFwNHhCmZdjdo3BwzjmHsDU33kt9NkTR",
+      "positions": 112.0,
+      "pnl": 273.60992005700007,
+      "pnl_mean": 2.4429457147946434,
+      "win_rate": 0.8035714285714286,
+      "sol_in": 637.444802646,
+      "hold_median_s": 5.817,
+      "delay_median_s": 0.0,
+      "create_seen": 0.9821428571428571,
+      "same_block": 0.9090909090909091,
+      "creator_share": 0.8928571428571429,
+      "open_positions": 5.0,
+      "open_pnl": -0.6949713781406114,
+      "b_pnl": null,
+      "b_positions": null
+    },
+    {
+      "wallet": "Erdpg9ncPVM2KSDX7UBswBHJnJT4a7XYCwxpikxaHRiR",
+      "positions": 67.0,
+      "pnl": 254.713724627,
+      "pnl_mean": 3.8016973824925375,
+      "win_rate": 0.9701492537313433,
+      "sol_in": 422.61665763,
+      "hold_median_s": 7.921,
+      "delay_median_s": 0.0,
+      "create_seen": 1.0,
+      "same_block": 1.0,
+      "creator_share": 1.0,
+      "open_positions": 0.0,
+      "open_pnl": 0.0,
+      "b_pnl": 75.474739894,
+      "b_positions": 38
+    },
+    {
+      "wallet": "29yFzeBZgxf5zqrAkKXwgZtQehRf4pL8WbV2nRJikbw8",
+      "positions": 154.0,
+      "pnl": 253.483451104,
+      "pnl_mean": 1.6459964357402599,
+      "win_rate": 0.9805194805194806,
+      "sol_in": 438.727160488,
+      "hold_median_s": 4.325,
+      "delay_median_s": 0.0,
+      "create_seen": 1.0,
+      "same_block": 0.987012987012987,
+      "creator_share": 0.987012987012987,
+      "open_positions": 4.0,
+      "open_pnl": 0.0010272137095538592,
+      "b_pnl": 196.18901569800002,
+      "b_positions": 97
+    },
+    {
+      "wallet": "FFdBLYqL9rs5fUT38ArE8GV2L3BziEgG5LJUu6sshfkF",
+      "positions": 57.0,
+      "pnl": 233.279973885,
+      "pnl_mean": 4.092631120789473,
+      "win_rate": 1.0,
+      "sol_in": 332.876543208,
+      "hold_median_s": 6.182,
+      "delay_median_s": 0.0,
+      "create_seen": 1.0,
+      "same_block": 1.0,
+      "creator_share": 1.0,
+      "open_positions": 0.0,
+      "open_pnl": 0.0,
+      "b_pnl": 203.97698889699998,
+      "b_positions": 67
+    }
+  ],
+  "windows": {
+    "A": [
+      "2026-10-29T00:00:00+00:00",
+      "2026-11-01T00:00:00+00:00"
+    ],
+    "B": [
+      "2026-11-03T00:00:00+00:00",
+      "2026-11-05T00:00:00+00:00"
+    ]
+  }
+}

@@ -502,6 +502,60 @@ Is there anything to trade on established tokens? This is a descriptive study, w
 A trader on established tokens (#263) would need a pre-registered rule that wins despite ~60 % of losses being
 unexitable. Nothing here suggests one; revisit only with more days (#258 keeps them) or a new signal.
 
+### Winning wallets (#269): who makes money, and can a follower copy it?
+
+Data: the raw pumpapi replay archives already mirrored (`solia_ai/wallet_study.py`, report
+`docs/reports/wallet-study-269.{json,txt}`), with every SOL-quoted buy and sell and its wallet, block and
+priority fee.
+
+| Period | Trades | Wallets | Tokens |
+|---|---|---|---|
+| A: 10-29 03:00 → 10-31 16:00 | 57.4 M | 1.66 M | 127 k |
+| B: 11-03 → 11-04 19:00 | 38.5 M | 1.09 M | 90 k |
+
+How positions are counted:
+
+- A position is one wallet on one token. It is *closed* when it sold 99–101 % of what it bought.
+- P&L = SOL out − SOL in − priority fees.
+- Positions touched by a token transfer, or selling more than they bought, are left out (about 25 % of
+  positions).
+- Jito tips are not in the frames, so snipers' P&L is overstated.
+
+The copy rule was committed before the analysis (3d49d29).
+
+- **Negative-sum market.** Every closed position together lost 170 k SOL in period A and 66 k SOL in period B.
+- **Winners are real and they persist.** Wallets eligible in A have ≥ 10 closed positions; there are 37 932.
+  - A's top 100 by P&L: 91 still traded in B, and **96 % of those were profitable again**, for +12.6 k SOL over
+    34.7 k positions (+0.36 SOL per position, win rate 59 %).
+  - The rest of A's eligible wallets: 38 % profitable in B, +0.001 SOL per position.
+  - The rank correlation of P&L per position between A and B is +0.39 (17.8 k wallets).
+- **They win on speed, and from inside the launch.**
+  - A's top 1 % (379 wallets): median hold 16 s, entry 5 s after the create.
+  - Of the top 20, 15 buy **in the create's own block** (≈ 100 % of their entries; Jito bundles with the launch,
+    the dev's own wallets or paid snipers), sell 3–9 s later, and win 80–100 % of their positions.
+  - The other 5 are high-volume bots: thousands of positions, holds of 2–5 min, wins of 44–60 %, 0.07–0.2 SOL per
+    position.
+  - None of the top wallets is the token's creator wallet itself.
+- **Copying them at our speed loses.** For A's top 100 on period B (55 k copies, 1 SOL, the bot's costs):
+
+  | Follower latency | Copy of the top 100 | Copy of 100 random eligible wallets |
+  |---|---|---|
+  | 3 s | **−8.6 %** [−8.8, −8.3] mean, 19 % wins | −16 % |
+  | 10 s | −9.3 %, 8 % wins | −16 % |
+
+  96 % of the copies exit on the leader's sell. By the time a follower is in, the move is over and the leader is
+  selling into it.
+
+**Decision: no-go for copy trading at our speed.**
+
+- What wins on Pump.fun is real and repeatable, but it lives in the first block and the first seconds: bundling
+  with the launch, or being the launch.
+- A paper bot reading 10 s snapshots with 2–3 s of latency is on the other side of those trades.
+- This also explains why our models find signal but no edge: the edge is the latency, not the information.
+
+The one profile not tested on its own is the slower high-volume winners (entries 8–145 s after the create, holds of
+minutes). Copying only them would need its own pre-registered test on new archive days.
+
 
 ## Token eligibility
 
@@ -1959,6 +2013,7 @@ the report under `docs/reports/`.
 | `rug_labels.py` | Rug-guard labels (sudden rug / drain / gradual dump at 1 h–24 h) and their quality report (#259) |
 | `rug_guard.py` | Rug guard: anchors dataset (labels + risk columns + pool seed), LightGBM risk score per label, TreeSHAP reasons, pre-registered criterion (#260) |
 | `survivor_study.py` | Survivor study: net returns of established tokens after costs, tail shares, loss causes, gradual-dump warning signs, over token partitions (#261) |
+| `wallet_study.py` | Winning wallets from the raw replay archives: per-wallet positions and P&L, who wins and how fast, persistence A → B, copy test (#269) |
 | `liquidity_report.py` | Held-out metrics & entry rule split by anchor pool liquidity (one or several models, same windows) |
 | `search.py` | Hyperparameter, regularization, stride & labeling-threshold search (proposes a `config.yaml` diff; resumable); spaces in `sweeps/` |
 | `overnight.py` | Unattended #160 sweep: preflight, stage 1 → stage 2, summary (`infra/scripts/overnight-sweep.sh`) |
